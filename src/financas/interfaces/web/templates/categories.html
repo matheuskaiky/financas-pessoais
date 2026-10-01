@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import dot, appearance_form, color_fields %}
+{% block title %}Categorias{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>Categorias</h1><p>Cores escolhidas por você; sem escolha, usa-se uma paleta fixa</p></div></header>
+<section class="panel">
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Categoria</th><th>Grupo</th><th>Tipo</th><th class="num">Orçamento mensal</th><th>Cor</th></tr></thead>
+    <tbody>
+    {% for c in categories %}
+      <tr>
+        <td><span class="with-dot">{{ dot(category_colors[c.id]) }}{{ c.name }}</span></td>
+        <td>{{ group_labels[c.group] }}</td>
+        <td>{{ category_kind_labels[c.kind] }}</td>
+        <td class="num">{{ c.monthly_budget_cents|brl if c.monthly_budget_cents is not none else '—' }}</td>
+        <td><details><summary>Alterar</summary>{{ appearance_form('category', c.id, c.color, false, false) }}</details></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+<section class="panel" aria-labelledby="h-new">
+  <h2 id="h-new">Nova categoria</h2>
+  <form method="post" action="/categories" class="grid-form">
+    <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="120"></label>
+    <label class="field"><span>Grupo</span>
+      <select name="group">{% for g in groups %}<option value="{{ g.value }}">{{ group_labels[g] }}</option>{% endfor %}</select></label>
+    <label class="field"><span>Tipo</span>
+      <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ category_kind_labels[k] }}</option>{% endfor %}</select></label>
+    <label class="field"><span>Orçamento mensal</span><input type="text" name="budget" inputmode="decimal" placeholder="0,00"></label>
+    {{ color_fields() }}
+    <button type="submit">Salvar categoria</button>
+  </form>
+  <p class="hint">O grupo precisa combinar com o tipo: despesa (essencial, não essencial, encargos, revisar), receita (renda) ou neutra (movimentação).</p>
+</section>
+{% endblock %}

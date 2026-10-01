@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_macros.html" import avatar, appearance_form, color_fields %}
+{% block title %}Contas{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Contas</h1><p>Saldos informados por você; o sistema soma os lançamentos depois deles</p></div>
+</header>
+
+<section class="panel" aria-labelledby="h-inst">
+  <h2 id="h-inst">Instituições</h2>
+  {% if institutions %}
+  <ul class="plain">
+    {% for i in institutions.values() %}
+    <li style="flex-wrap: wrap; align-items: center">
+      <span class="with-avatar">{{ avatar(institution_looks[i.id], 40) }}<strong>{{ i.name }}</strong></span>
+      <details><summary>Aparência</summary>{{ appearance_form('institution', i.id, i.color, i.image_id) }}</details>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">Nenhuma instituição ainda. Comece cadastrando o seu banco.</p>{% endif %}
+  <details {{ 'open' if not institutions }}>
+    <summary>Nova instituição</summary>
+    <form method="post" action="/institutions" enctype="multipart/form-data" class="grid-form">
+      <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="120" placeholder="Banco do Brasil"></label>
+      <label class="field"><span>Conglomerado (opcional, para o FGC)</span><input type="text" name="group" maxlength="64"></label>
+      {{ color_fields() }}
+      <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+      <button type="submit">Salvar instituição</button>
+    </form>
+  </details>
+</section>
+
+<section class="panel" aria-labelledby="h-acc">
+  <h2 id="h-acc">Contas e investimentos</h2>
+  {% if accounts %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Conta</th><th>Tipo</th><th class="num">Saldo hoje</th><th>Informar saldo</th><th></th></tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      {% set b = balances[a.id] %}
+      <tr class="{{ '' if a.is_active else 'inactive' }}">
+        <td><span class="with-avatar">{{ avatar(account_looks[a.id], 36) }}
+          <span><strong>{{ a.nickname }}</strong><br><small>{{ institutions[a.institution_id].name }}{% if not a.is_active %} · desativada{% endif %}</small></span></span></td>
+        <td>{{ account_kind_labels[a.kind] }}</td>
+        <td class="num">
+          {% if b.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>
+          {% else %}<strong class="{{ 'neg' if b.balance_cents < 0 else '' }}">{{ b.balance_cents|brl }}</strong><br><small>informado em {{ b.last_anchor_date|date }}</small>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/accounts/{{ a.id }}/balance" class="row-form" style="flex-wrap: nowrap">
+            <input type="date" name="date" value="{{ today }}" required aria-label="Data do saldo" style="min-width: 150px">
+            <input type="text" name="amount" inputmode="decimal" placeholder="0,00" required aria-label="Saldo informado" style="min-width: 110px">
+            <button type="submit" class="secondary">Salvar</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/accounts/{{ a.id }}/active">
+            {% if a.is_active %}<button type="submit" class="link">Desativar</button>
+            {% else %}<input type="hidden" name="active" value="1"><button type="submit" class="link">Reativar</button>{% endif %}
+          </form>
+        </td>
+      </tr>
+      <tr><td colspan="5"><details><summary>Aparência de {{ a.nickname }}</summary>{{ appearance_form('account', a.id, a.color, a.image_id) }}</details></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nenhuma conta ainda.</p>{% endif %}
+  {% if institutions %}
+  <details {{ 'open' if not accounts }}>
+    <summary>Nova conta</summary>
+    <form method="post" action="/accounts" enctype="multipart/form-data" class="grid-form">
+      <label class="field wide"><span>Apelido</span><input type="text" name="nickname" required maxlength="120" placeholder="Conta corrente"></label>
+      <label class="field"><span>Instituição</span>
+        <select name="institution_id" required>{% for i in institutions.values() %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Tipo</span>
+        <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ account_kind_labels[k] }}</option>{% endfor %}</select></label>
+      {{ color_fields() }}
+      <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+      <button type="submit">Salvar conta</button>
+    </form>
+    <p class="hint">Cartões de crédito entram na próxima fase; por ora só contas correntes e de investimento recebem lançamentos.</p>
+  </details>
+  {% endif %}
+</section>
+{% endblock %}

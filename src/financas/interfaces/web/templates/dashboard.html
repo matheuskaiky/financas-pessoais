@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% from "_macros.html" import dot %}
+{% block title %}Painel{% endblock %}
+{% block head %}
+  <script src="/static/chart.umd.min.js" defer></script>
+  <script src="/static/dashboard.js" defer></script>
+{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Painel</h1>
+    <p>{{ title|capitalize }} · tudo calculado a partir dos seus lançamentos</p>
+  </div>
+  <form method="get" action="/" class="head-tools">
+    <label class="sr-only" for="year">Ano</label>
+    <select id="year" name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if year == y }}>{{ y }}</option>{% endfor %}
+    </select>
+    <label class="sr-only" for="month">Mês</label>
+    <select id="month" name="month" onchange="this.form.submit()">
+      <option value="0" {{ 'selected' if month == 0 }}>Ano inteiro</option>
+      {% for n, name in month_names %}<option value="{{ n }}" {{ 'selected' if month == n }}>{{ name }}</option>{% endfor %}
+    </select>
+    <noscript><button type="submit" class="secondary">Ver</button></noscript>
+    <a class="btn" href="/entries#form">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Novo lançamento</a>
+  </form>
+</header>
+
+<section class="cards" aria-label="Totais">
+  <div class="card"><span class="label">Receitas</span><strong>{{ summary.income_cents|brl }}</strong><small>Transferências não entram</small></div>
+  <div class="card"><span class="label">Despesas</span><strong>{{ summary.expenses_cents|brl }}</strong>
+    <small>{% if summary.refunds_cents %}Estornos à parte: {{ summary.refunds_cents|brl }} · líquido {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
+  <div class="card"><span class="label">Saldo do período</span>
+    <strong class="{{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas</small></div>
+  <div class="card"><span class="label">Taxa de poupança</span><strong>{{ summary.savings_rate|percent }}</strong>
+    <small>{% if summary.savings_rate is none %}Sem receitas no período{% else %}Saldo ÷ receitas{% endif %}</small></div>
+</section>
+
+<div class="cols">
+  <section class="panel" aria-labelledby="h-cat">
+    <header><h2 id="h-cat">Despesas por categoria</h2><small>{{ summary.entry_count }} lançamentos · {{ summary.expenses_cents|brl }}</small></header>
+    {% if summary.by_category %}
+    <div>
+      <div class="stackbar" role="img" aria-label="{% for g in summary.by_group %}{{ group_labels[g.group] }} {{ g.share|percent }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for g in summary.by_group %}<span style="flex: {{ (g.share or 0) * 100 }} 1 0; background: {{ group_colors.get(g.group.value, '#A9BBCB') }}"></span>{% endfor %}
+      </div>
+      <div class="legend" style="margin-top: 8px">
+        {% for g in summary.by_group %}<span><i style="background: {{ group_colors.get(g.group.value, '#A9BBCB') }}"></i>{{ group_labels[g.group] }} · {{ g.total_cents|brl }} · {{ g.share|percent }}</span>{% endfor %}
+      </div>
+    </div>
+    <div class="rows">
+      <div class="rowhead cat"><span>Categoria</span><span>Grupo</span><span class="num">Lanç.</span><span class="num">Total</span><span class="num">% das desp.</span></div>
+      {% for r in summary.by_category %}
+      <div class="row cat-row">
+        <span class="name with-dot">{{ dot(category_colors[r.category_id]) }}{{ category_by_id[r.category_id].name }}</span>
+        <span class="group soft">{{ group_labels[r.group] }}</span>
+        <span class="count num soft">{{ r.count }}</span>
+        <span class="num c-total">{{ r.total_cents|brl }}</span>
+        <span class="num soft c-pct">{{ r.share|percent }}</span>
+        <span class="bar"><i style="width: {{ category_bar[r.category_id]|round(1) }}%; background: {{ category_colors[r.category_id] }}"></i></span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<p class="empty">Nenhuma despesa neste período. <a href="/entries#form">Fazer um lançamento</a>.</p>{% endif %}
+  </section>
+
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-at">
+      <h2 id="h-at">Atenção</h2>
+      {% if attention %}
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        {% for a in attention %}<a class="attn" href="{{ a.href }}"><span class="pill warn">{{ a.tag }}</span><span>{{ a.text }}</span></a>{% endfor %}
+      </div>
+      {% else %}<p class="empty">Nada pedindo atenção agora.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-rec">
+      <h2 id="h-rec">Recorrentes e fixos</h2>
+      {% set total = summary.expenses_cents %}
+      {% if total %}
+      <div>
+        <div class="stackbar" style="height: 12px; border-radius: 6px" role="img"
+             aria-label="Recorrente {{ ((summary.recurring_expenses_cents / total) * 100)|round(1) }}%, variável {{ ((summary.variable_expenses_cents / total) * 100)|round(1) }}%">
+          <span style="flex: {{ summary.recurring_expenses_cents }} 1 0; background: #0E6151"></span>
+          <span style="flex: {{ summary.variable_expenses_cents }} 1 0; background: #A9BBCB"></span>
+        </div>
+        <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-top: 8px">
+          <span>Recorrente · {{ summary.recurring_expenses_cents|brl }}</span><span class="soft">Variável · {{ summary.variable_expenses_cents|brl }}</span>
+        </div>
+      </div>
+      {% endif %}
+      {% if recurring %}
+      <ul class="plain">
+        {% for t in recurring %}<li><span>{{ t.description }}</span><strong>{{ (-t.amount_cents)|brl }}</strong></li>{% endfor %}
+      </ul>
+      <small>{{ recurring|length }} de {{ recurring_count }} itens recorrentes</small>
+      {% else %}<p class="empty">Nenhuma despesa recorrente neste período.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-chart">
+      <h2 id="h-chart">Receitas e despesas em {{ year }}</h2>
+      <div class="chart-box"><canvas id="chart-months" aria-label="Receitas e despesas por mês"
+        data-months='{{ chart_months|tojson }}' data-income='{{ chart_income|tojson }}' data-expenses='{{ chart_expenses|tojson }}'></canvas></div>
+    </section>
+  </div>
+</div>
+{% endblock %}

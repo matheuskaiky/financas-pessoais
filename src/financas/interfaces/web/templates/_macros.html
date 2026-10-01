@@ -1,0 +1,24 @@
+{% macro avatar(look, size=36) %}
+<span class="avatar" style="--bg: {{ look.color }}; --fg: {{ look.text_color }}; --size: {{ size }}px">
+  {%- if look.image_id %}<img src="/images/{{ look.image_id }}" alt="">{% else %}{{ look.initials }}{% endif -%}
+</span>
+{% endmacro %}
+
+{% macro dot(color) %}<span class="dot" style="background: {{ color }}" aria-hidden="true"></span>{% endmacro %}
+
+{% macro appearance_form(target, entity_id, color, has_image, allow_image=True) %}
+<form method="post" action="/appearance/{{ target }}/{{ entity_id }}" enctype="multipart/form-data" class="row-form">
+  <label class="field"><span>Cor</span><input type="color" name="color" value="{{ color or '#1E395F' }}"></label>
+  <label class="check"><input type="checkbox" name="use_color" value="1" {{ 'checked' if color }}> Usar esta cor</label>
+  {% if allow_image %}
+  <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+  {% if has_image %}<label class="check"><input type="checkbox" name="remove_image" value="1"> Remover imagem</label>{% endif %}
+  {% endif %}
+  <button type="submit" class="secondary">Salvar aparência</button>
+</form>
+{% endmacro %}
+
+{% macro color_fields(name_prefix='') %}
+<label class="field"><span>Cor</span><input type="color" name="color" value="#1E395F"></label>
+<label class="check"><input type="checkbox" name="use_color" value="1"> Usar esta cor</label>
+{% endmacro %}

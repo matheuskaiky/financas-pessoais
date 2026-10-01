@@ -1,0 +1,9 @@
+<label class="field"><span>Categoria</span>
+  <select name="category_id">
+    <option value="">Automática</option>
+    {% for o in category_options %}
+    <option value="{{ o.id }}" {{ 'selected' if o.id == form.category_id }}>{{ o.name }}</option>
+    {% endfor %}
+  </select>
+</label>
+{% if suggested %}<p class="hint good">Categoria sugerida pela última vez que você usou esta descrição.</p>{% endif %}
