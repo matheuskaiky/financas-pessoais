@@ -1,0 +1,110 @@
+[project]
+name = "financas-pessoais"
+version = "0.1.0"
+description = "Gestão financeira pessoal local e privada"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13",
+    "fastapi>=0.115",
+    "jinja2>=3.1",
+    "pydantic-settings>=2.4",
+    "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+    "typer>=0.12",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+financas = "financas.interfaces.cli:app"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "import-linter>=2.0",
+    "pyright>=1.1.380",
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/financas"]
+
+[tool.uv]
+# The repo sits on /mnt/c (drvfs) while uv's cache is on ext4: hardlinks fail.
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# pt-BR typography: the real minus sign (U+2212) and accents are intentional.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/financas/infrastructure/db/migrations/versions/*" = ["E501", "I", "UP", "RUF"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+strict = ["src/financas/domain", "src/financas/application"]
+
+[tool.importlinter]
+root_package = "financas"
+include_external_packages = true
+
+# `financas.container` is the composition root: it sits outside the layers, may import everything,
+# and is imported only by the entry points (cli, web) and the tests.
+[[tool.importlinter.contracts]]
+name = "Layers point inward"
+type = "layers"
+layers = [
+    "financas.interfaces | financas.infrastructure",
+    "financas.application",
+    "financas.domain",
+]
+# The entry points receive the container; what the container imports is its own business.
+ignore_imports = [
+    "financas.interfaces.cli -> financas.container",
+    "financas.interfaces.web.app -> financas.container",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only the composition root wires infrastructure"
+type = "forbidden"
+source_modules = ["financas.domain", "financas.application", "financas.interfaces"]
+forbidden_modules = ["financas.infrastructure"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Inner layers do not know the composition root"
+type = "forbidden"
+source_modules = ["financas.domain", "financas.application", "financas.infrastructure"]
+forbidden_modules = ["financas.container"]
+
+[[tool.importlinter.contracts]]
+name = "Domain imports no external framework"
+type = "forbidden"
+source_modules = ["financas.domain"]
+forbidden_modules = ["sqlalchemy", "fastapi", "pydantic", "pydantic_settings", "alembic", "typer", "jinja2"]
+
+[[tool.importlinter.contracts]]
+name = "Application imports no external framework"
+type = "forbidden"
+source_modules = ["financas.application"]
+forbidden_modules = ["sqlalchemy", "fastapi", "pydantic_settings", "alembic", "typer", "jinja2"]

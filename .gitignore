@@ -1,0 +1,27 @@
+# Real data never goes into git
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+*.xlsx
+*.xls
+*.csv
+*.ofx
+*.pdf
+.env
+
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.import_linter_cache/
+*.egg-info/
+dist/
+build/
+
+CLAUDE.md
+docs/
