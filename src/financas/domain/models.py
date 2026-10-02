@@ -29,6 +29,66 @@ class CategoryGroup(StrEnum):
     REVIEW = "review"
 
 
+class AssetClass(StrEnum):
+    FIXED_INCOME = "fixed_income"
+    EQUITIES = "equities"
+    REAL_ESTATE_FUNDS = "real_estate_funds"
+    CRYPTO = "crypto"
+    OTHER = "other"
+
+
+class InvestmentTracking(StrEnum):
+    """One level per investment account, so totals never count the same money twice (9.6)."""
+
+    ACCOUNT = "account"
+    HOLDINGS = "holdings"
+
+
+class InstrumentType(StrEnum):
+    CDB = "cdb"
+    LC = "lc"
+    LCI = "lci"
+    LCA = "lca"
+    CRI = "cri"
+    CRA = "cra"
+    DEBENTURE = "debenture"
+    TREASURY_SELIC = "treasury_selic"
+    TREASURY_IPCA = "treasury_ipca"
+    TREASURY_PREFIXED = "treasury_prefixed"
+    SAVINGS_ACCOUNT = "savings_account"
+    FUND = "fund"
+    PENSION = "pension"
+    STOCK = "stock"
+    REIT = "reit"
+    ETF = "etf"
+    CRYPTO = "crypto"
+    OTHER = "other"
+
+
+class Indexer(StrEnum):
+    CDI = "cdi"
+    SELIC = "selic"
+    IPCA = "ipca"
+    PREFIXED = "prefixed"
+    OTHER = "other"
+
+
+class RateMode(StrEnum):
+    PERCENT_OF_INDEX = "percent_of_index"  # 110% of CDI: rate_bps = 11000
+    SPREAD_OVER_INDEX = "spread_over_index"  # IPCA + 6.5%: rate_bps = 650
+    FIXED_ANNUAL = "fixed_annual"  # 12.3% a year: rate_bps = 1230
+
+
+class Liquidity(StrEnum):
+    DAILY = "daily"
+    AT_MATURITY = "at_maturity"
+
+
+class HoldingStatus(StrEnum):
+    ACTIVE = "active"
+    REDEEMED = "redeemed"
+
+
 class StatementStatus(StrEnum):
     FUTURE = "future"
     OPEN = "open"
@@ -64,6 +124,9 @@ class Account:
     closing_day: int | None = None  # credit cards only
     due_day: int | None = None
     credit_limit_cents: int | None = None
+    tracking: InvestmentTracking | None = None  # investment accounts only
+    asset_class: AssetClass | None = None
+    is_emergency_fund: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +156,7 @@ class Transaction:
     statement_id: str | None = None  # card accounts only
     plan_id: str | None = None
     installment_number: int | None = None
+    holding_id: str | None = None  # investment legs on a holdings-level account
 
 
 @dataclass(frozen=True)
@@ -100,8 +164,10 @@ class BalanceAnchor:
     id: str
     account_id: str
     on_date: dt.date
-    balance_cents: int
+    balance_cents: int  # net: for an investment, what the institution would pay out today
     note: str | None = None
+    gross_balance_cents: int | None = None  # investments only; estimated tax = gross - net
+    holding_id: str | None = None  # a valuation of one holding (else of the whole account)
 
 
 @dataclass(frozen=True)
@@ -126,3 +192,26 @@ class InstallmentPlan:
     category_id: str
     installment_total: int
     purchased_on: dt.date | None = None
+
+
+@dataclass(frozen=True)
+class InvestmentHolding:
+    """One application (a CDB, an LCI, a Treasury bond...). Contract data is display only."""
+
+    id: str
+    account_id: str
+    name: str
+    instrument_type: InstrumentType
+    issuer_id: str  # an Institution: FGC exposure sums by its group
+    indexer: Indexer | None
+    rate_mode: RateMode | None
+    rate_bps: int | None  # basis points: 110% of CDI = 11000, IPCA + 6.5% = 650
+    applied_on: dt.date
+    principal_cents: int
+    maturity_on: dt.date | None
+    liquidity: Liquidity
+    liquid_from: dt.date | None  # end of a grace period (daily liquidity only)
+    fgc_covered: bool
+    is_emergency_fund: bool
+    asset_class: AssetClass
+    status: HoldingStatus = HoldingStatus.ACTIVE

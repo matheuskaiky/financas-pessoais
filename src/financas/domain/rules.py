@@ -3,7 +3,15 @@
 import re
 
 from financas.domain.errors import DomainError
-from financas.domain.models import CategoryGroup, CategoryKind, TransactionKind
+from financas.domain.models import (
+    CategoryGroup,
+    CategoryKind,
+    Indexer,
+    InvestmentHolding,
+    Liquidity,
+    RateMode,
+    TransactionKind,
+)
 
 _CATEGORY_FOR_KIND = {
     TransactionKind.EXPENSE: CategoryKind.EXPENSE,
@@ -79,3 +87,34 @@ def validate_card_settings(
             raise DomainError("INVALID_CARD_DAY", day=day)
     if credit_limit_cents is not None and credit_limit_cents < 0:
         raise DomainError("AMOUNT_NOT_POSITIVE")
+
+
+def validate_gross_balance(net_cents: int, gross_cents: int | None) -> None:
+    """The gross value (before estimated tax) cannot be below the net value."""
+    if gross_cents is not None and gross_cents < net_cents:
+        raise DomainError("INVALID_GROSS_BALANCE")
+
+
+def validate_holding(h: InvestmentHolding) -> None:
+    """Contract data of a holding. Display only: nothing here computes yield or tax."""
+    if not h.name.strip():
+        raise DomainError("EMPTY_NAME")
+    if h.principal_cents <= 0:
+        raise DomainError("AMOUNT_NOT_POSITIVE")
+    if (h.rate_mode is None) != (h.rate_bps is None) or (h.rate_bps is not None and h.rate_bps < 0):
+        raise DomainError("INVALID_RATE")
+    if h.rate_mode in (RateMode.PERCENT_OF_INDEX, RateMode.SPREAD_OVER_INDEX) and (
+        h.indexer is None or h.indexer is Indexer.PREFIXED
+    ):
+        raise DomainError("INVALID_RATE")
+    if h.rate_mode is RateMode.FIXED_ANNUAL and h.indexer not in (None, Indexer.PREFIXED):
+        raise DomainError("INVALID_RATE")
+    if h.liquidity is Liquidity.AT_MATURITY:
+        if h.maturity_on is None:
+            raise DomainError("MATURITY_REQUIRED")
+        if h.liquid_from is not None:
+            raise DomainError("INVALID_LIQUIDITY")
+    if h.maturity_on is not None and h.maturity_on <= h.applied_on:
+        raise DomainError("INVALID_MATURITY")
+    if h.liquid_from is not None and h.liquid_from < h.applied_on:
+        raise DomainError("INVALID_LIQUIDITY")
