@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Nova compra no cartão{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><a href="/cards">← Cartões</a><h1>Nova compra no cartão</h1></div>
+</header>
+
+{% if not card_list %}
+<section class="panel"><p class="empty">Cadastre um cartão em <a href="/cards">Cartões</a> antes de lançar compras.</p></section>
+{% else %}
+<form method="post" action="/cards/purchase" class="cols entries" id="purchase"
+      hx-post="/cards/purchase/preview" hx-trigger="change, keyup changed delay:400ms from:input[type=text]" hx-target="#preview" hx-swap="innerHTML">
+  <section class="panel">
+    <h2>O que você sabe da compra?</h2>
+    <div class="grid-form">
+      <label class="field"><span>Cartão</span>
+        <select name="account_id" required>
+          <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
+          {% for a in card_list %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · fecha {{ a.closing_day }} · vence {{ a.due_day }}</option>{% endfor %}
+        </select></label>
+      <label class="field"><span>Data da compra</span><input type="date" name="date" value="{{ form.date }}"></label>
+      <label class="field wide"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" required maxlength="300" autocomplete="off"></label>
+      <label class="field"><span>Categoria</span>
+        <select name="category_id"><option value="">Não categorizado</option>
+          {% for x in expense_categories if x.slug != 'uncategorized' %}<option value="{{ x.id }}" {{ 'selected' if form.category_id == x.id }}>{{ x.name }}</option>{% endfor %}
+        </select></label>
+      <label class="field"><span>Parcelas</span><input type="text" name="installments" inputmode="numeric" value="{{ form.installments }}"><small>1 = à vista</small></label>
+    </div>
+
+    <div class="segmented two" role="radiogroup" aria-label="Valor informado">
+      <label><input type="radio" name="amount_mode" value="total" {{ 'checked' if form.amount_mode == 'total' }}><span>Valor total da compra</span></label>
+      <label><input type="radio" name="amount_mode" value="installment" {{ 'checked' if form.amount_mode == 'installment' }}><span>Valor da parcela (como na fatura)</span></label>
+    </div>
+    <label class="field"><span>Valor</span>
+      <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></label>
+
+    <details {{ 'open' if form.statement_month or form.current_installment != '1' }}>
+      <summary>Compra já em andamento ou fatura diferente</summary>
+      <div class="grid-form">
+        <label class="field"><span>Parcela atual</span><input type="text" name="current_installment" inputmode="numeric" value="{{ form.current_installment }}"></label>
+        <label class="field"><span>Fatura da parcela atual</span>
+          <select name="statement_month"><option value="">Automática</option>
+            {% for value, label in months %}<option value="{{ value }}" {{ 'selected' if form.statement_month == value }}>{{ label }}</option>{% endfor %}
+          </select></label>
+      </div>
+      <p class="hint">Se a primeira parcela já ficou para trás, informe a parcela atual e a fatura dela: só as parcelas restantes são criadas. Informar a fatura de qualquer parcela define todas as outras.</p>
+    </details>
+    <label class="check"><input type="checkbox" name="recurring" value="1" {{ 'checked' if form.recurring }}> Recorrente</label>
+    <div class="mobile-save head-tools">
+      <a class="btn secondary" href="/cards">Cancelar</a>
+      <button type="submit">Salvar compra</button>
+    </div>
+  </section>
+
+  <section class="panel quick" aria-labelledby="h-sched">
+    <h2 id="h-sched">Cronograma das parcelas</h2>
+    <p class="hint" style="margin-top: -8px">Aparece ao preencher o cartão, a data e o valor.</p>
+    <div id="preview" hx-post="/cards/purchase/preview" hx-trigger="load" hx-include="#purchase" hx-target="this"></div>
+  </section>
+</form>
+{% endif %}
+{% endblock %}

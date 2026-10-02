@@ -4,6 +4,7 @@
 {% block content %}
 <header class="page-head">
   <div><h1>Contas</h1><p>Saldos informados por você; o sistema soma os lançamentos depois deles</p></div>
+  <div class="head-tools"><a class="btn secondary" href="/categories">Categorias</a><a class="btn secondary" href="/cards">Cartões</a></div>
 </header>
 
 <section class="panel" aria-labelledby="h-inst">
@@ -80,7 +81,7 @@
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
       <button type="submit">Salvar conta</button>
     </form>
-    <p class="hint">Cartões de crédito entram na próxima fase; por ora só contas correntes e de investimento recebem lançamentos.</p>
+    <p class="hint">Cartões de crédito são cadastrados em <a href="/cards">Cartões</a>, com fechamento, vencimento e limite.</p>
   </details>
   {% endif %}
 </section>

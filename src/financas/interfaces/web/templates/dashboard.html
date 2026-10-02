@@ -13,11 +13,11 @@
   </div>
   <form method="get" action="/" class="head-tools">
     <label class="sr-only" for="year">Ano</label>
-    <select id="year" name="year" onchange="this.form.submit()">
+    <select id="year" name="year" data-autosubmit>
       {% for y in years %}<option value="{{ y }}" {{ 'selected' if year == y }}>{{ y }}</option>{% endfor %}
     </select>
     <label class="sr-only" for="month">Mês</label>
-    <select id="month" name="month" onchange="this.form.submit()">
+    <select id="month" name="month" data-autosubmit>
       <option value="0" {{ 'selected' if month == 0 }}>Ano inteiro</option>
       {% for n, name in month_names %}<option value="{{ n }}" {{ 'selected' if month == n }}>{{ name }}</option>{% endfor %}
     </select>
@@ -97,6 +97,18 @@
       </ul>
       <small>{{ recurring|length }} de {{ recurring_count }} itens recorrentes</small>
       {% else %}<p class="empty">Nenhuma despesa recorrente neste período.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-buy">
+      <header><h2 id="h-buy">Compras do mês</h2><small>valor cheio, com parcelas</small></header>
+      {% if purchases %}
+      <ul class="plain">
+        {% for p in purchases[:6] %}
+        <li><span>{{ p.description }} <small>· {{ p.purchased_on|date_short }} · {{ p.installments }}x</small></span><strong>{{ p.total_cents|brl }}</strong></li>
+        {% endfor %}
+      </ul>
+      <strong class="soft" style="color: var(--navy)">{{ purchases|length }} compra(s) · {{ purchases|sum(attribute='total_cents')|brl }}</strong>
+      {% else %}<p class="empty">Nenhuma compra no cartão neste período.</p>{% endif %}
     </section>
 
     <section class="panel" aria-labelledby="h-chart">

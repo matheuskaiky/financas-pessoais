@@ -103,7 +103,7 @@
       <label class="field only-entry"><span>Conta</span>
         <select name="account_id">
           <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
-          {% for a in entry_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · {{ institutions[a.institution_id].name }}</option>{% endfor %}
+          {% for a in entry_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
         </select></label>
 
       <div class="only-transfer" style="display: flex; flex-direction: column; gap: 12px">
@@ -122,6 +122,7 @@
       <label class="check only-entry"><input type="checkbox" name="recurring" value="1" {{ 'checked' if form.recurring }}> Recorrente</label>
       <label class="field"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
       <div class="mobile-save"><button type="submit" style="width: 100%">Salvar lançamento</button></div>
+      <a class="only-entry" href="/cards/purchase" style="min-height: 44px; display: inline-flex; align-items: center; font-weight: 600">Parcelar uma compra no cartão →</a>
     </form>
     {% endif %}
   </aside>

@@ -11,8 +11,28 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from financas.application.queries.balances import ListAccountBalances
+from financas.application.queries.cards import (
+    GetStatementDetail,
+    InstallmentSchedule,
+    ListActiveInstallments,
+    ListCards,
+    ListMonthPurchases,
+)
 from financas.application.queries.summary import GetSummary, Period, summarize
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
+from financas.application.use_cases.cards import (
+    AdjustInstallment,
+    CardPurchaseCommand,
+    DeletePurchase,
+    InformStatementTotal,
+    PayStatement,
+    PayStatementCommand,
+    PostStatementDifference,
+    PreviewCardPurchase,
+    RegisterCardPurchase,
+    SetCardSettings,
+    SetStatementDates,
+)
 from financas.application.use_cases.catalog import (
     AppearanceTarget,
     CreateAccount,
@@ -39,6 +59,7 @@ from financas.domain.models import (
     AccountKind,
     CategoryGroup,
     CategoryKind,
+    StatementStatus,
     TransactionKind,
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
@@ -48,6 +69,7 @@ from financas.interfaces import appearance, messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
+    format_decimal_comma,
     format_month,
     format_month_long,
     format_percent,
@@ -103,6 +125,12 @@ def create_app(c: Container) -> FastAPI:
         group_labels=messages.CATEGORY_GROUP_LABELS,
         category_kind_labels=messages.CATEGORY_KIND_LABELS,
         account_kind_labels=messages.ACCOUNT_KIND_LABELS,
+        decimal=format_decimal_comma,
+        explain=messages.explain_assignment,
+        best_day=messages.best_day_hint,
+        statement_label=messages.statement_label,
+        status_labels=messages.STATEMENT_STATUS_LABELS,
+        limit_labels=messages.LIMIT_ALERT_LABELS,
     )
 
     # --- security: this app is local, but a web page open in the browser must not drive it ------
@@ -167,7 +195,9 @@ def create_app(c: Container) -> FastAPI:
             "notice": notice,
             "backup_notice": backup_notice(),
             "backup_label": backup_label(),
-            "nav": template.split(".")[0],
+            "nav": "cards"
+            if template.startswith(("cards", "purchase"))
+            else template.split(".")[0],
         }
         return templates.TemplateResponse(
             request, template, context, status_code=400 if error else status
@@ -234,6 +264,40 @@ def create_app(c: Container) -> FastAPI:
                         "href": "/accounts",
                     }
                 )
+        overview = ListCards(c.uow, c.clock).execute()
+        for view in overview.cards:
+            usage = view.usage
+            ratio = usage.percent / 100 if usage.percent is not None else None
+            if usage.alert.value in {"warning", "exceeded"} and usage.limit_cents is not None:
+                items.append(
+                    {
+                        "tag": "Limite",
+                        "text": (
+                            f"{view.account.nickname}: {format_percent(ratio)}"
+                            f" do limite comprometido ({format_brl(usage.committed_cents)} de "
+                            f"{format_brl(usage.limit_cents)})."
+                        ),
+                        "href": f"/cards?card={view.account.id}",
+                    }
+                )
+            for st in view.statements:
+                if st.status is StatementStatus.CLOSED and st.days_to_due <= 7:
+                    when = (
+                        f"venceu há {-st.days_to_due} dia(s)"
+                        if st.days_to_due < 0
+                        else f"vence em {format_date(st.statement.due_date)}"
+                    )
+                    items.append(
+                        {
+                            "tag": "Vence",
+                            "text": (
+                                f"Fatura {view.account.nickname} "
+                                f"{format_month(st.statement.month)} {when}: "
+                                f"{format_brl(st.outstanding_cents)}."
+                            ),
+                            "href": f"/cards?card={view.account.id}&month={st.statement.month}",
+                        }
+                    )
         return items
 
     def dashboard_context(year: int, month: int) -> dict[str, object]:
@@ -265,6 +329,7 @@ def create_app(c: Container) -> FastAPI:
                 r.category_id: (r.total_cents / top * 100) if top else 0
                 for r in summary.by_category
             },
+            "purchases": ListMonthPurchases(c.uow).execute(period.start, period.end),
             "recurring": recurring[:5],
             "recurring_count": len(recurring),
             "attention": attention_items(data),
@@ -315,8 +380,9 @@ def create_app(c: Container) -> FastAPI:
         entry_accounts = [
             a
             for a in accounts  # type: ignore[attr-defined]
-            if a.is_active and a.kind is AccountKind.CHECKING
+            if a.is_active and a.kind in (AccountKind.CHECKING, AccountKind.CREDIT_CARD)
         ]
+        checking_accounts = [a for a in entry_accounts if a.kind is AccountKind.CHECKING]
         transfer_accounts = [
             a
             for a in accounts  # type: ignore[attr-defined]
@@ -328,7 +394,7 @@ def create_app(c: Container) -> FastAPI:
         default_account = (
             last_used
             if last_used in {a.id for a in entry_accounts}
-            else (entry_accounts[0].id if len(entry_accounts) == 1 else "")
+            else (checking_accounts[0].id if len(checking_accounts) == 1 else "")
         )
         form = form or {}
         kind = form.get("kind", "expense")
@@ -491,11 +557,12 @@ def create_app(c: Container) -> FastAPI:
     def accounts_context() -> dict[str, object]:
         data = lookups()
         balances = {b.account_id: b for b in ListAccountBalances(c.uow).execute(today())}
+        data["accounts"] = [a for a in data["accounts"] if a.kind is not AccountKind.CREDIT_CARD]  # type: ignore[attr-defined]
         return {
             **data,
             "balances": balances,
             "today": today().isoformat(),
-            "kinds": list(AccountKind),
+            "kinds": [k for k in AccountKind if k is not AccountKind.CREDIT_CARD],
         }
 
     @app.get("/accounts", response_class=HTMLResponse)
@@ -611,6 +678,307 @@ def create_app(c: Container) -> FastAPI:
                 diff=result.difference_cents,
             )
         return back("/accounts", "balance")
+
+    # --- cards ---------------------------------------------------------------------------------
+
+    def _money(text: str) -> int | None:
+        return parse_brl(text) if text.strip() else None
+
+    def pick_statement(views: list[object], month: str | None) -> object | None:
+        """The statement asked for, else the open one, else the oldest unpaid, else the newest."""
+        if not views:
+            return None
+        if month:
+            for v in views:
+                if str(v.statement.month) == month:  # type: ignore[attr-defined]
+                    return v
+        by_status = {s: [v for v in views if v.status is s] for s in StatementStatus}  # type: ignore[attr-defined]
+        for status in (StatementStatus.OPEN, StatementStatus.CLOSED):
+            if by_status[status]:
+                return by_status[status][0]
+        return views[-1]
+
+    def cards_context(card_id: str | None, month: str | None) -> dict[str, object]:
+        overview = ListCards(c.uow, c.clock).execute()
+        data = lookups()
+        chosen = next((v for v in overview.cards if v.account.id == card_id), None) or (
+            overview.cards[0] if overview.cards else None
+        )
+        statement = pick_statement(chosen.statements, month) if chosen else None
+        detail = (
+            GetStatementDetail(c.uow, c.clock).execute(statement.statement.id)  # type: ignore[attr-defined]
+            if statement
+            else None
+        )
+        checking = [
+            a
+            for a in data["accounts"]
+            if a.kind is AccountKind.CHECKING and a.is_active  # type: ignore[attr-defined]
+        ]
+        with c.uow as work:
+            plans = {p.id: p for p in work.plans.list_all()}
+        return {
+            **data,
+            "plans": plans,
+            "overview": overview,
+            "chosen": chosen,
+            "statement": statement,
+            "detail": detail,
+            "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
+            "checking_accounts": checking,
+            "installments": ListActiveInstallments(c.uow, c.clock).execute(chosen.account.id)
+            if chosen
+            else [],
+            "schedule": InstallmentSchedule(c.uow, c.clock).execute(chosen.account.id)
+            if chosen
+            else [],
+            "today": today().isoformat(),
+            "institution_choices": list(data["institutions"].values()),  # type: ignore[attr-defined]
+        }
+
+    @app.get("/cards", response_class=HTMLResponse)
+    def cards(request: Request, card: str | None = None, month: str | None = None):
+        return render(request, "cards.html", cards_context(card, month))
+
+    @app.post("/cards")
+    async def add_card(
+        request: Request,
+        nickname: Annotated[str, Form()],
+        institution_id: Annotated[str, Form()],
+        closing_day: Annotated[int, Form()],
+        due_day: Annotated[int, Form()],
+        limit: Annotated[str, Form()] = "",
+        color: Annotated[str, Form()] = "",
+        use_color: Annotated[str, Form()] = "",
+        image: Annotated[UploadFile | None, File()] = None,
+    ):
+        try:
+            chosen = _color(color, use_color)
+            card = CreateAccount(c.uow).execute(
+                CreateAccountCommand(
+                    AccountKind.CREDIT_CARD,
+                    institution_id,
+                    nickname,
+                    color=chosen,
+                    closing_day=closing_day,
+                    due_day=due_day,
+                    credit_limit_cents=_money(limit),
+                )
+            )
+            data = await _upload(image)
+            if data is not None:
+                SetAppearance(c.uow, c.images).execute(
+                    SetAppearanceCommand(
+                        AppearanceTarget.ACCOUNT, card.id, color=chosen, image=data
+                    )
+                )
+        except DomainError as error:
+            return render(request, "cards.html", cards_context(None, None), error=error)
+        return back("/cards", "card", card=card.id)
+
+    @app.post("/cards/{card_id}/settings")
+    def card_settings(
+        request: Request,
+        card_id: str,
+        closing_day: Annotated[int, Form()],
+        due_day: Annotated[int, Form()],
+        limit: Annotated[str, Form()] = "",
+    ):
+        try:
+            SetCardSettings(c.uow).execute(card_id, closing_day, due_day, _money(limit))
+        except DomainError as error:
+            return render(request, "cards.html", cards_context(card_id, None), error=error)
+        return back("/cards", "card_settings", card=card_id)
+
+    def statement_redirect(statement_id: str, ok: str) -> RedirectResponse:
+        with c.uow as work:
+            statement = work.statements.get(statement_id)
+        assert statement is not None
+        return back("/cards", ok, card=statement.account_id, month=str(statement.month))
+
+    def statement_error(request: Request, statement_id: str, error: DomainError) -> HTMLResponse:
+        with c.uow as work:
+            statement = work.statements.get(statement_id)
+        card = statement.account_id if statement else None
+        month = str(statement.month) if statement else None
+        return render(request, "cards.html", cards_context(card, month), error=error)
+
+    @app.post("/statements/{statement_id}/pay")
+    def pay_statement(
+        request: Request,
+        statement_id: str,
+        from_account: Annotated[str, Form()],
+        date: Annotated[str, Form()],
+        amount: Annotated[str, Form()] = "",
+    ):
+        try:
+            with c.uow as work:
+                statement = work.statements.get(statement_id)
+            label = format_month(statement.month) if statement else ""
+            PayStatement(c.uow, c.clock).execute(
+                PayStatementCommand(
+                    statement_id,
+                    from_account,
+                    parse_date(date, today()),
+                    _money(amount),
+                    f"Pagamento da fatura {label}",
+                )
+            )
+        except DomainError as error:
+            return statement_error(request, statement_id, error)
+        return statement_redirect(statement_id, "payment")
+
+    @app.post("/statements/{statement_id}/informed")
+    def inform_statement(request: Request, statement_id: str, amount: Annotated[str, Form()] = ""):
+        try:
+            InformStatementTotal(c.uow).execute(statement_id, _money(amount))
+        except DomainError as error:
+            return statement_error(request, statement_id, error)
+        return statement_redirect(statement_id, "informed")
+
+    @app.post("/statements/{statement_id}/difference")
+    def post_difference(request: Request, statement_id: str):
+        try:
+            PostStatementDifference(c.uow).execute(statement_id, "Diferença de conferência")
+        except DomainError as error:
+            return statement_error(request, statement_id, error)
+        return statement_redirect(statement_id, "difference")
+
+    @app.post("/statements/{statement_id}/dates")
+    def statement_dates(
+        request: Request,
+        statement_id: str,
+        closing: Annotated[str, Form()],
+        due: Annotated[str, Form()],
+    ):
+        try:
+            SetStatementDates(c.uow).execute(
+                statement_id, parse_date(closing, today()), parse_date(due, today())
+            )
+        except DomainError as error:
+            return statement_error(request, statement_id, error)
+        return statement_redirect(statement_id, "dates")
+
+    @app.post("/entries/{transaction_id}/amount")
+    def adjust_amount(request: Request, transaction_id: str, amount: Annotated[str, Form()]):
+        with c.uow as work:
+            entry = work.transactions.get(transaction_id)
+            statement = (
+                work.statements.get(entry.statement_id) if entry and entry.statement_id else None
+            )
+        try:
+            AdjustInstallment(c.uow, c.clock).execute(transaction_id, parse_brl(amount))
+        except DomainError as error:
+            if statement:
+                return statement_error(request, statement.id, error)
+            return render(request, "cards.html", cards_context(None, None), error=error)
+        assert statement is not None
+        return statement_redirect(statement.id, "adjusted")
+
+    @app.post("/plans/{plan_id}/delete")
+    def delete_plan(request: Request, plan_id: str):
+        try:
+            DeletePurchase(c.uow, c.clock).execute(plan_id)
+        except DomainError as error:
+            return render(request, "cards.html", cards_context(None, None), error=error)
+        return back("/cards", "plan_deleted")
+
+    # purchase form with a live schedule
+
+    def purchase_months() -> list[tuple[str, str]]:
+        first = YearMonth.from_date(today()).add_months(-3)
+        return [(str(m), format_month(m)) for m in (first.add_months(n) for n in range(0, 20))]
+
+    def purchase_context(form: dict[str, str] | None = None) -> dict[str, object]:
+        data = lookups()
+        form = form or {}
+        card_list = [
+            a for a in data["accounts"] if a.kind is AccountKind.CREDIT_CARD and a.is_active
+        ]  # type: ignore[attr-defined]
+        expense_categories = [x for x in data["categories"] if x.kind is CategoryKind.EXPENSE]  # type: ignore[attr-defined]
+        return {
+            **data,
+            "card_list": card_list,
+            "expense_categories": expense_categories,
+            "months": purchase_months(),
+            "form": {
+                "account_id": form.get(
+                    "account_id", card_list[0].id if len(card_list) == 1 else ""
+                ),
+                "date": form.get("date", today().isoformat()),
+                "description": form.get("description", ""),
+                "category_id": form.get("category_id", ""),
+                "amount": form.get("amount", ""),
+                "amount_mode": form.get("amount_mode", "total"),
+                "installments": form.get("installments", "1"),
+                "current_installment": form.get("current_installment", "1"),
+                "statement_month": form.get("statement_month", ""),
+                "recurring": form.get("recurring", ""),
+            },
+        }
+
+    def purchase_command(form: dict[str, str]) -> CardPurchaseCommand:
+        amount = parse_brl(form.get("amount", "")) if form.get("amount", "").strip() else None
+        by_installment = form.get("amount_mode") == "installment"
+        count = int(form.get("installments") or 1)
+        return CardPurchaseCommand(
+            account_id=form.get("account_id", ""),
+            description=form.get("description", ""),
+            purchased_on=parse_date(form["date"], today()) if form.get("date") else None,
+            category_id=form.get("category_id") or None,
+            installments=count,
+            current_installment=int(form.get("current_installment") or 1),
+            total_cents=None if by_installment else amount,
+            installment_cents=amount if by_installment else None,
+            statement_month=YearMonth.parse(form["statement_month"])
+            if form.get("statement_month")
+            else None,
+            is_recurring=bool(form.get("recurring")),
+        )
+
+    @app.get("/cards/purchase", response_class=HTMLResponse)
+    def purchase_form(request: Request, card: str = ""):
+        return render(
+            request, "purchase.html", purchase_context({"account_id": card} if card else None)
+        )
+
+    @app.post("/cards/purchase/preview", response_class=HTMLResponse)
+    async def purchase_preview(request: Request):
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        try:
+            preview = PreviewCardPurchase(c.uow).execute(purchase_command(form))
+        except (DomainError, ValueError) as error:
+            text = (
+                messages.render_error(error)
+                if isinstance(error, DomainError)
+                else "Confira os campos."
+            )
+            return templates.TemplateResponse(
+                request, "_purchase_preview.html", {"preview": None, "problem": text}
+            )
+        return templates.TemplateResponse(
+            request, "_purchase_preview.html", {"preview": preview, "problem": None}
+        )
+
+    @app.post("/cards/purchase")
+    async def purchase_save(request: Request):
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        try:
+            result = RegisterCardPurchase(c.uow).execute(purchase_command(form))
+        except DomainError as error:
+            return render(request, "purchase.html", purchase_context(form), error=error)
+        except ValueError:
+            return render(
+                request,
+                "purchase.html",
+                purchase_context(form),
+                error=DomainError("INVALID_AMOUNT"),
+            )
+        first = result.transactions[0]
+        with c.uow as work:
+            statement = work.statements.get(first.statement_id or "")
+        assert statement is not None
+        return back("/cards", "purchase", card=statement.account_id, month=str(statement.month))
 
     # --- categories ----------------------------------------------------------------------------
 

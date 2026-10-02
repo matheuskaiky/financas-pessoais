@@ -174,3 +174,29 @@ tr.inactive { opacity: .6; }
 /* entry form: the segmented control decides which fields are shown (no JS needed) */
 .quick:not(:has(input[value="transfer"]:checked)) .only-transfer { display: none; }
 .quick:has(input[value="transfer"]:checked) .only-entry { display: none; }
+
+/* cards */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.tile { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; color: var(--text); text-decoration: none; }
+.tile.on { border: 2px solid var(--navy); padding: 13px 15px; }
+.limit { display: flex; flex-direction: column; gap: 4px; }
+.limit-track { height: 10px; border-radius: 5px; background: #E3E9F0; }
+.limit-track.hatched { background: repeating-linear-gradient(135deg, #E3E9F0 0 6px, #F3F6F9 6px 12px); }
+.limit-fill { display: block; height: 10px; border-radius: 5px; background: var(--green); }
+.limit-fill.warn { background: #B7791F; } .limit-fill.bad { background: var(--red); }
+.statement-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.statement-tabs a { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid var(--field); border-radius: 22px; background: #fff; color: var(--text); text-decoration: none; font-size: 14px; }
+.statement-tabs a[aria-current="true"] { background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 600; }
+.recon { display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--band); border-radius: 10px; }
+.card-entry { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "desc amt" "cat inst" "adj adj"; gap: 4px 12px; padding: 12px 14px; }
+.card-entry .c-date { display: none; } .card-entry .c-desc { grid-area: desc; } .card-entry .c-cat { grid-area: cat; font-size: 13px; }
+.card-entry .c-inst { grid-area: inst; font-size: 13px; text-align: right; } .card-entry .c-amt { grid-area: amt; font-weight: 600; text-align: right; } .card-entry .c-adjust { grid-area: adj; }
+@media (min-width: 700px) {
+  .card-entry { grid-template-columns: 56px minmax(0, 1fr) 150px 80px 130px; grid-template-areas: none; }
+  .card-entry .c-date { display: block; } .card-entry .c-adjust { grid-column: 2 / -1; grid-area: auto; }
+  .card-entry .c-desc, .card-entry .c-cat, .card-entry .c-inst, .card-entry .c-amt { grid-area: auto; font-size: 15px; }
+}
+.explain { background: var(--band); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.45; }
+.explain strong { color: var(--navy); }
+.sched-row { grid-template-columns: 64px minmax(0, 1fr) 56px 56px 110px; padding: 10px 12px; }
+.segmented.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }

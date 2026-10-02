@@ -1,0 +1,22 @@
+{% if problem %}
+<div class="banner error" role="status">{{ problem }}</div>
+{% else %}
+<div class="explain">
+  <strong>{{ preview.assignment.month|month_short|capitalize }}</strong>
+  <span>{{ explain(preview.assignment) }}</span>
+  <small>{{ best_day(preview.assignment) }}</small>
+</div>
+<div class="list-box">
+  <div class="rowhead sched-row"><span>Parcela</span><span>Fatura</span><span>Fecha</span><span>Vence</span><span class="num">Valor</span></div>
+  {% for l in preview.lines %}
+  <div class="row sched-row">
+    <span>{{ l.number }}/{{ l.installment_total }}</span>
+    <span>{{ l.statement_month|month_short }}{% if l.statement_exists %} <small class="soft">· já existe</small>{% endif %}</span>
+    <span class="soft">{{ l.closing_date|date_short }}</span><span class="soft">{{ l.due_date|date_short }}</span>
+    <span class="num"><strong>{{ l.amount_cents|brl }}</strong></span>
+  </div>
+  {% endfor %}
+  <div class="list-foot"><span>Total · {{ preview.lines|length }} parcela(s){% if preview.lines|length > 1 %} (a 1ª absorve o resto dos centavos){% endif %}</span><strong>{{ preview.total_cents|brl }}</strong></div>
+</div>
+<p class="hint">Gerado ao salvar, inclusive as parcelas futuras. Qualquer parcela pode ser ajustada à mão depois, e parcelas de faturas já pagas nunca são reescritas.</p>
+{% endif %}

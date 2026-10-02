@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% from "_macros.html" import avatar, status_pill, limit_bar, dot, color_fields %}
+{% block title %}Cartões{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Cartões</h1>
+    <p>Faturas, parcelas e limite · hoje é {{ today[8:10] }}/{{ today[5:7] }}/{{ today[0:4] }}</p>
+  </div>
+  <div class="head-tools">
+    {% if overview.cards %}<a class="btn" href="/cards/purchase{{ '?card=' ~ chosen.account.id if chosen }}">Nova compra</a>{% endif %}
+  </div>
+</header>
+
+{% if overview.cards %}
+<section class="cards" aria-label="Totais dos cartões">
+  <div class="card"><span class="label">Faturas a pagar (fechadas)</span><strong>{{ overview.closed_to_pay_cents|brl }}</strong></div>
+  <div class="card"><span class="label">Faturas abertas</span><strong>{{ overview.open_total_cents|brl }}</strong></div>
+  <div class="card"><span class="label">Parcelas futuras</span><strong>{{ overview.future_installments_cents|brl }}</strong></div>
+  <div class="card"><span class="label">Limite disponível (cartões com limite)</span>
+    <strong>{{ overview.available_cents|brl if overview.available_cents is not none else '—' }}</strong>
+    {% if overview.available_cents is none %}<small>Nenhum cartão com limite informado</small>{% endif %}</div>
+</section>
+
+<section class="tiles" aria-label="Cartões">
+  {% for v in overview.cards %}
+  <a class="tile {{ 'on' if chosen and chosen.account.id == v.account.id }}" href="/cards?card={{ v.account.id }}" {% if chosen and chosen.account.id == v.account.id %}aria-current="true"{% endif %}>
+    <span class="with-avatar">{{ avatar(account_looks[v.account.id], 36) }}
+      <span><strong>{{ v.account.nickname }}</strong><br><small>fecha {{ v.account.closing_day }} · vence {{ v.account.due_day }}</small></span></span>
+    {{ limit_bar(v.usage) }}
+    <small>Comprometido {{ v.usage.committed_cents|brl }}{% if v.usage.limit_cents is not none %} · Limite {{ v.usage.limit_cents|brl }}{% endif %}</small>
+  </a>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if chosen %}
+<nav class="statement-tabs" aria-label="Faturas de {{ chosen.account.nickname }}">
+  {% for st in chosen.statements %}
+  <a href="/cards?card={{ chosen.account.id }}&month={{ st.statement.month }}" {% if statement and statement.statement.id == st.statement.id %}aria-current="true"{% endif %}>
+    {{ st.statement.month|month_short }} · {{ status_labels[st.status]|lower }}</a>
+  {% else %}<span class="soft">Nenhuma fatura ainda: lance uma compra neste cartão.</span>{% endfor %}
+</nav>
+
+{% if statement %}
+<div class="cols">
+  <section class="panel" aria-labelledby="h-st">
+    <header>
+      <div><h2 id="h-st">{{ statement_label(statement.statement) }}</h2>
+        <small>{% if statement.status.value == 'closed' %}{% if statement.days_to_due >= 0 %}vence em {{ statement.days_to_due }} dia(s){% else %}venceu há {{ -statement.days_to_due }} dia(s){% endif %}{% endif %}</small></div>
+      {{ status_pill(statement.status) }}
+    </header>
+    <div class="cards" style="grid-template-columns: repeat(3, minmax(0, 1fr))">
+      <div class="card"><span class="label">Total lançado</span><strong>{{ statement.total_cents|brl }}</strong></div>
+      <div class="card"><span class="label">Pago</span><strong>{{ statement.paid_cents|brl }}</strong></div>
+      <div class="card"><span class="label">A pagar</span><strong>{{ statement.outstanding_cents|brl }}</strong></div>
+    </div>
+
+    <details {{ 'open' if statement.outstanding_cents > 0 and statement.status.value == 'closed' }}>
+      <summary>Pagar fatura</summary>
+      {% if checking_accounts %}
+      <form method="post" action="/statements/{{ statement.statement.id }}/pay" class="grid-form">
+        <label class="field"><span>Pagar com</span>
+          <select name="from_account">{% for a in checking_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+        <label class="field"><span>Valor (vazio = o que falta)</span>
+          <input type="text" name="amount" inputmode="decimal" value="{{ decimal(statement.outstanding_cents) if statement.outstanding_cents > 0 }}"></label>
+        <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+        <button type="submit">Registrar pagamento</button>
+      </form>
+      <p class="hint">É uma transferência da conta para o cartão: não conta de novo como despesa. Pagamentos parciais são aceitos.</p>
+      {% else %}<p class="empty">Cadastre uma conta corrente para pagar faturas.</p>{% endif %}
+    </details>
+
+    <div class="recon">
+      <h3>Conferência com o banco</h3>
+      {% set rec = statement.reconciliation %}
+      {% if rec.informed_cents is none %}
+        <p class="hint">Informe o total que o banco mostra para comparar com os lançamentos.</p>
+      {% else %}
+        <div class="totals-strip">
+          <span>Lançado <strong>{{ rec.entered_cents|brl }}</strong></span>
+          <span>Informado pelo banco <strong>{{ rec.informed_cents|brl }}</strong></span>
+          <span>Diferença <strong class="{{ 'neg' if rec.difference_cents != 0 else 'pos' }}">{{ rec.difference_cents|signed if rec.difference_cents != 0 else 'R$ 0,00' }}</strong></span>
+        </div>
+      {% endif %}
+      <form method="post" action="/statements/{{ statement.statement.id }}/informed" class="row-form">
+        <label class="field"><span>Total do banco</span>
+          <input type="text" name="amount" inputmode="decimal" value="{{ decimal(rec.informed_cents) if rec.informed_cents is not none }}" placeholder="0,00"></label>
+        <button type="submit" class="secondary">Salvar total</button>
+      </form>
+      {% if rec.difference_cents and rec.difference_cents > 0 %}
+      <form method="post" action="/statements/{{ statement.statement.id }}/difference">
+        <button type="submit">Lançar diferença como “Não categorizado”</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <details>
+      <summary>Datas da fatura</summary>
+      <form method="post" action="/statements/{{ statement.statement.id }}/dates" class="grid-form">
+        <label class="field"><span>Fechamento</span><input type="date" name="closing" value="{{ statement.statement.closing_date.isoformat() }}" required></label>
+        <label class="field"><span>Vencimento</span><input type="date" name="due" value="{{ statement.statement.due_date.isoformat() }}" required></label>
+        <button type="submit" class="secondary">Salvar datas</button>
+      </form>
+      <p class="hint">Sem ajuste para dias úteis: corrija aqui se o banco usou outras datas.</p>
+    </details>
+
+    <div class="list-box">
+      {% if detail.entries %}
+      <div class="rowhead entry-head" style="grid-template-columns: 56px minmax(0, 1fr) 150px 80px 130px"><span>Data</span><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
+      {% for t in detail.entries %}
+      <div class="row card-entry">
+        <span class="c-date soft">{{ t.posted_on|date_short }}</span>
+        <div class="c-desc"><span>{{ t.description or kind_labels[t.kind] }}{% if t.transfer_id %} <span class="tag">pagamento</span>{% endif %}</span></div>
+        <span class="c-cat with-dot soft">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
+        <span class="c-inst soft">{% if t.plan_id %}{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}{% else %}—{% endif %}</span>
+        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|signed }}</span>
+        {% if t.plan_id and statement.status.value != 'paid' %}
+        <details class="c-adjust"><summary>Ajustar valor</summary>
+          <form method="post" action="/entries/{{ t.id }}/amount" class="row-form">
+            <input type="text" name="amount" inputmode="decimal" value="{{ decimal(-t.amount_cents) }}" aria-label="Novo valor da parcela">
+            <button type="submit" class="secondary">Salvar</button></form></details>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% else %}<div class="list-foot"><span>Esta fatura ainda não tem lançamentos.</span></div>{% endif %}
+    </div>
+  </section>
+
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-inst">
+      <h2 id="h-inst">Parcelas ativas</h2>
+      {% if installments %}
+      <ul class="plain">
+        {% for p in installments %}
+        <li><span><strong>{{ p.plan.description }}</strong><br><small>{{ p.paid_count }}/{{ p.plan.installment_total }} pagas · restam {{ p.remaining_count }}{% if p.next_statement_month %} · próxima: {{ p.next_statement_month|month_short }}{% endif %}</small></span>
+          <span class="num"><strong>{{ p.to_pay_cents|brl }}</strong><br><small>a pagar</small>
+            <form method="post" action="/plans/{{ p.plan.id }}/delete" data-confirm="Apagar esta compra parcelada e todas as parcelas?"><button type="submit" class="link danger">Apagar</button></form></span></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="empty">Nenhuma compra parcelada em aberto.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-sch">
+      <h2 id="h-sch">Parcelas por mês</h2>
+      {% if schedule %}
+      <ul class="plain">
+        {% for r in schedule %}<li><span>{{ r.month|month_short }} <small>· {{ status_labels[r.status]|lower }}</small></span><strong>{{ r.amount_cents|brl }}</strong></li>{% endfor %}
+      </ul>
+      <small>Parcelas futuras contam no limite comprometido.</small>
+      {% else %}<p class="empty">Sem parcelas a vencer.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-cfg">
+      <h2 id="h-cfg">{{ chosen.account.nickname }}</h2>
+      <details>
+        <summary>Fechamento, vencimento e limite</summary>
+        <form method="post" action="/cards/{{ chosen.account.id }}/settings" class="grid-form">
+          <label class="field"><span>Dia de fechamento</span><input type="text" name="closing_day" inputmode="numeric" value="{{ chosen.account.closing_day }}" required></label>
+          <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" value="{{ chosen.account.due_day }}" required></label>
+          <label class="field"><span>Limite (vazio = não informado)</span><input type="text" name="limit" inputmode="decimal" value="{{ decimal(chosen.account.credit_limit_cents) if chosen.account.credit_limit_cents is not none }}"></label>
+          <button type="submit" class="secondary">Salvar</button>
+        </form>
+        <p class="hint">Mudanças valem só para lançamentos novos; faturas já criadas mantêm as datas.</p>
+      </details>
+    </section>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+<section class="panel" aria-labelledby="h-newcard">
+  <h2 id="h-newcard">Novo cartão</h2>
+  {% if not institution_choices %}
+  <p class="empty">Antes, cadastre a instituição em <a href="/accounts">Contas</a>.</p>
+  {% else %}
+  <details {{ 'open' if not overview.cards }}>
+    <summary>Cadastrar cartão de crédito</summary>
+    <form method="post" action="/cards" enctype="multipart/form-data" class="grid-form">
+      <label class="field wide"><span>Apelido</span><input type="text" name="nickname" required maxlength="120" placeholder="Nubank"></label>
+      <label class="field"><span>Instituição</span>
+        <select name="institution_id" required>{% for i in institution_choices %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Dia de fechamento</span><input type="text" name="closing_day" inputmode="numeric" required></label>
+      <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" required></label>
+      <label class="field"><span>Limite (opcional)</span><input type="text" name="limit" inputmode="decimal" placeholder="0,00"></label>
+      {{ color_fields() }}
+      <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+      <button type="submit">Salvar cartão</button>
+    </form>
+    <p class="hint">Use os dias reais do seu cartão: o sistema não adivinha o fechamento.</p>
+  </details>
+  {% endif %}
+</section>
+{% endblock %}
