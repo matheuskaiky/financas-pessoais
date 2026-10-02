@@ -5,16 +5,16 @@
 <header class="page-head"><div><span class="eyebrow">Cadastro</span><h1>Categorias</h1><p>Cores escolhidas por você; sem escolha, usa-se uma paleta fixa</p></div></header>
 <section class="panel">
   <div class="table-scroll">
-  <table>
+  <table class="rtable">
     <thead><tr><th>Categoria</th><th>Grupo</th><th>Tipo</th><th class="num">Orçamento mensal</th><th>Cor</th></tr></thead>
     <tbody>
     {% for c in categories %}
       <tr>
         <td><span class="with-dot">{{ dot(category_colors[c.id]) }}{{ c.name }}</span></td>
-        <td>{{ group_labels[c.group] }}</td>
-        <td>{{ category_kind_labels[c.kind] }}</td>
-        <td class="num">{{ c.monthly_budget_cents|brl if c.monthly_budget_cents is not none else '—' }}</td>
-        <td><details><summary>Alterar</summary>{{ appearance_form('category', c.id, c.color, false, false) }}</details></td>
+        <td data-label="Grupo">{{ group_labels[c.group] }}</td>
+        <td data-label="Tipo">{{ category_kind_labels[c.kind] }}</td>
+        <td class="num" data-label="Orçamento mensal">{{ c.monthly_budget_cents|brl if c.monthly_budget_cents is not none else '—' }}</td>
+        <td data-label="Cor"><details><summary>Alterar</summary>{{ appearance_form('category', c.id, c.color, false, false) }}</details></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -29,7 +29,7 @@
       <select name="group">{% for g in groups %}<option value="{{ g.value }}">{{ group_labels[g] }}</option>{% endfor %}</select></label>
     <label class="field"><span>Tipo</span>
       <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ category_kind_labels[k] }}</option>{% endfor %}</select></label>
-    <label class="field"><span>Orçamento mensal</span><input type="text" name="budget" inputmode="decimal" placeholder="0,00"></label>
+    <label class="field"><span>Orçamento mensal</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="budget" inputmode="decimal" placeholder="0,00"></span></label>
     {{ color_fields() }}
     <button type="submit">Salvar categoria</button>
   </form>

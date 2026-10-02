@@ -1,22 +1,43 @@
+{% from "_ui.html" import odometer, stroke_gauge, state_error %}
 {% if problem %}
 <div class="banner error" role="status">{{ problem }}</div>
 {% else %}
-<div class="explain">
-  <strong>{{ preview.assignment.month|month_short|capitalize }}</strong>
-  <span>{{ explain(preview.assignment) }}</span>
-  <small>{{ best_day(preview.assignment) }}</small>
-</div>
-<div class="list-box">
-  <div class="rowhead sched-row"><span>Parcela</span><span>Fatura</span><span>Fecha</span><span>Vence</span><span class="num">Valor</span></div>
-  {% for l in preview.lines %}
-  <div class="row sched-row">
-    <span>{{ l.number }}/{{ l.installment_total }}</span>
-    <span>{{ l.statement_month|month_short }}{% if l.statement_exists %} <small class="soft">· já existe</small>{% endif %}</span>
-    <span class="soft">{{ l.closing_date|date_short }}</span><span class="soft">{{ l.due_date|date_short }}</span>
-    <span class="num"><strong>{{ l.amount_cents|brl }}</strong></span>
+<div class="receipt">
+  <div class="receipt-top">
+    <span class="eyebrow">Total da compra</span>
+    <span class="receipt-total">{{ odometer(preview.total_cents, size=44, flat=True) }}</span>
+    <small>{% if preview.lines|length > 1 %}em {{ preview.lines|length }} parcelas{% else %}à vista{% endif %}</small>
   </div>
-  {% endfor %}
-  <div class="list-foot"><span>Total · {{ preview.lines|length }} parcela(s){% if preview.lines|length > 1 %} (a 1ª absorve o resto dos centavos){% endif %}</span><strong>{{ preview.total_cents|brl }}</strong></div>
+  <div class="explain">
+    <span class="explain-ic" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+    <div><strong>{{ preview.assignment.month|month_short|capitalize }}</strong>
+    <span>{{ explain(preview.assignment) }}</span>
+    <small>{{ best_day(preview.assignment) }}</small></div>
+  </div>
+  <div class="sched">
+    <div class="rowhead sched-row"><span>Parcela</span><span>Fatura</span><span>Fecha</span><span>Vence</span><span class="num">Valor</span></div>
+    {% for l in preview.lines %}
+    <div class="row sched-row">
+      <span>{{ l.number }}/{{ l.installment_total }}</span>
+      <span class="c-st">{{ l.statement_month|month_short }}{% if l.statement_exists %}<small class="soft">fatura já existe</small>{% endif %}</span>
+      <span class="soft">{{ l.closing_date|date_short }}</span><span class="soft">{{ l.due_date|date_short }}</span>
+      <span class="num"><strong>{{ l.amount_cents|brl }}</strong></span>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="sched-total"><span>Total · {{ preview.lines|length }} parcela(s){% if preview.lines|length > 1 %} <small>(a 1ª absorve o resto dos centavos)</small>{% endif %}</span><strong>{{ preview.total_cents|brl }}</strong></div>
 </div>
+{% if usage %}
+<div class="limit-card">
+  <h3>Limite do cartão</h3>
+  {% if usage.limit_cents %}
+  {{ stroke_gauge(usage.percent or 0, add=(preview.total_cents * 100 / usage.limit_cents), height=12, label='Comprometido ' ~ ((usage.percent or 0) / 100)|percent ~ ' do limite; com esta compra ' ~ (((usage.percent or 0) + preview.total_cents * 100 / usage.limit_cents) / 100)|percent) }}
+  <div class="sg-caption"><span>Hoje <strong>{{ ((usage.percent or 0) / 100)|percent }}</strong> · com esta compra <strong>{{ (((usage.percent or 0) + preview.total_cents * 100 / usage.limit_cents) / 100)|percent }}</strong></span><span>Limite {{ usage.limit_cents|brl }}</span></div>
+  {% else %}
+  {{ stroke_gauge(0, unset=True, height=12) }}
+  <div class="sg-caption"><strong>Limite não informado</strong></div>
+  {% endif %}
+</div>
+{% endif %}
 <p class="hint">Gerado ao salvar, inclusive as parcelas futuras. Qualquer parcela pode ser ajustada à mão depois, e parcelas de faturas já pagas nunca são reescritas.</p>
 {% endif %}

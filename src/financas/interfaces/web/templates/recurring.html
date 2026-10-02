@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import dot %}
+{% from "_ui.html" import state_empty %}
 {% block title %}Recorrentes{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -9,34 +10,34 @@
 <section class="panel" aria-labelledby="h-alerts">
   <h2 id="h-alerts">Alertas</h2>
   {% if view.alerts %}
-  <div style="display: flex; flex-direction: column; gap: 10px">
+  <div class="alert-list">
     {% for a in view.alerts %}
     <div class="attn"><span class="pill {{ {'disappeared': 'warn', 'changed': 'warn', 'appeared': 'blue'}[a.kind.value] }}">{{ alert_labels[a.kind] }}</span>
       <span>{{ describe_alert(a, view.labels[a.key], last_closed) }}</span></div>
     {% endfor %}
   </div>
   <small>Comparação do último mês fechado ({{ last_closed|month_short }}) com o anterior.</small>
-  {% else %}<p class="empty">Nenhum alerta: as cobranças recorrentes seguem iguais.</p>{% endif %}
+  {% else %}{{ state_empty('Nenhum alerta', 'As cobranças recorrentes seguem iguais ao mês anterior.', icon='calendar') }}{% endif %}
 </section>
 
 <section class="panel" aria-labelledby="h-matrix">
   <h2 id="h-matrix">Catálogo e matriz mensal</h2>
   {% if view.items %}
   <div class="table-scroll">
-  <table>
+  <table class="rtable">
     <thead><tr><th>Item</th>{% for m in view.months %}<th class="num">{{ m|month_short }}{% if m == view.current_month %}<br><small>em andamento</small>{% endif %}</th>{% endfor %}</tr></thead>
     <tbody>
     {% for i in view.items %}
       <tr>
         <td><span class="with-dot">{{ dot(category_colors[i.category_id]) }}<span><strong>{{ i.label }}</strong><br><small>{{ category_by_id[i.category_id].name }}</small></span></span></td>
-        {% for m in view.months %}<td class="num">{{ i.amounts[m]|brl if m in i.amounts else '—' }}</td>{% endfor %}
+        {% for m in view.months %}<td class="num" data-label="{{ m|month_short }}">{{ i.amounts[m]|brl if m in i.amounts else '—' }}</td>{% endfor %}
       </tr>
     {% endfor %}
-      <tr class="subtotal"><td><strong>Total</strong></td>{% for m in view.months %}<td class="num"><strong>{{ view.monthly_total_cents[m]|brl }}</strong></td>{% endfor %}</tr>
+      <tr class="subtotal"><td><strong>Total</strong></td>{% for m in view.months %}<td class="num" data-label="{{ m|month_short }}"><strong>{{ view.monthly_total_cents[m]|brl }}</strong></td>{% endfor %}</tr>
     </tbody>
   </table>
   </div>
   <small>Marque “Recorrente” ao lançar uma despesa para ela entrar aqui. Compras no cartão contam no mês da fatura.</small>
-  {% else %}<p class="empty">Nenhuma despesa recorrente nos últimos meses. Marque “Recorrente” ao lançar uma despesa fixa.</p>{% endif %}
+  {% else %}{{ state_empty('Nenhuma despesa recorrente nos últimos meses', 'Marque “Recorrente” ao lançar uma despesa fixa (assinatura, seguro, aluguel) para ela entrar aqui.', 'Lançar despesa', '/entries#form', 'calendar') }}{% endif %}
 </section>
 {% endblock %}

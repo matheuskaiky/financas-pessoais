@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, dot %}
+{% from "_ui.html" import odometer, state_empty %}
 {% block title %}Lançamentos{% endblock %}
 {% macro filter_url(extra) -%}
 /entries?month={{ month_value }}{% for k, v in filters.items() if v and k not in extra %}&{{ k }}={{ v|urlencode }}{% endfor %}{% for k, v in extra.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
@@ -10,44 +11,43 @@
     <span class="eyebrow">Movimento</span><h1>Lançamentos</h1>
     <p>{{ month_label|capitalize }} · {{ month_count }} lançamento(s)</p>
   </div>
-  <div class="head-tools">
-    <a class="btn secondary" href="/entries?month={{ prev_month }}" aria-label="Mês anterior">‹</a>
-    <strong>{{ month_label|capitalize }}</strong>
-    <a class="btn secondary" href="/entries?month={{ next_month }}" aria-label="Próximo mês">›</a>
-    <a class="btn" href="#form">Novo lançamento</a>
+  <div class="head-tools month-switch">
+    <a class="icon-btn" href="/entries?month={{ prev_month }}" aria-label="Mês anterior"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <strong class="month-name">{{ month_label|capitalize }}</strong>
+    <a class="icon-btn" href="/entries?month={{ next_month }}" aria-label="Próximo mês"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></a>
+    <a class="btn only-narrow" href="#form">Novo lançamento</a>
   </div>
 </header>
 
 <div class="cols entries">
   <div class="stack" style="gap: 16px">
-    <form method="get" action="/entries" role="search" class="panel">
+    <form method="get" action="/entries" role="search" class="filter-bar">
       <input type="hidden" name="month" value="{{ month_value }}">
-      <div class="grid-form">
-        <label class="field wide"><span>Buscar (ignora acentos)</span><input type="search" name="q" value="{{ filters.q }}" placeholder="café são joão"></label>
-        <label class="field"><span>Tipo</span>
-          <select name="kind"><option value="">Todos</option>
-            {% for k, label in kind_labels.items() %}<option value="{{ k.value }}" {{ 'selected' if filters.kind == k.value }}>{{ label }}</option>{% endfor %}
-          </select></label>
-        <label class="field"><span>Conta</span>
-          <select name="account"><option value="">Todas</option>
-            {% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if filters.account == a.id }}>{{ a.nickname }}</option>{% endfor %}
-          </select></label>
-        <label class="field"><span>Categoria</span>
-          <select name="category"><option value="">Todas</option>
-            {% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id }}>{{ c.name }}</option>{% endfor %}
-          </select></label>
-        <button type="submit" class="secondary">Filtrar</button>
-      </div>
+      <label class="field f-search"><span class="sr-only">Buscar (ignora acentos)</span>
+        <span class="search-box"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input type="search" name="q" value="{{ filters.q }}" placeholder="Buscar" title="A busca ignora acentos e maiúsculas (ex.: café são joão)"></span></label>
+      <label class="field"><span class="sr-only">Tipo</span>
+        <select name="kind" aria-label="Tipo" data-autosubmit><option value="">Todos os tipos</option>
+          {% for k, label in kind_labels.items() %}<option value="{{ k.value }}" {{ 'selected' if filters.kind == k.value }}>{{ label }}</option>{% endfor %}
+        </select></label>
+      <label class="field"><span class="sr-only">Conta</span>
+        <select name="account" aria-label="Conta" data-autosubmit><option value="">Todas as contas</option>
+          {% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if filters.account == a.id }}>{{ a.nickname }}</option>{% endfor %}
+        </select></label>
+      <label class="field"><span class="sr-only">Categoria</span>
+        <select name="category" aria-label="Categoria" data-autosubmit><option value="">Todas as categorias</option>
+          {% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id }}>{{ c.name }}</option>{% endfor %}
+        </select></label>
+      <button type="submit" class="secondary">Filtrar</button>
     </form>
 
-    <div class="totals-strip">
-      <span>Receitas <strong>{{ summary.income_cents|brl }}</strong></span>
-      <span>Despesas <strong class="neg">{{ (-summary.expenses_cents)|signed if summary.expenses_cents else (0|brl) }}</strong></span>
-      <span>Saldo <strong class="{{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong></span>
-      <span class="soft">Transferências não entram nesses totais</span>
+    <div class="statstrip totals">
+      <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True) }}</span></div>
+      <div><span class="label">Despesas</span><span class="fig neg">{{ odometer(-summary.expenses_cents, size=30, flat=True) }}</span></div>
+      <div><span class="label">Saldo</span><span class="fig {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{% if summary.balance_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.balance_cents, size=30, flat=True) }}</span></div>
+      <div class="note"><small>Transferências ficam fora destes totais</small></div>
     </div>
 
-    <section class="list-box" aria-label="Lista de lançamentos">
+    <section class="list-box" id="lista" aria-label="Lista de lançamentos">
       {% if rows %}
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
       {% set seen = namespace(day=none) %}
@@ -62,7 +62,7 @@
         <span class="c-cat with-dot">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
         <span class="c-acct">{% for a in accounts if a.id == t.account_id %}{{ a.nickname }}{% endfor %}</span>
         <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|signed }}</span>
-        <span class="c-act"><button class="link danger" hx-post="/entries/{{ t.id }}/delete" hx-confirm="Apagar este lançamento?" type="button">Apagar</button></span>
+        <span class="c-act"><button class="link danger" hx-post="/entries/{{ t.id }}/delete" hx-confirm="Este lançamento será apagado. Não dá para desfazer." data-confirm-title="Apagar lançamento" data-confirm-ok="Apagar" data-confirm-danger type="button" aria-label="Apagar lançamento {{ t.description or kind_labels[t.kind] }}">Apagar</button></span>
       </div>
       {% endfor %}
       <div class="list-foot">
@@ -70,17 +70,21 @@
         {% if rows|length < row_count %}<a class="btn secondary" href="{{ filter_url({'limit': next_limit}) }}">Carregar mais</a>{% endif %}
       </div>
       {% else %}
-      <div class="list-foot"><span>{{ 'Nenhum lançamento com esses filtros.' if filters.q or filters.kind or filters.account or filters.category else 'Nenhum lançamento neste mês.' }}</span></div>
+      {% set filtered = filters.q or filters.kind or filters.account or filters.category %}
+      <div class="state-slot">{{ state_empty(
+        'Nenhum lançamento com esses filtros.' if filtered else 'Nenhum lançamento neste mês.',
+        'Tente outra busca ou limpe os filtros.' if filtered else 'Registre o primeiro pelo formulário ao lado, ou escolha outro mês.',
+        'Limpar filtros' if filtered else None, ('/entries?month=' ~ month_value) if filtered else None, 'search' if filtered else 'inbox') }}</div>
       {% endif %}
     </section>
   </div>
 
   <aside id="form" class="panel quick" aria-labelledby="h-quick">
-    <h2 id="h-quick">Lançamento rápido</h2>
+    <header class="quick-head"><h2 id="h-quick">Lançamento rápido</h2><a class="icon-btn quick-close" href="#lista" aria-label="Fechar formulário"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></a></header>
     {% if not entry_accounts and not transfer_accounts %}
       <p class="empty">Cadastre uma conta corrente em <a href="/accounts">Contas</a> para lançar receitas e despesas.</p>
     {% else %}
-    <form method="post" action="/entries" style="display: flex; flex-direction: column; gap: 16px">
+    <form method="post" action="/entries" class="quick-form">
       <div class="segmented" role="radiogroup" aria-label="Tipo"
            hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
            hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
@@ -91,7 +95,7 @@
       </div>
 
       <label class="field"><span>Valor</span>
-        <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required>
+        <span class="money big"><span class="cur" aria-hidden="true">R$</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span>
         <small>Aceita vírgula decimal</small></label>
 
       <label class="field"><span>Descrição</span>
@@ -102,29 +106,35 @@
 
       <div class="only-entry" id="category-field">{% include "_category_field.html" %}</div>
 
-      <label class="field only-entry"><span>Conta</span>
-        <select name="account_id">
+      <div class="pair">
+      <label class="field only-entry"><span>Conta ou cartão</span>
+        <select name="account_id" data-entry-account>
           <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
-          {% for a in entry_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
+          {# a card takes purchases and refunds, never income: the options follow the chosen type #}
+          {% for a in entry_accounts %}{% set kinds = 'expense refund' if a.kind.value == 'credit_card' else 'expense income refund' %}<option value="{{ a.id }}" data-kinds="{{ kinds }}" {{ 'selected' if form.account_id == a.id and (form.kind or 'expense') in kinds.split() }} {{ 'hidden disabled' if (form.kind or 'expense') not in kinds.split() }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
         </select></label>
 
-      <div class="only-transfer" style="display: flex; flex-direction: column; gap: 12px">
+      <label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>
+      </div>
+
+      <div class="only-transfer stack-form">
         <label class="field"><span>De</span>
-          <select name="from_account"><option value="">Conta não controlada</option>
+          <select name="from_account" data-transfer-from><option value="">Conta não controlada</option>
             {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.from_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
         <label class="field"><span>Para</span>
-          <select name="to_account"><option value="">Conta não controlada</option>
+          <select name="to_account" data-transfer-to><option value="">Conta não controlada</option>
             {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.to_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
         <p class="hint">Transferências, aportes e resgates não contam como receita nem despesa.</p>
       </div>
 
-      <label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>
-      <label class="check only-entry"><input type="checkbox" name="recurring" value="1" {{ 'checked' if form.recurring }}> Recorrente</label>
       <label class="field"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
-      <div class="mobile-save"><button type="submit" style="width: 100%">Salvar lançamento</button></div>
-      <a class="only-entry" href="/cards/purchase" style="min-height: 44px; display: inline-flex; align-items: center; font-weight: 600">Parcelar uma compra no cartão →</a>
+      <div class="quick-extra only-entry">
+        <label class="check"><input type="checkbox" name="recurring" value="1" {{ 'checked' if form.recurring }}> Recorrente</label>
+        <a class="link-quiet" href="/cards/purchase">Parcelar compra no cartão</a>
+      </div>
+      <div class="mobile-save"><button type="submit">Salvar lançamento</button></div>
     </form>
     {% endif %}
   </aside>

@@ -1,159 +1,160 @@
 {% extends "base.html" %}
-{% from "_macros.html" import dot %}
+{% from "_ui.html" import odometer, stroke_gauge, delta_chip, state_empty %}
+{% from "_charts.html" import net_worth_card, pace_card, flow_card, donut_card, month_stepper %}
 {% block title %}Painel{% endblock %}
 {% block head %}
-  <script src="/static/chart.umd.min.js" defer></script>
-  <script src="/static/dashboard.js" defer></script>
+  <link rel="stylesheet" href="/static/charts.css">
+  <script type="module" src="/static/charts.js"></script>
 {% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
     <span class="eyebrow">Visão geral</span>
     <h1>Painel</h1>
-    <p>{{ title|capitalize }} · tudo calculado a partir dos seus lançamentos</p>
+    <p class="sr-only">{{ title|capitalize }} · tudo calculado a partir dos seus lançamentos</p>
   </div>
-  <form method="get" action="/" class="head-tools">
-    <label class="sr-only" for="year">Ano</label>
-    <select id="year" name="year" data-autosubmit>
-      {% for y in years %}<option value="{{ y }}" {{ 'selected' if year == y }}>{{ y }}</option>{% endfor %}
-    </select>
-    <label class="sr-only" for="month">Mês</label>
-    <select id="month" name="month" data-autosubmit>
-      <option value="0" {{ 'selected' if month == 0 }}>Ano inteiro</option>
-      {% for n, name in month_names %}<option value="{{ n }}" {{ 'selected' if month == n }}>{{ name }}</option>{% endfor %}
-    </select>
-    <noscript><button type="submit" class="secondary">Ver</button></noscript>
+  <div class="head-tools">
+    {% if letter %}<a class="pn-letter" href="{{ letter.href }}"><span class="pn-letter-dot" aria-hidden="true"></span>Carta de {{ letter.month }} pronta</a>{% endif %}
+    {{ month_stepper(month_nav) }}
     <a class="btn" href="/entries#form">
       <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Novo lançamento</a>
-  </form>
+  </div>
 </header>
 
-{% set sign, whole, frac = summary.balance_cents|money_parts %}
-<section class="hero" aria-label="Saldo do período">
-  <div>
-    <span class="label">Saldo do período · {{ title }}</span>
-    <div class="amount {{ 'neg' if summary.balance_cents < 0 }}">
-      {% if sign %}<span class="minus">−</span>{% endif %}<span class="cur">R$</span>{{ whole }}<span class="cents">,{{ frac }}</span>
+<div class="pn-top">
+  <section class="hero pn-hero" aria-label="Saldo do mês">
+    <div>
+      <span class="label">Saldo de {{ month_name }}</span>
+      <div class="pn-hero-amount">{{ odometer(summary.balance_cents, size='clamp(54px, 8vw, 92px)', dark=True, delay=200) }}</div>
+      {% if balance_delta is not none %}
+      <div class="pn-hero-delta">{{ delta_chip((balance_delta|signed) ~ ' em relação a ' ~ previous_name, 'pos' if balance_delta >= 0 else 'neg', 'up' if balance_delta >= 0 else 'down') }}</div>
+      {% endif %}
     </div>
-  </div>
-  <div class="hero-row">
-    <div class="hero-figs">
-      <div><span class="label">Receitas</span><span class="fig">{{ summary.income_cents|brl }}</span></div>
-      <div><span class="label">Despesas</span><span class="fig">{{ summary.expenses_cents|brl }}</span></div>
+    <div class="pn-hero-foot">
+      <div class="pn-hero-eq">
+        <div><span class="label">Receitas</span><span class="fig">{{ summary.income_cents|brl }}</span></div>
+        <span class="op" aria-hidden="true">−</span>
+        <div><span class="label">Despesas</span><span class="fig">{{ summary.expenses_cents|brl }}</span></div>
+      </div>
+      <div class="pn-hero-gauge">
+        <div class="top"><span class="label">Poupança</span><span class="fig">{{ summary.savings_rate|percent }}</span></div>
+        {% if summary.savings_rate is none %}
+        {{ stroke_gauge(0, unset=True, dark=True, label='Taxa de poupança indisponível: sem receitas no período', mark=False, height=16) }}
+        {% else %}
+        {% set saved = [summary.savings_rate * 100, 0]|max %}
+        {{ stroke_gauge(saved, tone='forest', dark=True, label='Taxa de poupança: ' ~ (summary.savings_rate|percent) ~ ' da renda', mark=False, height=16, delay=500) }}
+        {% endif %}
+      </div>
     </div>
-    {% if summary.income_cents %}
-    {% set spent = ((summary.expenses_cents / summary.income_cents) * 100)|round|int %}
-    <div class="gauge" role="img" aria-label="{{ spent }}% da renda gasta">
-      <div class="top"><span class="label">Renda gasta</span><span class="fig">{{ spent }}%</span></div>
-      <div class="track"><div class="fill" style="width: {{ [spent, 100]|min }}%"></div></div>
-    </div>
-    {% endif %}
-  </div>
-</section>
+  </section>
+  {{ net_worth_card() }}
+</div>
 
-<section class="statstrip" aria-label="Totais">
-  <div><span class="label">Despesas</span><strong class="value">{{ summary.expenses_cents|brl }}</strong>
-    <small>{% if summary.refunds_cents %}Estornos à parte: {{ summary.refunds_cents|brl }} · líquido {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
-  <div><span class="label">Receitas</span><strong class="value">{{ summary.income_cents|brl }}</strong><small>Transferências não entram</small></div>
+<section class="pn-kpis" aria-label="Outros números do mês">
+  <div><span class="label">Estornos</span><strong class="value">{{ summary.refunds_cents|brl }}</strong>
+    <small>{% if summary.refunds_cents %}despesa líquida {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
   <div><span class="label">Aportes líquidos</span><strong class="value">{{ summary.net_contributions_cents|brl }}</strong>
     <small>{% if summary.investment_rate is none %}Aportes − resgates{% else %}{{ summary.investment_rate|percent }} da renda investida{% endif %}</small></div>
-  <div><span class="label">Taxa de poupança</span><strong class="value">{{ summary.savings_rate|percent }}</strong>
-    <small>{% if summary.savings_rate is none %}Sem receitas no período{% else %}Saldo ÷ receitas{% endif %}</small></div>
+  <div><span class="label">Recorrentes</span><strong class="value">{{ summary.recurring_expenses_cents|brl }}</strong>
+    <small>{% if summary.expenses_cents %}{{ (summary.recurring_expenses_cents / summary.expenses_cents)|percent }} das despesas{% else %}Sem despesas no período{% endif %}</small></div>
+  <div><span class="label">Compras do mês</span><strong class="value">{{ purchases|sum(attribute='total_cents')|brl }}</strong>
+    <small>{{ purchases|length }} compra(s), valor cheio</small></div>
 </section>
 
-<div class="cols">
-  <section class="panel" aria-labelledby="h-cat">
-    <header><h2 id="h-cat">Despesas por categoria</h2><small>{{ summary.entry_count }} lançamentos · {{ summary.expenses_cents|brl }}</small></header>
-    {% if summary.by_category %}
-    <div>
-      <div class="stackbar" role="img" aria-label="{% for g in summary.by_group %}{{ group_labels[g.group] }} {{ g.share|percent }}{{ ', ' if not loop.last }}{% endfor %}">
-        {% for g in summary.by_group %}<span style="flex: {{ (g.share or 0) * 100 }} 1 0; background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></span>{% endfor %}
+<div class="pn-pair">
+  {{ pace_card(month_key, month_name) }}
+  {{ flow_card(year) }}
+</div>
+
+<div class="pn-split">
+  <section class="card pn-cat" aria-labelledby="h-cat">
+    <div class="pn-card-head">
+      <h2 class="h2" id="h-cat">Para onde foi o dinheiro</h2>
+      <span class="soft">{{ summary.entry_count }} lançamentos · {{ title }}</span>
+    </div>
+    {% if breakdown.top %}
+    {{ donut_card(month_key, month_name, rows, rest_rows, breakdown, top_share, rest_share, 'row', 220) }}
+    <div class="pn-groups">
+      <span class="ov">Essencial, não essencial e encargos</span>
+      <div class="stackbar pn-stack wipe" role="img" aria-label="{% for g in summary.by_group %}{{ group_labels[g.group] }} {{ g.share|percent }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for g in summary.by_group %}<span style="flex: {{ g.total_cents }} 1 0; background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></span>{% endfor %}
       </div>
-      <div class="legend" style="margin-top: 8px">
-        {% for g in summary.by_group %}<span><i style="background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></i>{{ group_labels[g.group] }} · {{ g.total_cents|brl }} · {{ g.share|percent }}</span>{% endfor %}
+      <div class="pn-legend">
+        {% for g in summary.by_group %}<span><i style="background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></i>{{ group_labels[g.group] }}<span class="soft">{{ g.total_cents|brl }} · {{ g.share|percent }}</span></span>{% endfor %}
       </div>
     </div>
-    <div class="rows">
-      <div class="rowhead cat"><span>Categoria</span><span>Grupo</span><span class="num">Lanç.</span><span class="num">Total</span><span class="num">% das desp.</span></div>
-      {% for r in summary.by_category %}
-      <div class="row cat-row">
-        <span class="name with-dot">{{ dot(category_colors[r.category_id]) }}{{ category_by_id[r.category_id].name }}</span>
-        <span class="group soft">{{ group_labels[r.group] }}</span>
-        <span class="count num soft">{{ r.count }}</span>
-        <span class="num c-total">{{ r.total_cents|brl }}</span>
-        <span class="num soft c-pct">{{ r.share|percent }}</span>
-        <span class="bar"><i style="width: {{ category_bar[r.category_id]|round(1) }}%; background: {{ category_colors[r.category_id] }}"></i></span>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}<p class="empty">Nenhuma despesa neste período. <a href="/entries#form">Fazer um lançamento</a>.</p>{% endif %}
-    <a href="/budget" style="font-weight: 600; min-height: 44px; display: inline-flex; align-items: center">Comparar com o orçamento →</a>
+    {% else %}
+    {{ state_empty('Nenhuma despesa neste período', 'Quando houver despesas, elas aparecem aqui por categoria.', 'Fazer um lançamento', '/entries#form', 'chart') }}
+    {% endif %}
+    <a class="pn-link" href="/budget">Comparar com o orçamento →</a>
   </section>
 
-  <div class="stack">
-    <section class="panel" aria-labelledby="h-at">
-      <h2 id="h-at">Atenção</h2>
-      {% if attention %}
-      <div style="display: flex; flex-direction: column; gap: 10px">
-        {% for a in attention %}<a class="attn" href="{{ a.href }}"><span class="pill warn">{{ a.tag }}</span><span>{{ a.text }}</span></a>{% endfor %}
+  <div class="pn-side">
+    <section class="card pn-comp" aria-labelledby="h-comp">
+      <div class="pn-card-head">
+        <h2 class="h2 h2-sm" id="h-comp">De que é feito o patrimônio</h2>
+        {% if net_worth.is_partial %}<span class="dl dl-warn">parcial · {{ pending|length }} {{ 'item pendente' if pending|length == 1 else 'itens pendentes' }}</span>{% endif %}
       </div>
+      <div class="pn-ledger">
+        <span class="ld"><span>Caixa</span><span class="dots" aria-hidden="true"></span><span>{{ net_worth.cash_cents|brl }}</span></span>
+        <span class="ld"><span>Investimentos</span><span class="dots" aria-hidden="true"></span><span>{{ net_worth.investments_cents|brl }}</span></span>
+        <span class="ld"><span>Faturas a pagar</span><span class="dots" aria-hidden="true"></span><span>− {{ (net_worth.closed_statements_cents + net_worth.open_statements_cents)|brl }}</span></span>
+        <div class="tot"><span class="a">Patrimônio líquido</span><span class="dots" aria-hidden="true"></span><span class="v">{{ net_worth.net_worth_cents|brl }}</span></div>
+        <span class="ld ld-apart"><span>Parcelas futuras, fora da conta</span><span class="dots" aria-hidden="true"></span><span>{{ net_worth.future_installments_cents|brl }}</span></span>
+      </div>
+      {% if pending %}<p class="pn-pending">Sem saldo ou avaliação: {% for p in pending %}{{ p.name }}{{ ', ' if not loop.last }}{% endfor %}. <a href="/{{ 'investments' if pending[0].kind == 'holding' else 'accounts' }}">Registrar</a></p>{% endif %}
+      <a class="pn-link" href="/networth">Ver detalhes →</a>
+    </section>
+
+    <section class="card pn-attn" aria-labelledby="h-at">
+      <h2 class="h2 h2-sm" id="h-at">Atenção</h2>
+      {% if attention %}
+      {% for a in attention[:5] %}
+      <a class="pn-alert" href="{{ a.href }}">
+        <span class="pn-alert-ic" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16"><path d="M8 2l6.5 11.5h-13z" fill="none" stroke="#7A5A12" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3.2M8 11.6h.01" stroke="#7A5A12" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+        <span class="pn-alert-text"><span class="sr-only">{{ a.tag }}: </span><span>{{ a.text }}</span>{% if a.meta %}<span class="soft">{{ a.meta }}</span>{% endif %}</span>
+        <svg aria-hidden="true" class="pn-alert-go" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+      </a>
+      {% endfor %}
+      {% if attention|length > 5 %}<p class="pn-more soft">e mais {{ attention|length - 5 }} {{ 'aviso' if attention|length == 6 else 'avisos' }}</p>{% endif %}
       {% else %}<p class="empty">Nada pedindo atenção agora.</p>{% endif %}
     </section>
-
-    <section class="panel" aria-labelledby="h-rec">
-      <h2 id="h-rec">Recorrentes e fixos</h2>
-      {% set total = summary.expenses_cents %}
-      {% if total %}
-      <div>
-        <div class="stackbar" style="height: 12px; border-radius: 6px" role="img"
-             aria-label="Recorrente {{ ((summary.recurring_expenses_cents / total) * 100)|round(1) }}%, variável {{ ((summary.variable_expenses_cents / total) * 100)|round(1) }}%">
-          <span style="flex: {{ summary.recurring_expenses_cents }} 1 0; background: #0F5C45"></span>
-          <span style="flex: {{ summary.variable_expenses_cents }} 1 0; background: #B9C7BD"></span>
-        </div>
-        <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-top: 8px">
-          <span>Recorrente · {{ summary.recurring_expenses_cents|brl }}</span><span class="soft">Variável · {{ summary.variable_expenses_cents|brl }}</span>
-        </div>
-      </div>
-      {% endif %}
-      {% if recurring %}
-      <ul class="plain">
-        {% for t in recurring %}<li><span>{{ t.description }}</span><strong>{{ (-t.amount_cents)|brl }}</strong></li>{% endfor %}
-      </ul>
-      <small>{{ recurring|length }} de {{ recurring_count }} itens recorrentes</small>
-      {% else %}<p class="empty">Nenhuma despesa recorrente neste período.</p>{% endif %}
-    </section>
-
-    <section class="panel" aria-labelledby="h-buy">
-      <header><h2 id="h-buy">Compras do mês</h2><small>valor cheio, com parcelas</small></header>
-      {% if purchases %}
-      <ul class="plain">
-        {% for p in purchases[:6] %}
-        <li><span>{{ p.description }} <small>· {{ p.purchased_on|date_short }} · {{ p.installments }}x</small></span><strong>{{ p.total_cents|brl }}</strong></li>
-        {% endfor %}
-      </ul>
-      <strong class="soft" style="color: var(--navy)">{{ purchases|length }} compra(s) · {{ purchases|sum(attribute='total_cents')|brl }}</strong>
-      {% else %}<p class="empty">Nenhuma compra no cartão neste período.</p>{% endif %}
-    </section>
-
-    <section class="panel dark" aria-labelledby="h-pat">
-      <header><h2 id="h-pat">Patrimônio líquido</h2>
-        {% if net_worth.is_partial %}<span class="pill warn">Parcial · {{ net_worth.pending|length + net_worth.pending_holdings|length }} pendente(s)</span>{% endif %}</header>
-      <span class="big">{{ net_worth.net_worth_cents|brl }}</span>
-      <div class="nw-lines">
-        <span><span>Caixa</span><span>{{ net_worth.cash_cents|brl }}</span></span>
-        <span><span>Investimentos</span><span>{{ net_worth.investments_cents|brl }}</span></span>
-        <span><span>Faturas a pagar</span><span>− {{ (net_worth.closed_statements_cents + net_worth.open_statements_cents)|brl }}</span></span>
-        <span class="apart"><span>Parcelas futuras (compromisso)</span><span>{{ net_worth.future_installments_cents|brl }}</span></span>
-      </div>
-      <a href="/networth" class="light-link">Ver detalhes →</a>
-    </section>
-
-    <section class="panel" aria-labelledby="h-chart">
-      <h2 id="h-chart">Receitas e despesas em {{ year }}</h2>
-      <div class="chart-box"><canvas id="chart-months" aria-label="Receitas e despesas por mês"
-        data-months='{{ chart_months|tojson }}' data-income='{{ chart_income|tojson }}' data-expenses='{{ chart_expenses|tojson }}'></canvas></div>
-    </section>
   </div>
+</div>
+
+<div class="pn-pair">
+  <section class="card pn-list" aria-labelledby="h-rec">
+    <div class="pn-card-head">
+      <h2 class="h2 h2-sm" id="h-rec">Recorrentes e fixos</h2>
+      {% if recurring_count %}<span class="soft">{{ recurring_count }} {{ 'item' if recurring_count == 1 else 'itens' }}{% if summary.expenses_cents %} · {{ (summary.recurring_expenses_cents / summary.expenses_cents)|percent }} das despesas{% endif %}</span>{% endif %}
+    </div>
+    {% if recurring %}
+    <div class="pn-lines">
+      {% for t in recurring %}<a class="lk" href="/recurring"><span>{{ t.description }}</span><span class="dots" aria-hidden="true"></span><span>{{ (-t.amount_cents)|brl }}</span></a>{% endfor %}
+    </div>
+    <a class="pn-link" href="/recurring">Ver {{ 'o item' if recurring_count == 1 else 'os ' ~ recurring_count ~ ' itens' }} →</a>
+    <div class="tot pn-tot"><span class="a">Total {{ 'do item' if recurring_count == 1 else 'dos ' ~ recurring_count ~ ' itens' }}</span><span class="dots" aria-hidden="true"></span><span class="v">{{ summary.recurring_expenses_cents|brl }}</span></div>
+    {% else %}<p class="empty">Nenhuma despesa recorrente neste período.</p>{% endif %}
+  </section>
+
+  <section class="card pn-list" aria-labelledby="h-buy">
+    <div class="pn-card-head">
+      <h2 class="h2 h2-sm" id="h-buy">Compras do mês</h2>
+      <span class="soft">valor cheio, mesmo parcelado</span>
+    </div>
+    {% if purchases %}
+    <div class="pn-lines">
+      {% for p in purchases[:4] %}
+      <a class="lk" href="/cards/purchase"><span>{{ p.description }}<small>{{ p.purchased_on|date_short }}{% if p.installments > 1 %} · {{ p.installments }}x{% endif %}</small></span><span class="dots" aria-hidden="true"></span><span>{{ p.total_cents|brl }}</span></a>
+      {% endfor %}
+    </div>
+    <a class="pn-link" href="/cards/purchase">Registrar uma compra →</a>
+    <div class="tot pn-tot"><span class="a">Total de {{ purchases|length }} {{ 'compra' if purchases|length == 1 else 'compras' }}</span><span class="dots" aria-hidden="true"></span><span class="v">{{ purchases|sum(attribute='total_cents')|brl }}</span></div>
+    {% else %}
+    <p class="empty">Nenhuma compra no cartão neste período.</p>
+    <a class="pn-link" href="/cards/purchase">Registrar uma compra →</a>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}

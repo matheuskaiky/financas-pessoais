@@ -1,0 +1,188 @@
+{#- Chart cards (design v3, package 2). Jinja prints the card, the header, the skeleton and the fixed-height box;
+    static/charts.js fetches /api/charts/... and draws inside [data-fc="plot"]. Every figure arrives as integer cents
+    in the JSON; the texts of the states (few data, error) live here, in <template data-tpl="...">.
+    Import: {% from "_charts.html" import net_worth_card, pace_card, flow_card, donut_card, month_stepper %} -#}
+{% from "_ui.html" import skeleton, stroke_gauge, odometer %}
+
+{#- Skeleton of the plot box: same footprint as the live chart (the box height is fixed by CSS). ``kind``: line | bars | ring. -#}
+{% macro plot_skeleton(kind='line', label='Carregando o gráfico') -%}
+<div class="fc-skel" role="status" aria-label="{{ label }}">
+  {%- if kind == 'bars' %}
+  <div class="fc-skel-bars" aria-hidden="true">
+    {%- for up, dn in [(86, 62), (86, 59), (90, 70), (86, 63), (100, 60), (86, 67), (90, 65), (88, 62), (92, 64)] %}
+    <span class="fc-skel-col"><i class="sk" style="height: {{ up * 0.5 }}%"></i><i class="sk" style="height: {{ dn * 0.4 }}%"></i></span>
+    {%- endfor %}
+  </div>
+  {%- else %}
+  <div class="sk fc-skel-area {{ 'fc-skel-pace' if kind == 'pace' else 'fc-skel-line' }}" aria-hidden="true"></div>
+  <span class="sk fc-skel-tick" style="top: 34%; width: 30px" aria-hidden="true"></span>
+  <span class="sk fc-skel-tick" style="top: 58%; width: 30px" aria-hidden="true"></span>
+  <span class="sk fc-skel-x" style="left: 0; width: 44px" aria-hidden="true"></span>
+  <span class="sk fc-skel-x" style="left: 50%; width: 36px" aria-hidden="true"></span>
+  <span class="sk fc-skel-x" style="right: 0; width: 36px" aria-hidden="true"></span>
+  {%- endif %}
+</div>
+{%- endmacro %}
+
+{#- The states every chart shares. ``sparse`` is written by each card. -#}
+{% macro error_template() -%}
+<template data-tpl="error">
+  <div class="state state-error fc-state" role="alert">
+    <span class="ic"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5 M12 16.5h.01 M12 3l9.5 17h-19z"/></svg></span>
+    <h3 class="state-title">Não foi possível carregar o gráfico</h3>
+    <p class="state-text">Seus lançamentos continuam salvos. Tente de novo; se persistir, veja a página de diagnóstico.</p>
+    <div class="state-actions"><button type="button" class="cta2" data-fc-retry>Tentar de novo</button></div>
+  </div>
+</template>
+{%- endmacro %}
+
+{#- ‹ month › stepper of the page header. ``stepper`` comes from routes/charts.py (label, previous, next, is_current). -#}
+{% macro month_stepper(stepper) -%}
+<div class="pn-month" role="group" aria-label="Mês exibido">
+  <a class="pn-step" href="{{ stepper.previous }}" aria-label="Mês anterior"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+  <span class="pn-month-label" aria-live="polite">{{ stepper.label }}</span>
+  {% if stepper.next %}<a class="pn-step" href="{{ stepper.next }}" aria-label="Próximo mês"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></a>
+  {% else %}<span class="pn-step is-disabled" aria-disabled="true" aria-label="Próximo mês (indisponível)"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></span>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Net worth over time: figure, change chip, period selector, scrubbable curve. -#}
+{% macro net_worth_card(id='nw') -%}
+<section class="card chart-card" aria-label="Evolução do patrimônio" data-chart="networth" data-src="/api/charts/net-worth" data-default-range="1A" data-slider-label="Patrimônio ao longo do período">
+  <div class="fc-head">
+    <div class="fc-head-main">
+      <div class="ov fc-title">Patrimônio <span class="fc-partial" data-fc="badge" hidden>parcial</span></div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(250, 46, 10, inline=True) }}</span></div>
+      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="delta">{{ skeleton(110, 14, 7, inline=True) }}</span><span class="fc-when" data-fc="when"></span></div>
+    </div>
+    <div class="fc-range" role="radiogroup" aria-label="Período do gráfico" data-fc="range" style="--fc-idx: 2; --fc-n: 4">
+      <span class="fc-thumb" aria-hidden="true"></span>
+      <button type="button" role="radio" aria-checked="false" aria-label="Último mês" data-range="1M" tabindex="-1">1M</button>
+      <button type="button" role="radio" aria-checked="false" aria-label="Últimos 3 meses" data-range="3M" tabindex="-1">3M</button>
+      <button type="button" role="radio" aria-checked="true" aria-label="Último ano" data-range="1A" tabindex="0">1A</button>
+      <button type="button" role="radio" aria-checked="false" aria-label="Todo o período" data-range="Tudo" tabindex="-1">Tudo</button>
+    </div>
+  </div>
+  <div class="fc-plot" data-fc="plot" aria-busy="true">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</div>
+  <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Patrimônio"></p>
+  <p class="fc-note" data-fc="note" hidden>
+    <span data-fc-if="partial" hidden>Parcial: faltam saldos ou avaliações de <span data-fc-pending>—</span>. </span>Caixa mais investimentos, menos as faturas a pagar. As parcelas futuras, R$ <span class="fc-dotted" data-fc-apart>—</span>, não entram.
+  </p>
+  <noscript><p class="fc-note">O gráfico precisa de JavaScript. O patrimônio de hoje está em <a href="/networth">Patrimônio</a>.</p></noscript>
+  <template data-tpl="skeleton">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</template>
+  <template data-tpl="sparse">
+    <div class="fc-sparse dv-tip">
+      <h3 class="fc-sparse-title">Poucos dados ainda</h3>
+      <p class="fc-sparse-text">Registre o saldo das contas e dos investimentos de tempos em tempos. Com <span data-fc-need>8</span> pontos o gráfico mostra a tendência.</p>
+      <div class="fc-sparse-meter">{{ stroke_gauge(0, tone='forest', label='0 de 8', mark=False, height=10) }}<span class="fc-sparse-count"><span data-fc-have>0</span> de <span data-fc-need>8</span></span></div>
+      <a class="link-quiet" href="/accounts">Registrar um saldo</a>
+    </div>
+  </template>
+  {{ error_template() }}
+</section>
+{%- endmacro %}
+
+{#- Month pace: cumulative spending by day, the usual pace (mean of the previous months) and the ceiling (sum of the goals). -#}
+{% macro pace_card(month_key, month_name, id='pace') -%}
+<section class="card chart-card" aria-label="Ritmo de gastos do mês" data-chart="pace" data-src="/api/charts/pace?month={{ month_key }}" data-slider-label="Gasto acumulado no mês, por dia">
+  <div class="fc-head fc-head-sm">
+    <div class="fc-head-main">
+      <div class="ov fc-title"><span data-fc="title" data-prefix="Ritmo do mês ·">Ritmo do mês · {{ month_name }}</span></div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(210, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-average">{{ skeleton(120, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-ceiling">{{ skeleton(120, 14, 7, inline=True) }}</span></div>
+    </div>
+  </div>
+  <div class="fc-legend" aria-hidden="true">
+    <span data-fc="legend-month"><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-out"/></svg><span data-fc-text>{{ month_name|capitalize }}</span></span>
+    <span data-fc="legend-average" hidden><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-avg"/></svg>Média <span data-fc-text></span></span>
+    <span data-fc="legend-ceiling" hidden><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-ceil"/></svg>Teto <span data-fc-text></span></span>
+  </div>
+  <div class="fc-plot" data-fc="plot" aria-busy="true">{{ plot_skeleton('pace', 'Carregando o ritmo do mês') }}</div>
+  <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Gasto acumulado em"></p>
+  <noscript><p class="fc-note">O gráfico precisa de JavaScript. Os gastos do mês estão em <a href="/entries">Lançamentos</a>.</p></noscript>
+  <template data-tpl="skeleton">{{ plot_skeleton('pace', 'Carregando o ritmo do mês') }}</template>
+  <template data-tpl="sparse">
+    <div class="fc-sparse dv-tip fc-sparse-wide">
+      <h3 class="fc-sparse-title">Sem gastos registrados</h3>
+      <p class="fc-sparse-text">A linha do mês aparece com os primeiros gastos.<span data-fc-avg-hint> Até lá, a tracejada mostra o ritmo de costume.</span></p>
+      <a class="link-quiet" href="/entries#form">Registrar um gasto</a>
+    </div>
+  </template>
+  {{ error_template() }}
+</section>
+{%- endmacro %}
+
+{#- Cash flow: income up, expenses down, the month's balance under each column. -#}
+{% macro flow_card(year, id='flow') -%}
+<section class="card chart-card" aria-label="Fluxo de caixa de {{ year }}" data-chart="flow" data-src="/api/charts/cash-flow?year={{ year }}" data-slider-label="Fluxo de caixa, mês a mês">
+  <div class="fc-head fc-head-sm">
+    <div class="fc-head-main">
+      <div class="ov fc-title">Fluxo de caixa · {{ year }}</div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(190, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-rate">{{ skeleton(130, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-delta">{{ skeleton(130, 14, 7, inline=True) }}</span></div>
+    </div>
+  </div>
+  <div class="fc-legend" aria-hidden="true">
+    <span><i class="fc-key-box fc-in"></i>Entradas <b data-fc="legend-in"></b></span>
+    <span><i class="fc-key-box fc-out"></i>Saídas <b data-fc="legend-out"></b></span>
+  </div>
+  <div class="fc-plot fc-plot-flow" data-fc="plot" aria-busy="true">{{ plot_skeleton('bars', 'Carregando o fluxo de caixa') }}</div>
+  <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Entradas e saídas em"></p>
+  <noscript><p class="fc-note">O gráfico precisa de JavaScript.</p></noscript>
+  <template data-tpl="skeleton">{{ plot_skeleton('bars', 'Carregando o fluxo de caixa') }}</template>
+  <template data-tpl="sparse">
+    <div class="fc-sparse dv-tip fc-sparse-wide">
+      <h3 class="fc-sparse-title">Poucos meses de histórico</h3>
+      <p class="fc-sparse-text">O contorno tracejado marca os meses ainda sem lançamentos. O fluxo ganha forma a partir do terceiro mês com dados.</p>
+      <a class="link-quiet" href="/entries#form">Fazer um lançamento</a>
+    </div>
+  </template>
+  {{ error_template() }}
+</section>
+{%- endmacro %}
+
+{#- Categories: ring (drawn from the JSON) beside a list printed here, so the list works without scripts.
+    ``layout``: row (ring beside the list) | wide (list in two columns under the ring). -#}
+{% macro donut_card(month_key, month_name, rows, rest_rows, breakdown, top_share, rest_share, layout='row', size=220) -%}
+{% set total = breakdown.total_cents %}
+{% set shown = breakdown.top|length %}
+{% set ncat = shown + breakdown.rest|length %}
+<div class="fc fc-donut fc-donut-{{ layout }}" data-chart="donut" data-src="/api/charts/categories?month={{ month_key }}" data-size="{{ size }}"
+     data-center-label="Despesas · {{ month_name }}" data-center-sub="{{ shown ~ (' maiores somam ' ~ (top_share|percent) if breakdown.rest else ' categorias') }}"
+     data-ring-label="Despesas por categoria: {% for r in rows %}{{ r.name }} {{ r.share|percent }}{{ ', ' if not loop.last }}{% endfor %}{% if rest_rows %}, demais categorias {{ rest_share|percent }}{% endif %}."
+     data-error-text="Não foi possível desenhar a rosca. A lista ao lado continua valendo.">
+  <div class="fc-ring-box" data-fc="ring" aria-busy="true" style="--fc-ring: {{ size }}px">
+    <span class="sk fc-skel-ring" role="status" aria-label="Carregando as categorias"></span>
+  </div>
+  <div class="fc-list">
+    <div class="fc-list-head">
+      <span class="dl dl-neu fc-chip-soft">{{ shown }}{% if breakdown.rest %} de {{ ncat }}{% endif %} {{ 'categoria' if shown == 1 and not breakdown.rest else 'categorias' }} somam {{ ((top_share + rest_share) if not breakdown.rest else top_share)|percent }}</span>
+      {% if rows|length > 1 %}<span class="fc-list-sub">{{ rows[0].name }} e {{ rows[1].name }}, juntos, são {{ ((rows[0].cents + rows[1].cents) / total)|percent }}</span>{% endif %}
+    </div>
+    <div class="fc-rows" role="group" aria-label="Categorias de despesa, da maior para a menor">
+      {% for r in rows %}
+      <button type="button" class="fc-row" data-row="{{ r.key }}" aria-pressed="false">
+        <i class="fc-dot-sw" style="background: {{ r.color }}" aria-hidden="true"></i>
+        <span class="fc-row-name"><span class="fc-row-title">{{ r.name }}</span><span class="fc-row-sub">{{ r.group_label }} · {{ r.count }} {{ 'lançamento' if r.count == 1 else 'lançamentos' }}</span></span>
+        <span class="fc-row-value">{{ r.cents|brl }}</span><span class="fc-row-pct">{{ r.share|percent }}</span>
+      </button>
+      {% endfor %}
+      {% if rest_rows %}
+      <button type="button" class="fc-row fc-row-rest" data-row="__rest" aria-expanded="false">
+        <i class="fc-dot-sw" style="background: #C9D4CC" aria-hidden="true"></i>
+        <span class="fc-row-name"><span class="fc-row-title">Demais categorias<svg class="fc-chev" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="fc-row-sub">{{ rest_rows|length }} categorias · {{ breakdown.rest_count }} {{ 'lançamento' if breakdown.rest_count == 1 else 'lançamentos' }}</span></span>
+        <span class="fc-row-value">{{ breakdown.rest_total_cents|brl }}</span><span class="fc-row-pct">{{ rest_share|percent }}</span>
+      </button>
+      {% endif %}
+    </div>
+    {% if rest_rows %}
+    <div class="fc-more" data-more aria-hidden="true"><div class="fc-more-clip"><ul class="fc-more-list">
+      {% for m in rest_rows %}<li><i class="fc-dot-sm" style="background: {{ m.color }}" aria-hidden="true"></i><span>{{ m.name }}</span><span>{{ m.cents|brl }}</span><span class="fc-row-pct">{{ m.share|percent }}</span></li>{% endfor %}
+    </ul></div></div>
+    {% endif %}
+    {% if ncat <= 2 %}
+    <div class="fc-donut-hint"><p>Poucas categorias até agora. A rosca separa as cinco maiores e agrupa o resto quando houver mais lançamentos.</p><a class="link-quiet" href="/entries#form">Registrar um gasto</a></div>
+    {% endif %}
+  </div>
+</div>
+{%- endmacro %}

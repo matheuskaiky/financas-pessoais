@@ -28,12 +28,13 @@
 <span class="pill {{ cls }}">{{ status_labels[status] }}</span>
 {% endmacro %}
 
+{% from "_ui.html" import stroke_gauge %}
 {% macro limit_bar(usage) %}
+{#- Card limit as a stroke gauge: hatched track when there is no limit, gold from 80%, negative above 100%. -#}
 {%- if usage.alert.value == 'not_informed' -%}
-<div class="limit"><div class="limit-track hatched"></div><small>Limite não informado</small></div>
+<div class="limit">{{ stroke_gauge(0, unset=True, height=10) }}<small>Limite não informado</small></div>
 {%- else -%}
-{%- set cls = {'none': 'normal', 'warning': 'warn', 'exceeded': 'bad'}[usage.alert.value] -%}
-<div class="limit"><div class="limit-track"><span class="limit-fill {{ cls }}" style="width: {{ [usage.percent, 100]|min|round(1) }}%"></span></div>
+<div class="limit">{{ stroke_gauge(usage.percent, height=10) }}
 <small>{{ limit_labels[usage.alert] }} · {{ (usage.percent / 100)|percent }}</small></div>
 {%- endif -%}
 {% endmacro %}

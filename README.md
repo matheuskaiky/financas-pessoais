@@ -76,6 +76,14 @@ Títulos do Tesouro e prefixados oscilam com o mercado: o valor atual é o de re
 
 Ficam de fora, por enquanto: cálculo de imposto, posições de renda variável (quantidade, preço médio, cotação) e FGTS.
 
+## Telas novas do front v3
+
+- **Painel e Análises:** patrimônio ao longo do tempo (1M, 3M, 1A, Tudo; passe o mouse ou use as setas), ritmo do mês contra a média e o teto do orçamento, fluxo de caixa por mês e rosca por categoria. Todos os números são calculados no servidor.
+- **Carta do mês:** resumo do mês fechado escrito por um modelo fixo, com uma nota na margem mostrando a conta de cada número.
+- **E se…:** simulador de compra ("geladeira de 4.200 em 10x no BB"): parcelas por fatura, limite, caixa livre e se compensa parcelar. Nada é gravado.
+- **Comando ⌘K (Ctrl+K):** navegação, ações rápidas e registrar por frase; o tipo do lançamento é sempre escolha sua.
+- O assistente com modelo de linguagem externo ainda **não existe**: nada sai deste computador. O plano e as regras de privacidade estão no CLAUDE.md (seção 16).
+
 ## Totais
 
 | Nível | O que mostra |

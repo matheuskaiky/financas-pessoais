@@ -4,46 +4,51 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Finanças{% endblock %} · finanças pessoais</title>
+  <link rel="stylesheet" href="/static/tokens.css">
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/screens.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/ui.js" defer></script>
+  <link rel="stylesheet" href="/static/palette.css">
+  <script src="/static/palette.js" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
-{% macro item(href, label, key, path) %}
-<a class="item" href="{{ href }}" {% if nav == key %}aria-current="page"{% endif %}>
-  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ path }}"/></svg>
-  {{ label }}</a>
-{% endmacro %}
+{#- Navigation is data: financas/interfaces/web/nav.py (entries registered by each page's route module).
+    `nav` is the key of the current page; `assistant_enabled` is a template global (False for now). -#}
+{% set here = nav_current(nav|default(none)) %}
+{% set menu = nav_groups(here, assistant_enabled) %}
 <div class="shell">
   <nav class="sidebar" aria-label="Principal">
     <a class="brand" href="/"><span class="name">finanças</span><span class="sub">PESSOAIS</span></a>
-    <a class="new-entry" href="/entries#form">
-      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      Novo lançamento</a>
+    <div class="side-actions">
+      <a class="new-entry" href="/entries#form">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Novo lançamento</a>
+      {#- Command palette trigger: static/palette.js (work package 4) binds [data-palette-open]. Until then it is a
+          focusable button that does nothing. -#}
+      <button type="button" class="kf" data-palette-open aria-label="Perguntar ou registrar, atalho Comando K">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <span>Perguntar ou registrar</span><kbd aria-hidden="true">⌘K</kbd>
+      </button>
+    </div>
     <div class="nav-groups">
-      <div class="nav-group">
-        {{ item('/', 'Painel', 'dashboard', 'M4 4h7v9H4z M13 4h7v5h-7z M13 11h7v9h-7z M4 15h7v5H4z') }}
+      {% for group in menu %}
+      <div class="nav-group">{% if group.label %}<div class="group-label">{{ group.label }}</div>{% endif %}
+        {% for item in group.items %}
+        <a class="item" href="{{ item.href }}" {% if item.current %}aria-current="page"{% endif %}>
+          <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ item.icon }}"/></svg>
+          <span class="label-text">{{ item.label }}</span>{% if item.badge %}<span class="nav-badge" aria-hidden="true"></span><span class="sr-only">, nova</span>{% endif %}</a>
+        {% endfor %}
       </div>
-      <div class="nav-group"><div class="group-label">MOVIMENTO</div>
-        {{ item('/entries', 'Lançamentos', 'entries', 'M8 6h12 M8 12h12 M8 18h12 M4 6h.01 M4 12h.01 M4 18h.01') }}
-        {{ item('/cards', 'Cartões', 'cards', 'M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z M3 10h18 M7 15h4') }}
-        {{ item('/accounts', 'Contas', 'accounts', 'M3 10l9-6 9 6 M5 10v8 M9.5 10v8 M14.5 10v8 M19 10v8 M3 20h18') }}
-      </div>
-      <div class="nav-group"><div class="group-label">PATRIMÔNIO</div>
-        {{ item('/investments', 'Investimentos', 'investments', 'M3 17l6-6 4 4 8-9 M15 6h6v6') }}
-        {{ item('/networth', 'Patrimônio', 'networth', 'M12 3l9 4.5-9 4.5-9-4.5z M3 12l9 4.5 9-4.5 M3 16.5l9 4.5 9-4.5') }}
-      </div>
-      <div class="nav-group"><div class="group-label">PLANEJAMENTO</div>
-        {{ item('/budget', 'Orçamento', 'budget', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 12h.01') }}
-        {{ item('/recurring', 'Recorrentes', 'recurring', 'M17 2l3 3-3 3 M20 5H9a5 5 0 0 0-5 5 M7 22l-3-3 3-3 M4 19h11a5 5 0 0 0 5-5') }}
-        {{ item('/categories', 'Categorias', 'categories', 'M3 12V4h8l10 10-8 8z M7.5 8.5h.01') }}
-      </div>
+      {% endfor %}
     </div>
     <div class="backup-box" id="backup">
-      <span class="status"><span class="led {{ 'stale' if backup_notice }}"></span>{{ backup_label }}</span>
-      <span class="note">Dados só neste computador</span>
+      <span class="status"><span class="led {{ 'stale' if backup_notice }}" aria-hidden="true"></span>{{ backup_label }}</span>
+      <span class="note">Dados guardados só neste computador</span>
       <form method="post" action="/backup"><button type="submit">Fazer backup agora</button></form>
+      {% if not assistant_enabled %}<span class="assist-note"><span class="led" aria-hidden="true"></span>Assistente desligado: nada sai deste computador</span>{% endif %}
     </div>
   </nav>
 
@@ -54,21 +59,34 @@
   </main>
 </div>
 
+{#- Mobile tab bar (docs/design-v3 "Barra de abas"): Painel, Lançamentos, Novo, Cartões, Mais. Every other page
+    is reached from "Mais" (templates/more.html lists the registered navigation). -#}
 <nav class="tabbar" aria-label="Principal">
-  <a href="/" {% if nav == 'dashboard' %}aria-current="page"{% endif %}>
+  <a class="tb" href="/" {% if here == 'dashboard' %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7v9H4z M13 4h7v5h-7z M13 11h7v9h-7z M4 15h7v5H4z"/></svg>
     <span>Painel</span></a>
-  <a href="/entries" {% if nav == 'entries' %}aria-current="page"{% endif %}>
+  <a class="tb" href="/entries" {% if here == 'entries' %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12 M8 12h12 M8 18h12 M4 6h.01 M4 12h.01 M4 18h.01"/></svg>
     <span>Lançamentos</span></a>
   <a href="/entries#form" class="new" aria-label="Novo lançamento">
     <span class="plus"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></a>
-  <a href="/cards" {% if nav == 'cards' %}aria-current="page"{% endif %}>
+  <a class="tb" href="/cards" {% if here == 'cards' %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z M3 10h18 M7 15h4"/></svg>
     <span>Cartões</span></a>
-  <a href="/more" {% if nav in ('accounts', 'categories', 'investments', 'networth', 'budget', 'recurring', 'flow', 'more') %}aria-current="page"{% endif %}>
+  <a class="tb" href="/more" {% if nav_in_more(here) or nav == 'more' %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12h.01 M12 12h.01 M19 12h.01"/></svg>
     <span>Mais</span></a>
 </nav>
+<dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+  <form method="dialog">
+    <h2 id="confirm-title">Confirmar</h2>
+    <p id="confirm-message"></p>
+    <div class="dialog-actions">
+      <button type="submit" value="cancel" class="secondary" id="confirm-cancel">Cancelar</button>
+      <button type="submit" value="ok" id="confirm-ok">Confirmar</button>
+    </div>
+  </form>
+</dialog>
+{% include "_palette.html" %}
 </body>
 </html>

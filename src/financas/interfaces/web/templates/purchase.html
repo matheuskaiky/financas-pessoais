@@ -1,12 +1,14 @@
 {% extends "base.html" %}
+{% from "_ui.html" import state_empty %}
 {% block title %}Nova compra no cartão{% endblock %}
 {% block content %}
 <header class="page-head">
-  <div><a href="/cards">← Cartões</a><h1>Nova compra no cartão</h1></div>
+  <div><a class="link-quiet back-link" href="/cards"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Cartões</a><h1>Nova compra no cartão</h1>
+    <p>Preencha o que você sabe: o cronograma das parcelas e a fatura de cada uma aparecem ao lado.</p></div>
 </header>
 
 {% if not card_list %}
-<section class="panel"><p class="empty">Cadastre um cartão em <a href="/cards">Cartões</a> antes de lançar compras.</p></section>
+{{ state_empty('Nenhum cartão cadastrado', 'Cadastre um cartão em Cartões antes de lançar compras.', 'Ir para Cartões', '/cards', 'card') }}
 {% else %}
 <form method="post" action="/cards/purchase" class="cols entries" id="purchase"
       hx-post="/cards/purchase/preview" hx-trigger="change, keyup changed delay:400ms from:input[type=text]" hx-target="#preview" hx-swap="innerHTML">
@@ -27,12 +29,12 @@
       <label class="field"><span>Parcelas</span><input type="text" name="installments" inputmode="numeric" value="{{ form.installments }}"><small>1 = à vista</small></label>
     </div>
 
-    <div class="segmented two" role="radiogroup" aria-label="Valor informado">
-      <label><input type="radio" name="amount_mode" value="total" {{ 'checked' if form.amount_mode == 'total' }}><span>Valor total da compra</span></label>
-      <label><input type="radio" name="amount_mode" value="installment" {{ 'checked' if form.amount_mode == 'installment' }}><span>Valor da parcela (como na fatura)</span></label>
+    <div class="opts" role="radiogroup" aria-label="Valor informado">
+      <label class="opt"><input type="radio" name="amount_mode" value="total" {{ 'checked' if form.amount_mode == 'total' }}><span class="rd" aria-hidden="true"></span><span><strong>Valor total da compra</strong><small>O sistema divide em parcelas; a 1ª absorve os centavos.</small></span></label>
+      <label class="opt"><input type="radio" name="amount_mode" value="installment" {{ 'checked' if form.amount_mode == 'installment' }}><span class="rd" aria-hidden="true"></span><span><strong>Valor da parcela</strong><small>Como aparece na fatura do banco.</small></span></label>
     </div>
     <label class="field"><span>Valor</span>
-      <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></label>
+      <span class="money big"><span class="cur" aria-hidden="true">R$</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span></label>
 
     <details {{ 'open' if form.statement_month or form.current_installment != '1' }}>
       <summary>Compra já em andamento ou fatura diferente</summary>
@@ -52,9 +54,9 @@
     </div>
   </section>
 
-  <section class="panel quick" aria-labelledby="h-sched">
-    <h2 id="h-sched">Cronograma das parcelas</h2>
-    <p class="hint" style="margin-top: -8px">Aparece ao preencher o cartão, a data e o valor.</p>
+  <section class="stack sched-col" aria-labelledby="h-sched">
+    <h2 id="h-sched" class="sr-only">Cronograma das parcelas</h2>
+    <div class="receipt receipt-empty" id="preview-empty"><span class="eyebrow">Cronograma</span><p class="hint">Aparece ao preencher o cartão, a data e o valor.</p></div>
     <div id="preview" {% if form.amount %}hx-post="/cards/purchase/preview" hx-trigger="load" hx-include="#purchase" hx-target="this"{% endif %}></div>
   </section>
 </form>

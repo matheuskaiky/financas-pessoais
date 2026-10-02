@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>charts.js harness</title>
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/charts.css">
+<style>body{margin:0;width:800px}.fc-plot{width:700px}</style>
+</head>
+<body>
+<!-- Net worth island with the markup the Jinja macro prints (only what charts.js reads). -->
+<section id="nw" class="card chart-card" data-chart="networth" data-src="/nw.json" data-default-range="1A">
+  <div class="fc-head"><div>
+    <span class="fc-title"><span data-fc="badge" hidden>parcial</span></span>
+    <div class="fc-fig"><span data-fc="value">…</span></div>
+    <div class="fc-chips"><span data-fc="delta"></span><span data-fc="when"></span></div></div>
+    <div class="fc-range" data-fc="range" style="--fc-idx:2">
+      <span class="fc-thumb"></span>
+      <button type="button" role="radio" data-range="1M">1M</button><button type="button" role="radio" data-range="3M">3M</button>
+      <button type="button" role="radio" data-range="1A">1A</button><button type="button" role="radio" data-range="Tudo">Tudo</button>
+    </div></div>
+  <div class="fc-plot" data-fc="plot" aria-busy="true"></div>
+  <p class="sr-only" id="nw-desc" data-fc="desc" data-prefix="Patrimônio"></p>
+  <p data-fc="note" hidden><span data-fc-if="partial" hidden>Parcial: <span data-fc-pending></span></span><span data-fc-apart></span></p>
+  <template data-tpl="sparse"><div class="fc-sparse"><span data-fc-have></span>/<span data-fc-need></span><div class="sg"></div></div></template>
+  <template data-tpl="error"><div class="state"><button type="button" data-fc-retry>retry</button></div></template>
+</section>
+<section id="pace" class="card chart-card" data-chart="pace" data-src="/pace.json">
+  <span data-fc="title" data-prefix="Ritmo ·"></span><span data-fc="value"></span><span data-fc="sub"></span>
+  <span data-fc="chip-average"></span><span data-fc="chip-ceiling"></span>
+  <span data-fc="legend-month"><span data-fc-text></span></span><span data-fc="legend-average" hidden><span data-fc-text></span></span><span data-fc="legend-ceiling" hidden><span data-fc-text></span></span>
+  <div class="fc-plot" data-fc="plot"></div><p id="pace-desc" data-fc="desc"></p>
+  <template data-tpl="sparse"><div class="fc-sparse"><span data-fc-avg-hint></span></div></template>
+</section>
+<section id="flow" class="card chart-card" data-chart="flow" data-src="/flow.json">
+  <span data-fc="value"></span><span data-fc="sub"></span><span data-fc="chip-rate"></span><span data-fc="chip-delta"></span>
+  <b data-fc="legend-in"></b><b data-fc="legend-out"></b>
+  <div class="fc-plot" data-fc="plot"></div><p id="flow-desc" data-fc="desc"></p>
+  <template data-tpl="sparse"><div class="fc-sparse"></div></template>
+</section>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+window.addEventListener("unhandledrejection", (e) => fail(String(e.reason && e.reason.stack || e.reason)));
+</script>
+<script type="module">
+document.getElementById("out").textContent = "module started";
+const results = [];
+const check = (name, ok, detail) => results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail));
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+
+// ---- fixtures served by the stubbed fetch (integer cents, ISO dates) ----
+const pts = [];
+for (let i = 0; i < 24; i++) {
+  const d = new Date(2026, 0, 1 + i * 13);
+  const iso = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  pts.push({ date: iso, cents: 1000000 + i * 25000 + (i % 3) * 7000 });
+}
+const last = pts[pts.length - 1].date;
+const payloads = {
+  "/nw.json": { today: last, points: pts, partial: true, pending: [{ name: "Caixinha" }], future_installments_cents: 12345, min_points: 8 },
+  "/pace.json": { month: "2026-09", days: 30, elapsed_days: 5, daily_cents: [0, 100, 0, 250, 50], daily_counts: [0, 1, 0, 2, 1],
+    cumulative_cents: [0, 100, 100, 350, 400], average_cents: Array.from({ length: 30 }, (_, i) => 50 * (i + 1)), average_months: ["2026-07", "2026-08"],
+    ceiling_cents: 300, crossed_day: 4, total_cents: 400, entry_count: 4 },
+  "/flow.json": { year: 2026, months: [1, 2, 3, 4].map((m) => ({ month: "2026-0" + m, income_cents: 900000, expenses_cents: 300000 + m * 10000, refunds_cents: 0, balance_cents: 600000 - m * 10000 })) },
+};
+window.fetch = async (url) => ({ ok: true, json: async () => payloads[url] });
+
+let mod;
+try {
+  mod = await import("../../src/financas/interfaces/web/static/charts.js");
+} catch (error) {
+  fail("import failed: " + error);
+  throw error;
+}
+const { math, fmt, mountAll } = mod;
+
+// ---- pure maths ----
+check("clamp", math.clamp(5, 0, 3) === 3 && math.clamp(-1, 0, 3) === 0);
+check("lerpArray", JSON.stringify(math.lerpArray([0, 10], [10, 20], 0.5)) === "[5,15]");
+check("sameArray", math.sameArray([1, 2], [1, 2]) && !math.sameArray([1, 2], [1, 3]));
+const series = [{ t: 0, v: 0 }, { t: 10, v: 100 }, { t: 100, v: 100 }];
+const res = math.resampleByTime(series, 11);
+check("resample is time-spaced (gap keeps the flat stretch)", near(res[0], 0) && near(res[1], 100) && near(res[10], 100) && res.length === 11, JSON.stringify(res));
+check("resample single point", JSON.stringify(math.resampleByTime([{ t: 5, v: 7 }], 3)) === "[7,7,7]");
+const day = 86400000;
+const long = Array.from({ length: 10 }, (_, i) => ({ t: i * 10 * day, v: i }));
+check("sliceByDays keeps the window", math.sliceByDays(long, 25).length === 3, math.sliceByDays(long, 25).length);
+check("sliceByDays always keeps two points", math.sliceByDays(long, 1).length === 2);
+check("sliceByDays infinity", math.sliceByDays(long, Infinity).length === 10);
+check("valueAtTime clamps and interpolates", math.valueAtTime(long, -5) === 0 && math.valueAtTime(long, 5 * day) === 0.5 && math.valueAtTime(long, 1e12) === 9);
+const ys = [0, 0, 10, 10, 10, 3, 3, 8];
+const m = math.monotoneTangents(ys);
+let overshoot = false;
+for (let i = 0; i < ys.length - 1; i++) {
+  for (let p = i; p <= i + 1; p += 0.05) {
+    const v = math.hermiteAt(ys, m, p);
+    if (v < Math.min(ys[i], ys[i + 1]) - 1e-9 || v > Math.max(ys[i], ys[i + 1]) + 1e-9) overshoot = true;
+  }
+}
+check("monotone curve never leaves its neighbours (no false waves)", !overshoot);
+check("hermite passes through the knots", ys.every((y, i) => near(math.hermiteAt(ys, m, i), y, 1e-9)));
+check("flat stretch has zero tangent", m[0] === 0 && m[1] === 0);
+check("monotonePath starts at the first point", math.monotonePath([0, 10], [5, 7], [0, 0]).startsWith("M0.00 5.00C"));
+const dom = math.niceDomain([9000000, 9500000, 9300000]);
+check("domain has at most three round lines inside it", dom.ticks.length <= 3 && dom.ticks.every((t) => t > dom.min && t < dom.max && t % 100000 === 0), JSON.stringify(dom));
+const flat = math.niceDomain([500000, 500000, 500000]);
+check("constant series has a finite domain", flat.max > flat.min && Number.isFinite(flat.min));
+check("empty domain", math.niceDomain([]).ticks.length === 0);
+const nt = math.niceTicks(1240000, 3);
+check("niceTicks round top, at most three", nt.top >= 1240000 && nt.ticks.length <= 3 && nt.ticks.every((t) => t < nt.top), JSON.stringify(nt));
+check("niceStep fits under the value", math.niceStep(1030000) === 500000 && math.niceStep(50) === 10000, math.niceStep(1030000));
+check("spring starts at 0 and settles at ~1 without a big bounce", math.springProgress(0) === 0 && near(math.springProgress(0.95), 1, 0.01) && Math.max(...Array.from({ length: 100 }, (_, i) => math.springProgress(i / 100))) < 1.03);
+check("x stops", math.xAxisStops(0, 30).map((s) => s.t).join() === "0,10,20,30");
+check("stepPath", math.stepPath([0, 10], [5, 3], 9) === "M0.00 9.00V5.00H10.00V3.00");
+
+// ---- pt-BR formatting ----
+check("cents", fmt.cents(9511846) === "95.118,46" && fmt.cents(-5) === "−0,05" && fmt.cents(0) === "0,00" && fmt.cents(100000000) === "1.000.000,00");
+check("signed cents", fmt.signedCents(1500) === "+15,00" && fmt.signedCents(-1500) === "−15,00" && fmt.signedCents(0) === "0,00");
+check("percent", fmt.percent(34.94) === "34,9" && fmt.percent(-5) === "5" && fmt.percent(0.04) === "0");
+check("thousands", fmt.thousands(9250000) === "92,5 mil" && fmt.thousands(500000) === "5 mil");
+check("local ISO date", new Date(fmt.toEpoch("2026-03-01")).getDate() === 1 && new Date(fmt.toEpoch("2026-03-01")).getHours() === 0);
+check("dates", fmt.shortDate(new Date(2026, 8, 5)) === "05 set" && fmt.longDate(new Date(2026, 3, 1)) === "qua, 01 abr 2026", fmt.longDate(new Date(2026, 3, 1)));
+
+// ---- mounted charts ----
+mountAll();
+await new Promise((r) => setTimeout(r, 500));
+const q = (sel, root = document) => root.querySelector(sel);
+const nw = document.getElementById("nw");
+const slider = q('[role="slider"]', nw);
+check("net worth mounts a slider with ARIA", !!slider && slider.getAttribute("aria-valuemax") === String(slider.getAttribute("aria-valuemax")) && slider.getAttribute("aria-valuetext").includes("R$"), slider && slider.outerHTML);
+check("net worth header shows the latest value", q('[data-fc="value"]', nw).textContent === fmt.cents(pts[pts.length - 1].cents), q('[data-fc="value"]', nw).textContent);
+check("partial badge and note", !q('[data-fc="badge"]', nw).hidden && !q('[data-fc="note"]', nw).hidden && q('[data-fc-pending]', nw).textContent === "Caixinha" && q('[data-fc-apart]', nw).textContent === "123,45");
+check("busy flag is cleared", q('[data-fc="plot"]', nw).getAttribute("aria-busy") === "false");
+check("one SVG path per layer, three at most grid lines", nw.querySelectorAll(".fc-line").length === 1 && !!q(".fc-area, path[fill^='url']", nw));
+const before = slider.getAttribute("aria-valuenow");
+slider.focus();
+slider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+check("ArrowLeft moves the reading one point back", Number(slider.getAttribute("aria-valuenow")) === Number(before) - 1, before + " -> " + slider.getAttribute("aria-valuenow"));
+const scrubbed = q('[data-fc="value"]', nw).textContent;
+slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+check("Home goes to the first point", slider.getAttribute("aria-valuenow") === "0" && q('[data-fc="value"]', nw).textContent !== scrubbed);
+slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+check("Escape releases to the latest value", q('[data-fc="value"]', nw).textContent === fmt.cents(pts[pts.length - 1].cents));
+const r = slider.getBoundingClientRect();
+slider.dispatchEvent(new PointerEvent("pointermove", { clientX: r.left + r.width / 2, clientY: r.top + 50, pointerType: "mouse", bubbles: true }));
+check("pointer scrubbing shows the glass tip", q(".fc-tip", nw).style.opacity === "1" && q(".fc-tip-value", nw).textContent.length > 0);
+slider.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse", bubbles: true }));
+check("leaving hides the tip", q(".fc-tip", nw).style.opacity === "0");
+const radios = nw.querySelectorAll('[role="radio"]');
+radios[0].click();
+check("range change updates aria-checked and the thumb", radios[0].getAttribute("aria-checked") === "true" && radios[2].getAttribute("aria-checked") === "false" && q('[data-fc="range"]', nw).style.getPropertyValue("--fc-idx") === "0");
+radios[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+check("arrow keys move through the radiogroup", radios[1].getAttribute("aria-checked") === "true");
+
+const pace = document.getElementById("pace");
+check("pace shows crossing of the ceiling and the chips", !!q(".fc-cross-label", pace) && q('[data-fc="chip-ceiling"]', pace).textContent.startsWith("passou") && q('[data-fc="chip-average"]', pace).textContent.includes("acima da média"), q('[data-fc="chip-ceiling"]', pace).textContent + "|" + q('[data-fc="chip-average"]', pace).textContent);
+check("pace value is the month total", q('[data-fc="value"]', pace).textContent === "4,00");
+const pslider = q('[role="slider"]', pace);
+pslider.focus();
+pslider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+check("pace scrubs by day", pslider.getAttribute("aria-valuenow") === "0" && q('[data-fc="sub"]', pace).textContent.startsWith("dia 1"), q('[data-fc="sub"]', pace).textContent);
+
+const flow = document.getElementById("flow");
+check("flow draws one column per month with bars", flow.querySelectorAll(".fc-col").length === 4 && flow.querySelectorAll(".fc-bar-in").length === 4, flow.querySelectorAll(".fc-col").length);
+check("flow shows the latest month balance", q('[data-fc="value"]', flow).textContent === fmt.cents(600000 - 40000), q('[data-fc="value"]', flow).textContent);
+check("flow with only four months is not sparse but shows the rate chip", q('[data-fc="chip-rate"]', flow).textContent.includes("% da renda poupados"), q('[data-fc="chip-rate"]', flow).textContent);
+
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + results.filter((x) => x.startsWith("FAIL")).length;
+</script>
+</body>
+</html>

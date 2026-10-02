@@ -1,0 +1,82 @@
+{% from "_ui.html" import stroke_gauge %}
+{% if not q %}
+<p class="pal-hint">Escreva como falaria: <em>café 12,50 hoje nubank</em>, <em>jantar 142 ontem no nubank em 2x</em> ou <em>e se geladeira 4.200 em 10x</em>. O tipo (despesa, receita…) é sempre escolha sua.</p>
+{% elif not draft.amount_cents and not draft.what_if %}
+<div class="pal-card">
+  <p class="pal-hint">Não achei um valor na frase. {% if draft.fragments %}Entendi: {{ draft.fragments|map(attribute='text')|join(', ') }}. {% endif %}Tente algo como <em>café 12,50 hoje nubank</em>.</p>
+</div>
+{% else %}
+<div class="pal-card">
+  <div class="pal-understood">
+    <span class="pal-eyebrow"><span class="pal-n">1</span> Entendi</span>
+    <p class="pal-phrase">
+      {%- for s in segments -%}{%- if s.kind -%}<span class="pal-u {{ 'pal-ub' if s.kind.value == 'account' }}">{{ s.text }}</span>{%- else -%}{{ s.text }}{%- endif -%}{{ ' ' }}{%- endfor -%}
+    </p>
+  </div>
+
+  {% if draft.what_if %}
+  <div class="pal-sim">
+    <p class="pal-hint">Isto parece uma simulação de compra. O sistema calcula as parcelas por fatura, o limite, o caixa livre e se compensa parcelar. Nada é gravado.</p>
+    <a class="pal-primary" data-primary href="/ese?{{ ese_query }}">Simular em E se…</a>
+  </div>
+  {% else %}
+  <dl class="pal-fields">
+    <div><dt>Descrição</dt><dd>{{ draft.description or '—' }}{% if not draft.description %}<small>opcional</small>{% endif %}</dd><span class="pal-tag pal-tag-t">{{ 'texto' if draft.description else 'faltou' }}</span></div>
+    <div><dt>Valor</dt><dd>{{ amount_cents|brl }}<small>{% if installment_purchase %}{% if draft.installment_cents %}{{ draft.installments }} × {{ (draft.installment_cents|brl) }}{% else %}total da compra{% endif %}{% else %}valor do lançamento{% endif %}</small></dd><span class="pal-tag pal-tag-t">texto</span></div>
+    <div><dt>Data</dt><dd>{{ day|date }}<small>{% if date_text %}“{{ date_text }}”, hoje é {{ today|date }}{% else %}hoje: a frase não disse a data{% endif %}</small></dd><span class="pal-tag {{ 'pal-tag-t' if date_text else 'pal-tag-d' }}">{{ 'texto' if date_text else 'padrão' }}</span></div>
+    <div><dt>Conta</dt><dd>{% if account %}{{ account.nickname }}{% elif candidates %}escolha uma{% else %}—{% endif %}<small>{% if account %}{{ 'cartão' if account.kind.value == 'credit_card' else 'conta corrente' }}{% elif candidates %}serve para: {% for a in candidates %}{{ a.nickname }}{{ ', ' if not loop.last }}{% endfor %}{% else %}o lançamento rápido usa a última conta usada{% endif %}</small></dd><span class="pal-tag {{ 'pal-tag-t' if account else 'pal-tag-d' }}">{{ 'texto' if account else 'padrão' }}</span></div>
+    {% if installment_purchase %}<div><dt>Parcelas</dt><dd>{{ draft.installments }} vezes</dd><span class="pal-tag pal-tag-t">texto</span></div>{% endif %}
+    {% if not installment_purchase %}
+    <div><dt>Categoria</dt><dd>{{ category.name if category else '—' }}<small>{% if category %}última usada em “{{ draft.description }}”{% else %}sem sugestão: o formulário pede{% endif %}</small></dd><span class="pal-tag {{ 'pal-tag-r' if category else 'pal-tag-d' }}">{{ 'regra' if category else 'sem sugestão' }}</span></div>
+    <div><dt>Tipo</dt><dd>{{ kind_labels[kind] }}<small>sua escolha; começa em Despesa</small></dd><span class="pal-tag pal-tag-v">você</span></div>
+    {% endif %}
+  </dl>
+
+  {% if not installment_purchase %}
+  <div class="pal-kind" role="radiogroup" aria-label="Tipo do lançamento">
+    {% for k in kinds %}<label><input type="radio" name="kind" value="{{ k.value }}" {{ 'checked' if k == kind }} hx-get="/palette/parse" hx-trigger="change" hx-target="#palette-preview" hx-include="#palette-input"><span>{{ kind_labels[k] }}</span></label>{% endfor %}
+  </div>
+  <p class="pal-hint">O tipo é sempre escolha sua. A frase só preenche o resto.</p>
+  {% endif %}
+
+  {% if asks_role %}
+  <div class="pal-ask">
+    <span class="pal-ask-q">O {{ ((draft.price_cents|brl)|replace('R$ ', '')) }} é o valor total ou o de cada parcela?</span>
+    <div class="pal-kind pal-kind-2" role="radiogroup" aria-label="Como interpretar o valor">
+      <label><input type="radio" name="role" value="total" {{ 'checked' if role != 'each' }} hx-get="/palette/parse" hx-trigger="change" hx-target="#palette-preview" hx-include="#palette-input"><span>Total da compra</span></label>
+      <label><input type="radio" name="role" value="each" {{ 'checked' if role == 'each' }} hx-get="/palette/parse" hx-trigger="change" hx-target="#palette-preview" hx-include="#palette-input"><span>Cada parcela</span></label>
+    </div>
+    <span class="pal-hint">Entendi como total. Se for de cada parcela: {{ draft.installments }} × {{ (draft.price_cents|brl)|replace('R$ ', '') }} = {{ ((draft.price_cents * draft.installments)|brl)|replace('R$ ', '') }}.</span>
+  </div>
+  {% endif %}
+
+  {% if installment_purchase and scenario %}
+  <div class="pal-sched">
+    <span class="pal-eyebrow"><span class="pal-n">2</span> Calculei, pelo sistema</span>
+    <p class="pal-explain">{{ explanation }}</p>
+    {% for l in scenario.lines %}
+    <span class="pal-line"><strong>{{ l.number }}/{{ draft.installments }}</strong><span class="pal-small">fatura {{ l.month|month_short }} · vence {{ l.due|date_short }}</span><i></i><span>{{ (l.amount_cents|brl)|replace('R$ ', '') }}</span></span>
+    {% endfor %}
+    <span class="pal-line pal-total"><strong>Total</strong><i></i><span>{{ scenario.total_cents|brl }}</span></span>
+    {% if scenario.card.limit_cents %}
+    {% set u0 = scenario.usage_before %}{% set u1 = scenario.usage_after %}
+    <span class="pal-eyebrow pal-gap">Limite do {{ scenario.card.name }}</span>
+    {{ stroke_gauge(u0.percent, add=(u1.percent - u0.percent), label='Limite comprometido: ' ~ ((u0.percent|round(1))|string|replace('.', ',')) ~ '% agora, ' ~ ((u1.percent|round(1))|string|replace('.', ',')) ~ '% com esta compra') }}
+    <span class="pal-small">{{ (u0.percent|round(1))|string|replace('.', ',') }}% → <strong>{{ (u1.percent|round(1))|string|replace('.', ',') }}%</strong> · disponível {{ u0.available_cents|brl }} → {{ u1.available_cents|brl }}</span>
+    {% endif %}
+  </div>
+  {% elif installment_purchase %}
+  <p class="pal-hint">{% if candidates %}Escolha o cartão na frase (por exemplo, o nome completo do cartão) para ver as parcelas por fatura.{% else %}Diga o cartão na frase para ver as parcelas por fatura.{% endif %}</p>
+  {% endif %}
+
+  <div class="pal-actions">
+    {% if installment_purchase %}
+      <a class="pal-primary" data-primary href="/ese?{{ ese_query }}">Simular em E se…</a>
+      {% if account and account.kind.value == 'credit_card' %}<a class="pal-secondary" href="/cards/purchase?card={{ account.id }}">Registrar parcelado</a>{% endif %}
+    {% else %}
+      <a class="pal-primary" data-primary href="/entries?{{ fill }}">Preencher o lançamento</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}

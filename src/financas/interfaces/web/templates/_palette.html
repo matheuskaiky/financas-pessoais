@@ -1,0 +1,50 @@
+{#- Command palette (⌘K / Ctrl+K, or any [data-palette-open]). static/palette.js opens it; the list is the
+    registered navigation, so a page that registers itself shows up here too. -#}
+<dialog id="palette" class="palette" aria-label="Comando" aria-describedby="palette-off">
+  <div class="pal-box">
+    <div class="pal-top">
+      <div class="pal-tabs" role="presentation"><span class="pal-tab is-on">Registrar e ir para</span></div>
+      <div class="pal-top-right">
+        <span class="pal-assist"><span class="pal-led" aria-hidden="true"></span>Assistente desligado</span>
+        <button type="button" class="pal-esc" data-palette-close aria-label="Fechar o painel de comando">ESC</button>
+      </div>
+    </div>
+
+    <div class="pal-search">
+      <label for="palette-input" class="pal-eyebrow">Escreva como falaria</label>
+      <div class="pal-input-row">
+        <input id="palette-input" name="q" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+               autocomplete="off" spellcheck="false" maxlength="300" placeholder="café 12,50 hoje nubank"
+               hx-get="/palette/parse" hx-trigger="input changed delay:250ms, search" hx-target="#palette-preview" hx-swap="innerHTML" hx-include="this">
+        <span class="pal-kb" aria-hidden="true">⏎</span>
+      </div>
+    </div>
+
+    <div class="pal-body">
+      <div id="palette-list" class="pal-list" role="listbox" aria-label="Páginas e ações">
+        {% set groups = nav_groups(none, assistant_enabled, sidebar_only=False) %}
+        <div class="pal-group" data-group>
+          <span class="pal-group-title">Ações</span>
+          <a class="pal-item" role="option" href="/entries#form" data-search="novo lancamento registrar despesa receita"><span>Novo lançamento</span><small>formulário rápido</small></a>
+          <a class="pal-item" role="option" href="/cards/purchase" data-search="nova compra parcelada cartao parcelas"><span>Nova compra parcelada</span><small>com o cronograma por fatura</small></a>
+          <form method="post" action="/backup" class="pal-form"><button class="pal-item" role="option" type="submit" data-search="fazer backup copia seguranca"><span>Fazer backup</span><small>copia o banco e as imagens</small></button></form>
+        </div>
+        <div class="pal-group" data-group>
+          <span class="pal-group-title">Ir para</span>
+          {% for group in groups %}{% for item in group.items %}
+          <a class="pal-item" role="option" href="{{ item.href }}" data-search="{{ item.label|lower }} {{ item.hint|lower }}">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ item.icon }}"/></svg>
+            <span>{{ item.label }}</span>{% if item.hint %}<small>{{ item.hint }}</small>{% endif %}</a>
+          {% endfor %}{% endfor %}
+        </div>
+        <p class="pal-none" data-none hidden>Nenhuma página ou ação com esse texto. Se for um lançamento, o resultado aparece ao lado.</p>
+      </div>
+      <div id="palette-preview" class="pal-preview" aria-live="polite">{% include "_palette_preview.html" %}</div>
+    </div>
+
+    <div class="pal-foot">
+      <span id="palette-off"><span class="pal-led" aria-hidden="true"></span>Nada sai deste computador: a frase é lida aqui, por regras fixas.</span>
+      <span class="pal-keys" aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> navegar <kbd>⏎</kbd> abrir <kbd>esc</kbd> fechar</span>
+    </div>
+  </div>
+</dialog>

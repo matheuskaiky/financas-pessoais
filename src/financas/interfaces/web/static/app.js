@@ -4,9 +4,63 @@ document.addEventListener("change", function (event) {
   const el = event.target;
   if (el instanceof HTMLElement && el.matches("[data-autosubmit]") && el.form) el.form.submit();
 });
+
+// Confirmation dialog (instead of the browser's pop-up): forms with data-confirm and htmx requests
+// with hx-confirm ask first. Optional data-confirm-title, data-confirm-ok and data-confirm-danger.
+const confirmDialog = document.getElementById("confirm-dialog");
+function askConfirm(message, source) {
+  const data = (source && source.dataset) || {};
+  if (!confirmDialog || typeof confirmDialog.showModal !== "function") {
+    return Promise.resolve(window.confirm(message)); // very old browsers
+  }
+  document.getElementById("confirm-title").textContent = data.confirmTitle || "Confirmar";
+  document.getElementById("confirm-message").textContent = message;
+  const ok = document.getElementById("confirm-ok");
+  ok.textContent = data.confirmOk || "Confirmar";
+  ok.classList.toggle("danger", data.confirmDanger !== undefined);
+  const cancel = document.getElementById("confirm-cancel");
+  return new Promise(function (resolve) {
+    let settled = false;
+    const finish = function (answer) {
+      if (settled) return;
+      settled = true;
+      ok.removeEventListener("click", yes);
+      cancel.removeEventListener("click", no);
+      confirmDialog.removeEventListener("close", no);
+      if (confirmDialog.open) confirmDialog.close();
+      resolve(answer);
+    };
+    const yes = function () { finish(true); };
+    const no = function () { finish(false); }; // also Esc and the backdrop (they close the dialog)
+    ok.addEventListener("click", yes);
+    cancel.addEventListener("click", no);
+    confirmDialog.addEventListener("close", no);
+    confirmDialog.showModal();
+    cancel.focus(); // the safe choice is the default
+  });
+}
+if (confirmDialog) {
+  confirmDialog.addEventListener("click", function (event) {
+    if (event.target === confirmDialog) confirmDialog.close(); // a click on the backdrop
+  });
+}
 document.addEventListener("submit", function (event) {
-  const message = event.target instanceof HTMLElement ? event.target.dataset.confirm : undefined;
-  if (message && !window.confirm(message)) event.preventDefault();
+  const form = event.target;
+  const message = form instanceof HTMLElement ? form.dataset.confirm : undefined;
+  if (!message || form.dataset.confirmed) return;
+  event.preventDefault();
+  askConfirm(message, form).then(function (yes) {
+    if (!yes) return;
+    form.dataset.confirmed = "1";
+    form.requestSubmit(event.submitter || undefined);
+  });
+});
+document.body.addEventListener("htmx:confirm", function (event) {
+  if (!event.detail.question) return;
+  event.preventDefault();
+  askConfirm(event.detail.question, event.detail.elt).then(function (yes) {
+    if (yes) event.detail.issueRequest(true);
+  });
 });
 
 // Investment valuation form: the URL carries the account id.
@@ -71,4 +125,42 @@ document.addEventListener("submit", function (event) {
     const same = Array.from(other.options).filter(function (o) { return o.value && o.dataset.institution === institution; });
     if (same.length === 1) other.value = same[0].value;
   });
+})();
+
+// Quick entry form: only the accounts that accept the chosen type are offered (a card never takes
+// income), and a transfer cannot leave from and arrive at the same account.
+(function () {
+  const account = document.querySelector("[data-entry-account]");
+  const kinds = document.querySelectorAll("input[name='kind']");
+  if (account && kinds.length) {
+    const sync = function () {
+      const checked = document.querySelector("input[name='kind']:checked");
+      const kind = checked ? checked.value : "expense";
+      Array.from(account.options).forEach(function (option) {
+        if (!option.dataset.kinds) return;
+        const allowed = option.dataset.kinds.split(" ").indexOf(kind) !== -1;
+        option.hidden = !allowed;
+        option.disabled = !allowed;
+        if (!allowed && option.selected) account.value = "";
+      });
+    };
+    kinds.forEach(function (radio) { radio.addEventListener("change", sync); });
+    sync();
+  }
+  const from = document.querySelector("[data-transfer-from]");
+  const to = document.querySelector("[data-transfer-to]");
+  if (from && to) {
+    const exclude = function (source, other) {
+      Array.from(other.options).forEach(function (option) {
+        const same = option.value !== "" && option.value === source.value;
+        option.disabled = same;
+        option.hidden = same;
+        if (same && option.selected) other.value = "";
+      });
+    };
+    from.addEventListener("change", function () { exclude(from, to); });
+    to.addEventListener("change", function () { exclude(to, from); });
+    exclude(from, to);
+    exclude(to, from);
+  }
 })();

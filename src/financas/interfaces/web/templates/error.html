@@ -1,9 +1,8 @@
 {% extends "base.html" %}
+{% from "_ui.html" import state_error %}
 {% block title %}{{ heading }}{% endblock %}
 {% block content %}
-<header class="page-head"><div><h1>{{ heading }}</h1><p>{{ detail }}</p></div></header>
-<section class="panel">
-  {% if failure_code %}<p class="hint">Código do erro: <code>{{ failure_code }}</code> · veja em <a href="/diagnostics">Diagnóstico</a></p>{% endif %}
-  <p><a class="btn" href="/">Voltar ao painel</a></p>
-</section>
+<header class="page-head"><div><span class="eyebrow">Atenção</span><h1>{{ heading }}</h1></div></header>
+{{ state_error(detail or heading, '', code=failure_code, action_label='Voltar ao painel', action_href='/') }}
+{% if failure_code %}<p class="hint"><a href="/diagnostics">Ver em Diagnóstico</a></p>{% endif %}
 {% endblock %}

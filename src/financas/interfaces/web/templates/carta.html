@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% from "_ui.html" import odometer, delta_chip, state_empty %}
+{% block title %}Carta de {{ view.month_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/carta.css"><script src="/static/carta.js" defer></script>{% endblock %}
+
+{% macro paragraph(section) -%}
+<p class="letter-text">
+  {%- for p in section.parts -%}
+    {%- if p.kind == 'text' %}{{ p.text }}
+    {%- elif p.kind == 'value' %}<span class="num-v" tabindex="0"{% if p.note %} data-note="{{ p.note }}"{% endif %} data-slot="{{ p.slot }}">{{ p.text }}</span>
+    {%- else %}<sup class="fn" aria-hidden="true">{{ p.number }}</sup>{% endif -%}
+  {%- endfor -%}
+</p>
+{%- endmacro %}
+
+{% macro notes(section) -%}
+{% if section.notes %}
+<div class="lt-notes">
+  {% for n in section.notes %}
+  <div class="lt-note" id="nota-{{ n.number }}" data-note-id="{{ n.number }}">
+    <span class="note-title"><sup class="fn">{{ n.number }}</sup> <strong>{{ n.title }}</strong></span>
+    {% for r in n.rows %}<span class="note-row"><span>{{ r.label }}</span><span class="lead" aria-hidden="true"></span><span{% if r.bold %} class="b"{% endif %}>{{ r.value }}</span></span>{% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+{% set letter = view.letter %}
+{% set pending = view.todos|length %}
+<header class="page-head letter-head">
+  <div>
+    <span class="eyebrow">Carta do mês</span>
+    <h1>Carta de {{ view.month_name }}</h1>
+  </div>
+  <div class="letter-status">
+    <form method="get" action="/carta" class="month-pick">
+      <label for="carta-month" class="sr-only">Mês da carta</label>
+      <select id="carta-month" name="month" data-autosubmit>
+        {% for m, label in months %}<option value="{{ m }}" {{ 'selected' if m == view.month }}>{{ label }}</option>{% endfor %}
+      </select>
+      <noscript><button type="submit" class="secondary">Ver</button></noscript>
+    </form>
+    {% if pending %}{{ delta_chip(pending ~ (' pendência' if pending == 1 else ' pendências'), 'warn') }}{% else %}{{ delta_chip('Sem pendências', 'pos') }}{% endif %}
+    <span class="assist-state"><span class="led" aria-hidden="true"></span>{{ copy.status }}</span>
+  </div>
+</header>
+
+<div class="sent-strip rise">
+  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+  <span><strong>{{ copy.notice }}</strong></span>
+</div>
+
+{% if not letter.has_entries %}
+<section class="card letter-empty">
+  {{ state_empty('Sem lançamentos em ' ~ view.month_name, 'A carta é escrita a partir dos lançamentos do mês fechado. Quando houver lançamentos, ela aparece aqui.', 'Novo lançamento', '/entries#form', 'calendar') }}
+</section>
+{% else %}
+<section class="letter rise" aria-label="Carta de {{ view.month_name }}">
+
+  <div class="letter-row">
+    <div class="letter-main letter-hero">
+      <div class="letter-letterhead">
+        <span class="mark">finanças <small>PESSOAIS</small></span>
+        <span class="soft">{{ letter.written_on|date }}</span>
+      </div>
+      <div class="hero-balance">
+        <span class="eyebrow">Saldo de {{ view.month_name }}</span>
+        <div class="hero-number">{{ odometer(letter.balance_cents, size='clamp(54px, 7vw, 84px)') }}</div>
+      </div>
+      <div class="chips stag">
+        {% if letter.savings_rate is not none %}{{ delta_chip((letter.savings_rate|percent) ~ ' da renda', 'pos' if letter.savings_rate > 0 else 'neg') }}{% endif %}
+        {% if letter.average_signal == 'below' %}{{ delta_chip('abaixo da média', 'pos', 'down') }}{% elif letter.average_signal == 'above' %}{{ delta_chip('acima da média', 'neg', 'up') }}{% elif letter.average_signal == 'equal' %}{{ delta_chip('igual à média', 'neu') }}{% endif %}
+        {{ delta_chip(letter.entry_count ~ (' lançamento' if letter.entry_count == 1 else ' lançamentos'), 'neu') }}
+      </div>
+    </div>
+    <aside class="letter-margin letter-help">
+      <span class="eyebrow">{{ copy.margin_title }}</span>
+      <span class="soft">{{ copy.margin_help }}</span>
+    </aside>
+  </div>
+
+  {% for section in view.rendered.sections %}
+  <div class="letter-row sr" id="secao-{{ section.id }}">
+    <div class="letter-main">
+      <span class="rule" aria-hidden="true"></span>
+      <h2 class="ov">{{ section.title }}</h2>
+      {{ paragraph(section) }}
+
+      {% if section.id == 'before' and view.todos %}
+      <ul class="todos">
+        {% for t in view.todos %}
+        <li class="todo">
+          <span class="todo-box" aria-hidden="true"></span>
+          <div class="todo-text"><span class="todo-title">{{ t.title }}</span><span class="soft">{{ t.sub }}</span></div>
+          {% if t.href %}<a class="todo-cta" href="{{ t.href }}">{{ t.cta }}</a>
+          {% else %}<form method="post" action="/backup"><button type="submit" class="todo-cta">{{ t.cta }}</button></form>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+
+    <aside class="letter-margin" aria-label="Notas de {{ section.title|lower }}">
+      {% if section.id == 'panorama' and view.spark %}
+      <div class="chart">
+        <span class="eyebrow">Despesas, {{ view.spark_first_month }} a {{ view.month_name }}</span>
+        <div class="spark" role="img" aria-label="Despesas mensais de {{ view.spark_first_month }} a {{ view.month_name }}. {% for b in view.spark %}{{ b.month_label }}: {{ b.cents|brl }}. {% endfor %}{% if letter.spark_average_cents is not none %}Média dos três meses anteriores: {{ letter.spark_average_cents|brl }}.{% endif %}">
+          {% if letter.spark_average_cents is not none %}<span class="avg-line" aria-hidden="true" style="bottom: {{ view.spark_average_bottom }}px"></span>{% endif %}
+          <div class="lt-bars">{% for b in view.spark %}<span class="bar-slot"><span class="lt-bar grow bar-{{ b.tone }}" style="height: {{ b.height }}px" title="{{ b.month_label }}: {{ b.cents|brl }}"></span></span>{% endfor %}</div>
+        </div>
+        <div class="spark-labels" aria-hidden="true">{% for b in view.spark %}<span>{{ b.letter }}</span>{% endfor %}</div>
+        {% if letter.spark_average_cents is not none %}<span class="soft small">Linha tracejada: média dos três meses anteriores, {{ letter.spark_average_cents|brl }}.</span>{% endif %}
+      </div>
+      {% elif section.id == 'where' and view.categories %}
+      <div class="chart">
+        <span class="eyebrow">Maiores categorias</span>
+        {% for c in view.categories %}
+        <div class="lt-row"><span class="cat-line"><span class="cat-name"><span class="swatch" style="background: {{ c.color }}" aria-hidden="true"></span>{{ c.name }}</span><span class="lead" aria-hidden="true"></span><span class="b">{{ c.cents|brl }}</span></span>
+          <span class="meter" aria-hidden="true"><span class="meter-fill wipe" style="width: {{ '%.1f'|format(c.width) }}%; background: {{ c.color }}"></span></span></div>
+        {% endfor %}
+      </div>
+      {% elif section.id == 'agreed' and view.goal_bars %}
+      <div class="chart">
+        <span class="eyebrow">{{ letter.goal_chart.name }} e a meta</span>
+        <div class="goal" role="img" aria-label="{{ letter.goal_chart.name }} contra a meta de {{ letter.goal_chart.goal_cents|brl }}. {% for b in view.goal_bars %}{{ b.label }}: {{ b.cents|brl }}. {% endfor %}">
+          <span class="goal-line" aria-hidden="true" style="bottom: {{ view.goal_line_bottom }}px"></span>
+          <div class="lt-bars goal-bars">{% for b in view.goal_bars %}<span class="bar-slot"><span class="goal-stack grow" style="height: {{ b.height }}px"><span class="goal-excess" style="height: {{ b.excess }}px"></span><span class="goal-base" style="height: {{ b.base }}px"></span></span></span>{% endfor %}</div>
+        </div>
+        <div class="spark-labels goal-labels" aria-hidden="true">{% for b in view.goal_bars %}<span>{{ b.label }}</span>{% endfor %}</div>
+        <div class="chips">{% for b in view.goal_bars if b.excess_cents %}{{ delta_chip('+' ~ ((b.excess_cents|brl)|replace('R$ ', '')) ~ ' em ' ~ b.label, 'neg', 'up') }}{% endfor %}</div>
+        <span class="soft small">Linha tracejada: a meta mensal, {{ letter.goal_chart.goal_cents|brl }}.</span>
+      </div>
+      {% elif section.id == 'ahead' and view.cash %}
+      <div class="chart">
+        <span class="eyebrow">Caixa depois das faturas</span>
+        {% for s in view.cash %}
+        <div class="lt-row"><span class="cat-line"><span>{% if s.code == 'today' %}Hoje, {{ s.on }}{% else %}Depois do {{ s.name }}, {{ s.on }}{% endif %}</span><span class="lead" aria-hidden="true"></span><span class="b">{{ s.cents|brl }}</span></span>
+          <span class="meter" aria-hidden="true"><span class="meter-fill wipe {{ 'cash-low' if loop.last and not loop.first }}" style="width: {{ '%.1f'|format(s.width) }}%"></span></span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if section.id == 'before' %}
+      <div class="seal-box">
+        <svg role="img" aria-label="Lacre de {{ view.month_name }} de {{ view.month.year }}, impressão {{ view.seal_print }}" width="132" height="132" viewBox="0 0 120 120">
+          <defs><path id="arc-seal" d="M60 60 m-47 0 a47 47 0 1 1 94 0 a47 47 0 1 1 -94 0"/></defs>
+          <circle cx="60" cy="60" r="58" fill="#0A2E24"/><circle cx="60" cy="60" r="55" fill="none" stroke="#D9B25F" stroke-width="0.8"/>
+          <circle cx="60" cy="60" r="29" fill="#0A2E24" stroke="#D9B25F" stroke-width="0.8"/>
+          <text font-family="Source Serif 4, Georgia, serif" font-size="7" letter-spacing="2.2" fill="#D9B25F"><textPath href="#arc-seal">IMPRESSÃO · {{ view.seal_print }} · {{ view.month_name|upper }} {{ view.month.year }} ·</textPath></text>
+          <text x="60" y="62" text-anchor="middle" font-family="Source Serif 4, Georgia, serif" font-size="19" fill="#F4F7F2">{{ view.month_name[:3] }}</text>
+          <text x="60" y="73" text-anchor="middle" font-family="Libre Franklin, system-ui, sans-serif" font-size="6.5" letter-spacing="1.6" fill="#D9B25F">{{ view.month.year }}</text>
+        </svg>
+        <span class="seal-title">Impressão dos totais {{ view.seal_print }}</span>
+        <span class="soft">Calculada a partir dos totais de {{ view.month_name }}. Se um lançamento do mês mudar, a impressão muda.</span>
+      </div>
+      {% else %}
+      {{ notes(section) }}
+      {% endif %}
+    </aside>
+  </div>
+  {% endfor %}
+
+  <div class="letter-row letter-how">
+    <div class="letter-main">
+      <span class="eyebrow">Como esta carta foi escrita</span>
+      <p>{{ copy.how }}</p>
+    </div>
+    <aside class="letter-margin">
+      <span class="note-row"><span>Marcadores no texto</span><span class="lead" aria-hidden="true"></span><span class="b">{{ view.rendered.slots_total }}</span></span>
+      <span class="note-row"><span>Preenchidos pelo sistema</span><span class="lead" aria-hidden="true"></span><span class="b">{{ view.rendered.slots_filled }}</span></span>
+      <span class="note-row"><span>Números escritos por modelo externo</span><span class="lead" aria-hidden="true"></span><span class="b">0</span></span>
+    </aside>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

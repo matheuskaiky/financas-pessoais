@@ -69,7 +69,7 @@ def test_security_headers_and_local_only_static_assets(client: TestClient) -> No
     assert "http://" not in response.text.replace("http://localhost", "")
     assert "https://" not in response.text
     assert client.get("/static/htmx.min.js").status_code == 200
-    assert client.get("/static/chart.umd.min.js").status_code == 200
+    assert client.get("/static/charts.js").status_code == 200
 
 
 def test_rejects_foreign_host_and_cross_origin_posts(client: TestClient) -> None:
@@ -165,7 +165,7 @@ def test_category_field_suggests_the_last_category(
         "/entries/category-field", params={"kind": "income", "description": "Padaria"}
     )
     assert "Salário" in income.text and "Alimentação" not in income.text
-    assert client.get("/entries/category-field", params={"kind": "transfer"}).status_code == 400
+    assert client.get("/entries/category-field", params={"kind": "transfer"}).status_code == 204
 
 
 def test_delete_entry_via_htmx(client: TestClient, container: Container) -> None:
@@ -307,7 +307,7 @@ def test_unified_quick_form_creates_transfers(client: TestClient, container: Con
 def test_design_shell_and_font_are_served_locally(client: TestClient) -> None:
     home = client.get("/")
     assert 'class="sidebar"' in home.text and 'class="tabbar"' in home.text
-    assert "Dados só neste computador" in home.text and "Nenhum backup ainda" in home.text
+    assert "Dados guardados só neste computador" in home.text and "Nenhum backup ainda" in home.text
     css = client.get("/static/app.css")
     assert (
         "Libre Franklin" in css.text
@@ -925,7 +925,7 @@ def test_every_page_keeps_its_content_in_the_body(client: TestClient, container:
         "/entries": ("Lançamento rápido",),
         "/accounts": ("Contas e investimentos",),
         "/categories": ("Nova categoria",),
-        "/": ("Despesas por categoria",),
+        "/": ("Para onde foi o dinheiro",),
         "/more": ("Investimentos",),
         "/cards": ("Novo cartão",),
     }
@@ -1020,9 +1020,9 @@ def test_totals_strip_and_recurring_list_follow_the_statement_month(
             "recurring": "1",
         },
     )
-    assert "R$ 0,00" in client.get("/entries?month=2026-09").text.split("Despesas")[1][:80]
+    assert "R$ 0,00" in client.get("/entries?month=2026-09").text.split("Despesas")[1][:200]
     october = client.get("/entries?month=2026-10").text
-    assert "− R$ 100,00" in october.split("Despesas")[1][:80] or "R$ 100,00" in october
+    assert "− R$ 100,00" in october.split("Despesas")[1][:200] or "R$ 100,00" in october
     assert "Assinatura" in client.get("/?year=2026&month=10").text  # recurring list by competence
 
 
@@ -1399,3 +1399,66 @@ def test_contribution_form_preselects_the_checking_account_of_the_same_bank(
     script = client.get("/static/app.js").text
     assert "data-flow-target" in script and "dataset.institution" in script
     assert savings
+
+
+def test_a_card_is_never_offered_for_income_in_the_quick_form(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = make_card(client, container)
+    page = client.get("/entries").text
+    select = page.split("data-entry-account")[1].split("</select>")[0]
+    card_option = select.split(f'value="{card}"')[1].split("</option>")[0]
+    checking_option = select.split(f'value="{checking}"')[1].split("</option>")[0]
+    assert 'data-kinds="expense refund"' in card_option  # no income
+    assert 'data-kinds="expense income refund"' in checking_option
+    # opened on the income type: the card is hidden and disabled from the start
+    income_page = client.get("/entries?kind=income").text
+    assert income_page  # the filter keeps working
+    script = client.get("/static/app.js").text
+    assert "data-entry-account" in script and "dataset.kinds" in script
+    assert "data-transfer-from" in script
+    # and the server still refuses it if someone forces it
+    forced = client.post(
+        "/entries",
+        data={
+            "kind": "income", "account_id": card, "date": "2026-09-01",
+            "amount": "10,00", "description": "x",
+        },
+    )  # fmt: skip
+    assert forced.status_code == 400
+
+
+def test_switching_to_a_transfer_does_not_make_the_category_request_fail(
+    client: TestClient, container: Container
+) -> None:
+    assert client.get("/entries/category-field?kind=transfer").status_code == 204
+    assert client.get("/entries/category-field?kind=expense").status_code == 200
+    assert client.get("/entries/category-field?kind=banana").status_code == 400
+    assert client.get("/.well-known/appspecific/com.chrome.devtools.json").status_code == 404
+    assert client.get("/static/chart.umd.js.map").status_code == 404
+    # browser noise and a plain 400 are not failures of the system
+    assert container.failures.recent() == []
+
+
+def test_confirmations_use_the_in_page_dialog_not_the_browser_popup(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = make_card(client, container)
+    client.post(
+        "/entries",
+        data={
+            "kind": "expense", "account_id": checking, "date": "2026-09-01",
+            "amount": "10,00", "description": "Teste",
+        },
+    )  # fmt: skip
+    page = client.get("/entries?month=2026-09").text
+    assert '<dialog id="confirm-dialog"' in page  # in every page, from the base template
+    assert 'hx-confirm="Este lançamento será apagado' in page
+    assert 'data-confirm-title="Apagar lançamento"' in page and "data-confirm-danger" in page
+    accounts = client.get("/accounts").text
+    assert 'data-confirm-title="Desativar conta"' in accounts  # an active account asks first
+    script = client.get("/static/app.js").text
+    assert "window.confirm" in script  # only as the fallback of very old browsers
+    assert "htmx:confirm" in script and "showModal" in script
+    for template in Path("src/financas/interfaces/web/templates").glob("*.html"):
+        assert "onclick" not in template.read_text(encoding="utf-8")  # no inline handlers (CSP)

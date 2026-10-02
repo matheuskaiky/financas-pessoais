@@ -1,0 +1,117 @@
+{#- Shared UI components (design v3). Import what you need:
+      {% from "_ui.html" import odometer, stroke_gauge, delta_chip, skeleton, state_empty %}
+    CSS: static/app.css (section "UI components") and static/tokens.css; behavior: static/ui.js.
+    Texts passed in are pt-BR strings written by the caller (templates), never by these macros,
+    except the generic fallbacks of the states (e.g. "Carregando…"). -#}
+
+{% set _ICONS = {
+  'inbox': 'M3 13l3-8h12l3 8 M3 13v5a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5 M3 13h5l1 3h6l1-3h5',
+  'card': 'M3 8.5A3 3 0 0 1 6 5.5h12a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M3 10h18M7 15h3',
+  'calendar': 'M4 8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z M8 3v4M16 3v4M4 10h16',
+  'search': 'M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z M20 20l-4.2-4.2',
+  'chart': 'M4 20V10 M10 20V4 M16 20v-7 M21 20H3',
+  'alert': 'M12 8v5 M12 16.5h.01 M12 3l9.5 17h-19z',
+} %}
+
+{#- Rolling-digit figure. ``cents`` is an int; the server prints the final digits and the CSS rolls them
+    from 0 on load (``flat`` turns that off). ``size``: px number or any CSS length ("clamp(54px,9vw,84px)").
+    ``dark``: on a dark panel (gold "R$", light cents). ``prefix=False`` hides "R$" (tables).
+    ``static/ui.js``: ``FinUI.odometer.set(el, cents)`` rolls an existing odometer to a new value. -#}
+{% macro odometer(cents, size=56, dark=False, prefix=True, delay=0, flat=False) %}
+{%- set sign, whole, frac = cents|money_parts -%}
+{%- set text = whole ~ ',' ~ frac -%}
+{%- set px = (size ~ 'px') if size is number else size -%}
+{%- set scale = ' od-sm' if (size is number and size < 24) else (' od-md' if (size is number and size < 40) else '') -%}
+{%- set ns = namespace(n=0, tail=false) -%}
+<span class="od{{ scale }}{{ ' od-dark' if dark }}{{ ' od-flat' if flat }}" role="img" aria-label="{{ cents|brl if prefix else (sign ~ text) }}" data-odometer="{{ cents }}" data-od-prefix="{{ 1 if prefix else 0 }}" style="--od-size: {{ px }}">
+  {%- if sign %}<span class="od-sign" aria-hidden="true">−</span>{% endif -%}
+  {%- if prefix %}<span class="od-cur" aria-hidden="true">R$</span>{% endif -%}
+  {%- for ch in text -%}
+    {%- if ch == ',' %}{% set ns.tail = true %}{% endif -%}
+    <span aria-hidden="true"{% if ns.tail %} class="od-tail"{% endif %}>
+      {%- if ch in '0123456789' -%}
+      <span class="od-d"><span style="visibility: hidden">{{ ch }}</span><span class="od-s" style="transform: translateY(-{{ ch }}em); animation-delay: {{ delay + ns.n * 55 }}ms"><i>0</i><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i></span></span>
+      {%- set ns.n = ns.n + 1 -%}
+      {%- else -%}{{ ch }}{%- endif -%}
+    </span>
+  {%- endfor -%}
+</span>
+{%- endmacro %}
+
+{#- Dashed meter. ``percent`` 0-100+ (above 100 = over the limit); ``add`` is a darker extra segment
+    ("this purchase"); ``tone``: 'auto' (forest, gold from ``warn``, negative above 100), 'forest', 'gold'
+    or 'negative'; ``dark``: on a dark panel (gold dashes on a faint track); ``unset``: value not informed (hatched track, never 0%). ``label``: the accessible
+    text (default "Comprometido 51,3%"). ``caption`` is optional visible text under the bar. -#}
+{% macro stroke_gauge(percent, tone='auto', label=None, add=0, warn=80, height=14, unset=False, mark=True, delay=120, caption=None, dark=False) %}
+{%- set pct = [percent or 0, 0]|max -%}
+{%- set extra = [add or 0, 0]|max -%}
+{%- set total = pct + extra -%}
+{%- set main = [pct, 100]|min -%}
+{%- set more = [extra, 100 - main]|min -%}
+{%- set t = (('negative' if total > 100 else ('gold' if total >= warn else 'forest')) if tone == 'auto' else tone) -%}
+{%- set suffix = ', acima do limite' if total > 100 else (', atenção' if total >= warn else '') -%}
+{%- set text = label or ('Limite não informado' if unset else ('Comprometido ' ~ ('%.1f'|format(total)|replace('.', ',')) ~ '%' ~ suffix)) -%}
+<span class="sg sg-{{ t }}{{ ' sg-unset' if unset }}{{ ' sg-dark' if dark }}" role="img" aria-label="{{ text }}" style="--sg-h: {{ height }}px; --sg-w: {{ '%.2f'|format(0 if unset else main) }}%; --sg-add: {{ '%.2f'|format(0 if unset else more) }}%; --sg-mark: {{ warn }}%; --sg-delay: {{ delay }}ms">
+  {%- if not unset %}<span class="sg-wipe"><span class="sg-fill"></span><span class="sg-add"></span></span>{% endif -%}
+  {%- if mark and not unset %}<span class="sg-mark" aria-hidden="true"></span>{% endif -%}
+</span>
+{%- if caption %}<span class="sg-caption">{{ caption }}</span>{% endif -%}
+{%- endmacro %}
+
+{#- Change chip. ``tone``: pos | neg | warn | neu (colors in tokens.css); ``direction``: 'up' | 'down' | none
+    (draws the arrow). The sign belongs in ``text`` ("+67,42 vs agosto"): color is never the only signal. -#}
+{% macro delta_chip(text, tone='neu', direction=None) -%}
+<span class="dl dl-chip dl-{{ tone }}{{ ' dl-up' if direction == 'up' }}{{ ' dl-dn' if direction == 'down' }}">{{ text }}</span>
+{%- endmacro %}
+
+{#- Loading placeholder with a fixed size (so the loaded content does not move the page). ``width`` and
+    ``height``: px number or CSS length; ``radius`` in px; ``dark`` for dark panels. -#}
+{% macro skeleton(width='100%', height=14, radius=6, dark=False, inline=False) -%}
+<span class="{{ 'sk-d' if dark else 'sk' }} sk-box" aria-hidden="true" style="{{ 'display: inline-block; ' if inline }}width: {{ (width ~ 'px') if width is number else width }}; height: {{ (height ~ 'px') if height is number else height }}; border-radius: {{ radius }}px"></span>
+{%- endmacro %}
+
+{#- State blocks (same footprint for loading / empty / error so nothing jumps). -#}
+{% macro _icon(name) -%}
+<span class="ic"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="{{ _ICONS.get(name, _ICONS['inbox']) }}"/></svg></span>
+{%- endmacro %}
+
+{#- Empty is not an error: icon, what is missing, why, and the next step. ``icon``: inbox | card | calendar |
+    search | chart. ``action_*`` is the primary link; ``secondary_*`` an outlined one; ``inline`` lays it
+    out as a wide strip. -#}
+{% macro state_empty(title, text='', action_label=None, action_href=None, icon='inbox', secondary_label=None, secondary_href=None, inline=False) -%}
+<div class="state{{ ' state-inline' if inline }}">
+  {% if inline %}<div style="display: flex; align-items: center; gap: 20px">{{ _icon(icon) }}<div><h3 class="state-title" style="margin: 0">{{ title }}</h3>{% if text %}<p class="state-text">{{ text }}</p>{% endif %}</div></div>
+  {%- else %}{{ _icon(icon) }}<h3 class="state-title">{{ title }}</h3>{% if text %}<p class="state-text">{{ text }}</p>{% endif %}{% endif %}
+  {%- if action_label and action_href %}
+  <div class="state-actions"><a class="cta" href="{{ action_href }}">{{ action_label }}</a>{% if secondary_label and secondary_href %}<a class="cta2" href="{{ secondary_href }}">{{ secondary_label }}</a>{% endif %}</div>
+  {%- endif %}
+</div>
+{%- endmacro %}
+
+{#- Something failed: same shape as the empty state, announced to screen readers. ``code`` is the failure id. -#}
+{% macro state_error(title, text='', code=None, action_label=None, action_href=None) -%}
+<div class="state state-error" role="alert">
+  {{ _icon('alert') }}<h3 class="state-title">{{ title }}</h3>{% if text %}<p class="state-text">{{ text }}</p>{% endif %}
+  {%- if code %}<p class="state-code">Código do erro: <code>{{ code }}</code></p>{% endif %}
+  {%- if action_label and action_href %}<div class="state-actions"><a class="cta" href="{{ action_href }}">{{ action_label }}</a></div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- "Few data yet": shows how many of the needed points exist (``have`` of ``need``) and the action that
+    completes them. Never invents a curve. -#}
+{% macro state_sparse(have, need, title='Poucos dados ainda', text='', action_label=None, action_href=None) -%}
+<div class="state state-sparse dv-tip">
+  <h3 class="state-title">{{ title }}</h3>
+  {% if text %}<p class="state-text">{{ text }}</p>{% endif %}
+  {{ stroke_gauge(100 * have / need if need else 0, tone='forest', label=have ~ ' de ' ~ need, mark=False, height=10) }}
+  <span class="sg-caption"><strong>{{ have }} de {{ need }}</strong></span>
+  {%- if action_label and action_href %}<a class="link-quiet" href="{{ action_href }}">{{ action_label }}</a>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Loading block: a status line for screen readers and ``lines`` skeleton rows. -#}
+{% macro state_loading(label='Carregando…', lines=3) -%}
+<div aria-busy="true"><p class="sr-only" role="status">{{ label }}</p>
+  {%- for _ in range(lines) %}<div class="sk-line">{{ skeleton(width=(['82%', '64%', '73%'][loop.index0 % 3]), height=14) }}</div>{% endfor -%}
+</div>
+{%- endmacro %}

@@ -1,39 +1,40 @@
 {% extends "base.html" %}
 {% block title %}Fluxo diário{% endblock %}
 {% block content %}
+{% from "_ui.html" import odometer, state_empty %}
 <header class="page-head">
-  <div><a href="/accounts">← Contas</a><h1>Fluxo diário · {{ flow.account.nickname }}</h1><p>{{ institutions[flow.account.institution_id].name }} · transferências entram no saldo, não em receitas e despesas</p></div>
-  <div class="head-tools">
-    <a class="btn secondary" href="/accounts/{{ flow.account.id }}/flow?month={{ prev_month }}" aria-label="Mês anterior">‹</a>
-    <strong>{{ month_label|capitalize }}</strong>
-    <a class="btn secondary" href="/accounts/{{ flow.account.id }}/flow?month={{ next_month }}" aria-label="Próximo mês">›</a>
+  <div><a class="link-quiet back-link" href="/accounts"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>Contas</a><h1>Fluxo diário · {{ flow.account.nickname }}</h1><p>{{ institutions[flow.account.institution_id].name }} · transferências entram no saldo, não em receitas e despesas</p></div>
+  <div class="head-tools month-switch">
+    <a class="icon-btn" href="/accounts/{{ flow.account.id }}/flow?month={{ prev_month }}" aria-label="Mês anterior"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <strong class="month-name">{{ month_label|capitalize }}</strong>
+    <a class="icon-btn" href="/accounts/{{ flow.account.id }}/flow?month={{ next_month }}" aria-label="Próximo mês"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></a>
   </div>
 </header>
-<section class="cards">
-  <div class="card"><span class="label">Saldo inicial</span>
-    {% if flow.opening_balance_cents is none %}<strong>—</strong><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
-    {% else %}<strong>{{ flow.opening_balance_cents|brl }}</strong>{% endif %}</div>
-  <div class="card"><span class="label">Entradas</span><strong class="pos">{{ flow.inflow_cents|brl }}</strong></div>
-  <div class="card"><span class="label">Saídas</span><strong>{{ flow.outflow_cents|brl }}</strong></div>
-  <div class="card"><span class="label">Saldo final</span>
-    {% if flow.closing_balance_cents is none %}<strong>—</strong><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
-    {% else %}<strong>{{ flow.closing_balance_cents|brl }}</strong>{% endif %}</div>
+<section class="statstrip totals4" aria-label="Resumo do mês">
+  <div><span class="label">Saldo inicial</span>
+    {% if flow.opening_balance_cents is none %}<span class="fig">—</span><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
+    {% else %}<span class="fig">{{ odometer(flow.opening_balance_cents, size=30, flat=True) }}</span>{% endif %}</div>
+  <div><span class="label">Entradas</span><span class="fig pos">{{ odometer(flow.inflow_cents, size=30, flat=True) }}</span></div>
+  <div><span class="label">Saídas</span><span class="fig">{{ odometer(flow.outflow_cents, size=30, flat=True) }}</span></div>
+  <div><span class="label">Saldo final</span>
+    {% if flow.closing_balance_cents is none %}<span class="fig">—</span><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
+    {% else %}<span class="fig">{{ odometer(flow.closing_balance_cents, size=30, flat=True) }}</span>{% endif %}</div>
 </section>
 <section class="panel">
   {% if flow.rows %}
   <div class="table-scroll">
-  <table>
+  <table class="rtable">
     <thead><tr><th>Dia</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Resultado</th><th class="num">Saldo</th></tr></thead>
     <tbody>
     {% for r in flow.rows %}
-      <tr><td>{{ r.day|date }}</td><td class="num">{{ r.inflow_cents|brl }}</td><td class="num">{{ r.outflow_cents|brl }}</td>
-        <td class="num {{ 'pos' if r.result_cents > 0 else 'neg' }}">{{ r.result_cents|signed }}</td>
-        <td class="num">{% if r.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>{% else %}<strong>{{ r.balance_cents|brl }}</strong>{% endif %}</td></tr>
+      <tr><td>{{ r.day|date }}</td><td class="num" data-label="Entradas">{{ r.inflow_cents|brl }}</td><td class="num" data-label="Saídas">{{ r.outflow_cents|brl }}</td>
+        <td class="num {{ 'pos' if r.result_cents > 0 else 'neg' }}" data-label="Resultado">{{ r.result_cents|signed }}</td>
+        <td class="num" data-label="Saldo">{% if r.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>{% else %}<strong>{{ r.balance_cents|brl }}</strong>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  {% else %}<p class="empty">Sem movimentos neste mês.</p>{% endif %}
+  {% else %}{{ state_empty('Sem movimentos neste mês.', 'Troque de mês ou lance uma receita ou despesa nesta conta.', 'Novo lançamento', '/entries#form', 'inbox') }}{% endif %}
   {% if flow.opening_balance_cents is none %}<p class="hint">Informe um saldo na página <a href="/accounts">Contas</a> para ver o saldo corrido.</p>{% endif %}
 </section>
 {% endblock %}

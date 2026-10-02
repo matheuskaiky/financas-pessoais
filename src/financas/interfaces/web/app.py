@@ -2,9 +2,8 @@
 
 import datetime as dt
 import json
-from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -20,7 +19,6 @@ from financas.application.queries.cards import (
     InstallmentSchedule,
     ListActiveInstallments,
     ListCards,
-    ListMonthPurchases,
     StatementView,
 )
 from financas.application.queries.investments import (
@@ -91,14 +89,12 @@ from financas.application.use_cases.transactions import (
 from financas.container import Container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
-    Account,
     AccountKind,
     AssetClass,
     Category,
     CategoryGroup,
     CategoryKind,
     Indexer,
-    Institution,
     InstrumentType,
     InvestmentTracking,
     Liquidity,
@@ -122,6 +118,12 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
+from financas.interfaces.web import nav
+from financas.interfaces.web.routes import MODULES, WebContext
+from financas.interfaces.web.shared import Lookups
+from financas.interfaces.web.shared import enum_of as _enum
+from financas.interfaces.web.shared import int_of as _int
+from financas.interfaces.web.shared import opt_int as _opt_int
 
 HERE = Path(__file__).parent
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
@@ -130,35 +132,7 @@ _CSP = (
     "default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 )
-_GROUP_COLORS = {
-    "essential": "#0F5C45",
-    "non_essential": "#C9A24D",
-    "charges": "#B3283C",
-    "review": "#8A5A00",
-}
 _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.REFUND)
-
-
-def _enum[E: StrEnum](cls: type[E], value: str) -> E:
-    """A form choice as an enum; tampered data becomes a pt-BR error, never a 500."""
-    try:
-        return cls(value)
-    except ValueError:
-        raise DomainError("INVALID_CHOICE") from None
-
-
-def _int(value: str, code: str = "INVALID_NUMBER") -> int:
-    try:
-        return int(value.strip())
-    except ValueError:
-        raise DomainError(code) from None
-
-
-def _opt_int(value: str | None) -> int | None:
-    try:
-        return int(value) if value not in (None, "") else None
-    except ValueError:
-        return None
 
 
 def _color(color: str | None, use_color: str | None) -> str | None:
@@ -173,15 +147,27 @@ async def _upload(file: UploadFile | None) -> bytes | None:
     return data or None
 
 
-class Lookups(TypedDict):
-    """The catalogue every page needs: institutions, accounts and categories with their looks."""
+_PREFILL_FIELDS = {
+    "f_kind": "kind",
+    "f_amount": "amount",
+    "f_description": "description",
+    "f_date": "date",
+    "f_category": "category_id",
+}
 
-    institutions: dict[str, Institution]
-    accounts: list[Account]
-    categories: list[Category]
-    account_looks: dict[str, appearance.Look]
-    institution_looks: dict[str, appearance.Look]
-    category_colors: dict[str, str]
+
+def _prefill_from_query(query: dict[str, str]) -> dict[str, str]:
+    """The quick-form fields a ``?fill=1&f_*`` link carries (unknown or empty ones are dropped)."""
+    form = {field: query[key][:300] for key, field in _PREFILL_FIELDS.items() if query.get(key)}
+    if account := query.get("f_account"):
+        form["account_id"] = account
+        form["from_account"] = account  # a transfer reads "De" from the same choice
+    return form
+
+
+def _is_browser_noise(path: str) -> bool:
+    """Requests browsers make on their own (devtools, source maps): not failures of the system."""
+    return path.startswith("/.well-known/") or path.endswith(".map")
 
 
 def _money_parts(cents: int) -> tuple[str, str, str]:
@@ -229,6 +215,11 @@ def create_app(c: Container) -> FastAPI:
         rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
+        nav_groups=nav.groups,
+        nav_current=nav.resolve,
+        nav_more_groups=nav.more_groups,
+        nav_in_more=nav.in_more,
+        assistant_enabled=False,  # CLAUDE.md section 16: the assistant is not implemented yet
     )
 
     # --- security: this app is local, but a web page open in the browser must not drive it ------
@@ -300,9 +291,7 @@ def create_app(c: Container) -> FastAPI:
             "notice": notice,
             "backup_notice": backup_notice(),
             "backup_label": backup_label(),
-            "nav": "cards"
-            if template.startswith(("cards", "purchase"))
-            else template.split(".")[0],
+            "nav": context.get("nav") or template.split(".")[0],
         }
         return templates.TemplateResponse(
             request, template, context, status_code=400 if error else status
@@ -391,7 +380,7 @@ def create_app(c: Container) -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
-        if request.url.path != "/favicon.ico":
+        if request.url.path != "/favicon.ico" and not _is_browser_noise(request.url.path):
             c.failures.record(
                 "server",
                 "http_error",
@@ -426,115 +415,7 @@ def create_app(c: Container) -> FastAPI:
             status=400,
         )
 
-    # --- dashboard -----------------------------------------------------------------------------
-
-    def attention_items(data: Lookups) -> list[dict[str, str]]:
-        items: list[dict[str, str]] = []
-        notice = backup_notice()
-        if notice:
-            items.append({"tag": "Backup", "text": notice, "href": "/#backup"})
-        for b in ListAccountBalances(c.uow).execute(today()):
-            if b.balance_cents is None:
-                name = next(a.nickname for a in data["accounts"] if a.id == b.account_id)
-                items.append(
-                    {
-                        "tag": "Saldo",
-                        "text": f"{name}: saldo indisponível. Informe um saldo para ver o valor.",
-                        "href": "/accounts",
-                    }
-                )
-        recurring_alerts = GetRecurring(c.uow, c.clock).execute().alerts
-        if recurring_alerts:
-            items.append(
-                {
-                    "tag": "Recorrentes",
-                    "text": f"{len(recurring_alerts)} alerta(s) nas despesas recorrentes.",
-                    "href": "/recurring",
-                }
-            )
-        overview = ListCards(c.uow, c.clock).execute()
-        for view in overview.cards:
-            usage = view.usage
-            ratio = usage.percent / 100 if usage.percent is not None else None
-            if usage.alert.value in {"warning", "exceeded"} and usage.limit_cents is not None:
-                items.append(
-                    {
-                        "tag": "Limite",
-                        "text": (
-                            f"{view.account.nickname}: {format_percent(ratio)}"
-                            f" do limite comprometido ({format_brl(usage.committed_cents)} de "
-                            f"{format_brl(usage.limit_cents)})."
-                        ),
-                        "href": f"/cards?card={view.account.id}",
-                    }
-                )
-            for st in view.statements:
-                if st.status is StatementStatus.CLOSED and st.days_to_due <= 7:
-                    when = (
-                        f"venceu há {-st.days_to_due} dia(s)"
-                        if st.days_to_due < 0
-                        else f"vence em {format_date(st.statement.due_date)}"
-                    )
-                    items.append(
-                        {
-                            "tag": "Vence",
-                            "text": (
-                                f"Fatura {view.account.nickname} "
-                                f"{format_month(st.statement.month)} {when}: "
-                                f"{format_brl(st.outstanding_cents)}."
-                            ),
-                            "href": f"/cards?card={view.account.id}&month={st.statement.month}",
-                        }
-                    )
-        return items
-
-    def dashboard_context(year: int, month: int) -> dict[str, object]:
-        period = Period.year(year) if month == 0 else Period.month(YearMonth(year, month))
-        queries = GetSummary(c.uow)
-        summary = queries.execute(period)
-        monthly = queries.months_of_year(year)
-        data = lookups()
-        with c.uow as work:
-            recurring = [
-                t
-                for t in work.transactions.list_for_competence(period.start, period.end)
-                if t.kind is TransactionKind.EXPENSE and t.is_recurring
-            ]
-        recurring.sort(key=lambda t: t.amount_cents)  # most negative (biggest) first
-        categories = {x.id: x for x in data["categories"]}
-        title = str(year) if month == 0 else format_month_long(YearMonth(year, month))
-        top = summary.by_category[0].total_cents if summary.by_category else 0
-        return {
-            **data,
-            "summary": summary,
-            "title": title,
-            "year": year,
-            "month": month,
-            "years": sorted({today().year - 3 + n for n in range(5)} | {year}),
-            "month_names": list(enumerate(_MONTH_NAMES, start=1)),
-            "category_by_id": categories,
-            "category_bar": {
-                r.category_id: (r.total_cents / top * 100) if top else 0
-                for r in summary.by_category
-            },
-            "purchases": ListMonthPurchases(c.uow).execute(period.start, period.end),
-            "net_worth": GetNetWorth(c.uow, c.clock).execute(),
-            "recurring": recurring[:5],
-            "recurring_count": len(recurring),
-            "attention": attention_items(data),
-            "group_colors": _GROUP_COLORS,
-            "chart_months": [format_month(YearMonth.from_date(m.period.start)) for m in monthly],
-            "chart_income": [m.income_cents / 100 for m in monthly],
-            "chart_expenses": [m.net_expenses_cents / 100 for m in monthly],
-        }
-
-    @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request, year: str = "", month: str = ""):
-        now = today()
-        y, m = _opt_int(year), _opt_int(month)
-        year_value = y if y and 1900 <= y <= 9999 else now.year
-        month_value = m if m is not None and 0 <= m <= 12 else now.month
-        return render(request, "dashboard.html", dashboard_context(year_value, month_value))
+    # The dashboard (/) and /analises live in routes/charts.py (design v3, work package 2).
 
     # --- entries -------------------------------------------------------------------------------
 
@@ -639,20 +520,27 @@ def create_app(c: Container) -> FastAPI:
         limit: str = "",
     ):
         filters = {"account": account, "kind": kind, "category": category, "q": q}
+        # ⌘K "registrar por frase": ?fill=1&f_kind=..&f_amount=.. pre-fills the quick form (a draft:
+        # nothing is saved until the user submits the form, and the kind is still the user's choice)
+        prefill = (
+            _prefill_from_query(dict(request.query_params))
+            if "fill" in request.query_params
+            else None
+        )
         return render(
             request,
             "entries.html",
-            entries_context(month, filters, limit=_opt_int(limit) or PAGE_SIZE),
+            entries_context(month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE),
         )
 
     @app.get("/entries/category-field", response_class=HTMLResponse)
     def category_field(
         request: Request, kind: str = "expense", description: str = "", category_id: str = ""
     ):
+        if kind == TransactionKind.TRANSFER.value:
+            return Response(status_code=204)  # a transfer has no category field: nothing to swap
         try:
             transaction_kind = TransactionKind(kind)
-            if transaction_kind is TransactionKind.TRANSFER:
-                raise ValueError
         except ValueError:
             return Response("Tipo inválido.", status_code=400)
         suggestion = SuggestCategory(c.uow).execute(description, transaction_kind)
@@ -1183,8 +1071,23 @@ def create_app(c: Container) -> FastAPI:
             return templates.TemplateResponse(
                 request, "_purchase_preview.html", {"preview": None, "problem": text}
             )
+        usage = next(
+            (
+                v.usage
+                for v in ListCards(c.uow, c.clock).execute().cards
+                if v.account.id == form.get("account_id")
+            ),
+            None,
+        )
         return templates.TemplateResponse(
-            request, "_purchase_preview.html", {"preview": preview, "problem": None}
+            request,
+            "_purchase_preview.html",
+            {
+                "preview": preview,
+                "problem": None,
+                "usage": usage,
+                "limit_labels": messages.LIMIT_ALERT_LABELS,
+            },
         )
 
     @app.post("/cards/purchase")
@@ -1617,6 +1520,24 @@ def create_app(c: Container) -> FastAPI:
     def backup():
         c.backup()
         return back("/", "backup")
+
+    # --- route modules (routes/): added by the work packages, after everything above ------------
+
+    ctx = WebContext(
+        c=c,
+        render=render,
+        today=today,
+        lookups=lookups,
+        templates=templates,
+        back=back,
+        enum_of=_enum,
+        int_of=_int,
+        opt_int=_opt_int,
+        money=_money,
+        iso_date=_iso_date,
+    )
+    for module in MODULES:
+        module.register(app, ctx)
 
     return app
 

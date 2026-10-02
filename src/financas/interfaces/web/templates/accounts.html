@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, appearance_form, color_fields %}
+{% from "_ui.html" import state_empty %}
 {% block title %}Contas{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -10,15 +11,15 @@
 <section class="panel" aria-labelledby="h-inst">
   <h2 id="h-inst">Instituições</h2>
   {% if institutions %}
-  <ul class="plain">
+  <ul class="plain inst-list">
     {% for i in institutions.values() %}
-    <li style="flex-wrap: wrap; align-items: center">
+    <li>
       <span class="with-avatar">{{ avatar(institution_looks[i.id], 40) }}<strong>{{ i.name }}</strong></span>
       <details><summary>Aparência</summary>{{ appearance_form('institution', i.id, i.color, i.image_id) }}</details>
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p class="empty">Nenhuma instituição ainda. Comece cadastrando o seu banco.</p>{% endif %}
+  {% else %}{{ state_empty('Nenhuma instituição ainda', 'Comece cadastrando o seu banco: contas, cartões e investimentos pertencem a uma instituição.', icon='inbox') }}{% endif %}
   <details {{ 'open' if not institutions }}>
     <summary>Nova instituição</summary>
     <form method="post" action="/institutions" enctype="multipart/form-data" class="grid-form">
@@ -35,7 +36,7 @@
   <h2 id="h-acc">Contas e investimentos</h2>
   {% if accounts %}
   <div class="table-scroll">
-  <table>
+  <table class="rtable accounts-table">
     <thead><tr><th>Conta</th><th>Tipo</th><th class="num">Saldo hoje</th><th>Informar saldo</th><th></th></tr></thead>
     <tbody>
     {% for a in accounts %}
@@ -43,32 +44,32 @@
       <tr class="{{ '' if a.is_active else 'inactive' }}">
         <td><span class="with-avatar">{{ avatar(account_looks[a.id], 36) }}
           <span><strong>{{ a.nickname }}</strong><br><small>{{ institutions[a.institution_id].name }}{% if not a.is_active %} · desativada{% endif %}</small></span></span></td>
-        <td>{{ account_kind_labels[a.kind] }}</td>
-        <td class="num">
+        <td data-label="Tipo">{{ account_kind_labels[a.kind] }}</td>
+        <td class="num balance" data-label="Saldo hoje">
           {% if b.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>
           {% else %}<strong class="{{ 'neg' if b.balance_cents < 0 else '' }}">{{ b.balance_cents|brl }}</strong><br><small>informado em {{ b.last_anchor_date|date }}</small>{% endif %}
         </td>
-        <td>
-          <form method="post" action="/accounts/{{ a.id }}/balance" class="row-form" style="flex-wrap: nowrap">
-            <input type="date" name="date" value="{{ today }}" required aria-label="Data do saldo" style="min-width: 150px">
-            <input type="text" name="amount" inputmode="decimal" placeholder="0,00" required aria-label="Saldo informado" style="min-width: 110px">
+        <td data-label="Informar saldo">
+          <form method="post" action="/accounts/{{ a.id }}/balance" class="row-form balance-form">
+            <input type="date" name="date" value="{{ today }}" required aria-label="Data do saldo">
+            <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required aria-label="Saldo informado"></span>
             <button type="submit" class="secondary">Salvar</button>
           </form>
         </td>
-        <td>
+        <td class="row-actions">
           <a href="/accounts/{{ a.id }}/flow">Fluxo diário</a>
-          <form method="post" action="/accounts/{{ a.id }}/active">
+          <form method="post" action="/accounts/{{ a.id }}/active"{% if a.is_active %} data-confirm="A conta deixa de aparecer nos formulários. Os lançamentos já feitos continuam e você pode reativá-la." data-confirm-title="Desativar conta" data-confirm-ok="Desativar" data-confirm-danger{% endif %}>
             {% if a.is_active %}<button type="submit" class="link">Desativar</button>
             {% else %}<input type="hidden" name="active" value="1"><button type="submit" class="link">Reativar</button>{% endif %}
           </form>
         </td>
       </tr>
-      <tr><td colspan="5"><details><summary>Aparência de {{ a.nickname }}</summary>{{ appearance_form('account', a.id, a.color, a.image_id) }}</details></td></tr>
+      <tr class="sub-row"><td colspan="5"><details><summary>Aparência de {{ a.nickname }}</summary>{{ appearance_form('account', a.id, a.color, a.image_id) }}</details></td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  {% else %}<p class="empty">Nenhuma conta ainda.</p>{% endif %}
+  {% else %}{{ state_empty('Nenhuma conta ainda', 'Cadastre a conta corrente ou o investimento abaixo e informe um saldo para o sistema somar os lançamentos depois dele.', icon='inbox') }}{% endif %}
   {% if institutions %}
   <details {{ 'open' if not accounts }}>
     <summary>Nova conta</summary>
@@ -78,7 +79,7 @@
         <select name="institution_id" required>{% for i in institutions.values() %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
       <label class="field"><span>Tipo</span>
         <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ account_kind_labels[k] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Saldo inicial (opcional)</span><input type="text" name="opening_balance" inputmode="decimal" placeholder="0,00" autocomplete="off"></label>
+      <label class="field"><span>Saldo inicial (opcional)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="opening_balance" inputmode="decimal" placeholder="0,00" autocomplete="off"></span></label>
       <label class="field"><span>Data do saldo inicial</span><input type="date" name="opening_date"></label>
       {{ color_fields() }}
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>

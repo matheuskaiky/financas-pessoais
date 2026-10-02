@@ -1,0 +1,264 @@
+{% from "_ui.html" import odometer, stroke_gauge, delta_chip, state_empty %}
+{% set v = view %}
+{% set d = v.draft %}
+<input type="hidden" name="q0" value="{{ v.q }}">
+{% if not v.q %}
+  <section class="card ese-state">{{ state_empty('Digite uma compra para simular', 'Escreva o item, o valor, as parcelas e o cartão, como falaria. O sistema calcula as parcelas por fatura, o limite, o caixa livre e se compensa parcelar.', 'Ver um exemplo', '/ese?q=' ~ (example|urlencode), 'calendar') }}</section>
+{% elif not v.purchase %}
+  <section class="card ese-state">
+    {{ state_empty('Não achei um valor na frase', 'Inclua o valor da compra (4.200 ou 4200,00) e, se for parcelar, o número de parcelas (10x). Entendi: ' ~ ((d.fragments|map(attribute='text')|list|join(', ')) or 'nada ainda') ~ '.', 'Ver um exemplo', '/ese?q=' ~ (example|urlencode), 'search') }}
+  </section>
+{% elif v.error %}
+  <section class="card ese-state">{{ state_empty('Não deu para simular', v.error, None, None, 'alert' ) }}</section>
+{% else %}
+{% set p = v.purchase %}
+{% set sim = v.simulation %}
+{% set pk = v.picked.cards if v.picked else none %}
+
+<section class="card ese-understood" aria-label="Frase entendida">
+  <div class="ese-understood-body">
+    <div class="ese-row-head"><span class="eyebrow"><span class="gold">1</span> · Entendi</span><span class="soft">pelas regras fixas do sistema, neste computador</span></div>
+    <p class="ese-phrase stag-s">
+      {%- for s in v.segments -%}
+        {%- if s.kind -%}<span class="u {{ 'ub' if s.kind.value == 'account' }}">{{ s.text }}</span>{%- else -%}<span class="plain">{{ s.text }}</span>{%- endif -%}
+        {{ ' ' }}
+      {%- endfor -%}
+    </p>
+    <div class="parse-grid">
+      <div class="e-pc"><span class="eyebrow">Item</span><span class="pv">{{ d.description or 'Compra' }}</span><span class="e-tag {{ 'e-tag-texto' if d.description else 'e-tag-padrao' }}">{{ 'texto' if d.description else 'padrão' }}</span></div>
+      <div class="e-pc"><span class="eyebrow">À vista</span>
+        <span class="pv">{% if p.price_cents %}{{ p.price_cents|brl }}{% else %}não informado{% endif %}</span>
+        <span class="e-tag {{ 'e-tag-texto' if p.price_cents else 'e-tag-padrao' }}">{{ 'texto' if p.price_cents else 'faltou' }}</span></div>
+      <div class="e-pc"><span class="eyebrow">Parcelas</span>
+        <span class="pv">{% if p.installment_cents %}{{ p.installments }} × {{ (p.installment_cents|brl)|replace('R$ ', '') }}{% elif p.installments > 1 %}{{ p.installments }} × {{ ((sim.cards[0].lines[0].amount_cents if sim.cards else (p.price_cents // p.installments))|brl)|replace('R$ ', '') }}{% else %}à vista{% endif %}</span>
+        <span class="e-tag {{ 'e-tag-texto' if d.installments else 'e-tag-padrao' }}">{{ 'texto' if d.installments else 'padrão' }}</span></div>
+      <div class="e-pc"><span class="eyebrow">Total parcelado<sup class="fnr">1</sup></span>
+        <span class="pv">{{ (p.total_cents|brl) if p.total_cents else '—' }}</span><span class="e-tag e-tag-regra">regra</span></div>
+      <div class="e-pc"><span class="eyebrow">Cartão</span>
+        <span class="pv">{% if v.picked and not v.picked.is_cash %}{{ v.picked.name }}{% elif v.picked %}À vista{% else %}—{% endif %}</span>
+        <span class="e-tag {{ 'e-tag-texto' if d.account_id else 'tag-regra' }}">{{ 'texto' if d.account_id else ('regra' if v.picked else 'faltou') }}</span></div>
+    </div>
+
+    {% if v.asks_role %}
+    <div class="ask">
+      <span class="ask-q">O {{ ((d.price_cents|brl)|replace('R$ ', '')) }} é o valor total ou o de cada parcela?</span>
+      <div class="e-seg" role="radiogroup" aria-label="Como interpretar o valor">
+        <label><input type="radio" name="role" value="total" checked><span>Total da compra</span></label>
+        <label><input type="radio" name="role" value="each"><span>Cada parcela</span></label>
+      </div>
+      <span class="soft">Entendi como total. Se for de cada parcela: {{ d.installments }} × {{ (d.price_cents|brl)|replace('R$ ', '') }} = {{ (v.role_alt_each_total_cents|brl)|replace('R$ ', '') }}.</span>
+    </div>
+    {% elif d.installment_cents is not none and d.price_cents is none and d.amount_role and d.amount_role.value == 'each' %}
+    <div class="ask">
+      <span class="soft">Valor lido como o de cada parcela. <label class="inline-radio"><input type="radio" name="role" value="total"> Era o total da compra</label></span>
+    </div>
+    {% endif %}
+    {% for a in d.ambiguities if a.code.value == 'ACCOUNT_AMBIGUOUS' %}
+    <div class="ask"><span class="ask-q">Qual conta?</span><span class="soft">“{{ d.fragments|selectattr('kind.value', 'equalto', 'account')|map(attribute='text')|first }}” serve para mais de uma. Escolha um cenário abaixo.</span></div>
+    {% endfor %}
+  </div>
+  <div class="e-strip">
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+    <span><strong>Nada saiu deste computador:</strong> a frase foi entendida aqui, por regras fixas. Lançamentos, faturas, limites e saldos também ficaram. Tudo o que está abaixo foi calculado aqui.</span>
+  </div>
+</section>
+
+<div class="ese-section-head"><span class="eyebrow"><span class="gold">2</span> · Calculei, pelo sistema</span><span class="soft">escolha como pagar e veja o efeito logo abaixo</span></div>
+{% if v.scenarios %}
+<div class="scenarios" role="radiogroup" aria-label="Como pagar {{ p.description|lower }}" style="--n: {{ v.scenarios|length }}">
+  {% for s in v.scenarios %}
+  <label class="scenario {{ 'is-on' if s.key == v.pick }}">
+    <input type="radio" name="pick" value="{{ s.key }}" {{ 'checked' if s.key == v.pick }}>
+    <span class="sc-name">{% if s.is_cash %}À vista{% else %}{{ p.installments }}× no {{ s.name }}{% endif %}</span>
+    <span class="sc-line">{% if s.is_cash %}{{ p.price_cents|brl }} hoje, direto do caixa{% else %}{{ p.installments }} × {{ (s.cards.lines[0].amount_cents|brl)|replace('R$ ', '') }} · 1ª parcela em {{ s.cards.lines[0].due|date_short }}{% endif %}</span>
+    <span class="sc-chips">
+      {% if s.is_cash %}
+        {% if s.fits is none %}{{ delta_chip('Caixa livre indisponível', 'neu') }}{% elif s.fits %}{{ delta_chip('Cabe no caixa livre', 'pos') }}{% else %}{{ delta_chip('Não cabe no caixa livre', 'neg') }}{% endif %}
+        {{ delta_chip('sem juros embutidos', 'neu') }}
+      {% else %}
+        {% if s.fits is none %}{{ delta_chip('Limite não informado', 'neu') }}
+        {% else %}{{ delta_chip(('Cabe' if s.fits else 'Não cabe') ~ ' · ' ~ (s.percent_after|round(1)|string|replace('.', ',')) ~ '% do limite', ('neg' if not s.fits else ('warn' if s.percent_after >= 80 else 'pos'))) }}{% endif %}
+        {% if s.cards.implied_rate is not none %}{{ delta_chip('juros ' ~ ((s.cards.implied_rate * 100)|round(2)|string|replace('.', ',')) ~ '% a.m.', 'neu') }}{% endif %}
+      {% endif %}
+    </span>
+    <span class="sc-check" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+  </label>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if not sim.cards %}
+<section class="card ese-state">{{ state_empty('Nenhum cartão com vencimento e fechamento', 'Cadastre um cartão com o dia de vencimento e quantos dias antes ele fecha para ver as parcelas por fatura, ou informe o preço à vista para comparar com o caixa.', 'Abrir Cartões', '/cards', 'card', inline=True) }}</section>
+{% endif %}
+
+<div class="ese-grid">
+  <section class="card ese-dues" aria-label="Parcelas mês a mês">
+    <div class="ese-row-head">
+      <h2>Quanto vence em cada mês<sup class="fnr">2</sup></h2>
+      <span class="e-legend"><span><i class="sw sw-reg"></i>já registrado</span><span><i class="sw sw-new"></i>esta compra</span></span>
+    </div>
+    <p class="sub">Faturas abertas e futuras, por mês de vencimento. As faturas já fechadas ficam de fora.</p>
+    {% if pk or v.bars %}
+    <div role="img" class="dues-chart {{ 'dense' if v.dense }}" aria-label="Valor a vencer por mês. {% for b in v.bars %}{{ b.month }}/{{ b.year or '' }}: {{ (b.total_cents|brl) if b.total_cents else 'nada' }}. {% endfor %}">
+      <div class="plot">
+        {% for g in v.grid %}<span class="gl" style="bottom: {{ g.bottom - 3 }}px"></span><span class="gt" style="bottom: {{ g.bottom }}px">{{ ((g.cents|brl)|replace('R$ ', '')|replace(',00', '')) }}</span>{% endfor %}
+        <div class="e-cols" style="--c: {{ v.bars|length }}">
+          {% for b in v.bars %}
+          <div class="col">
+            <span class="cl {{ 'cl-hot' if b.tight }}">{{ ((b.label_cents|brl)|replace('R$ ', '')) if b.label_cents else '–' }}</span>
+            <div class="e-stack"><span class="hatch" style="height: {{ b.new_height }}px"></span><span class="reg" style="height: {{ b.registered_height }}px"></span></div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="axis" style="--c: {{ v.bars|length }}">
+        {% for b in v.bars %}<div class="ax"><span>{{ b.month }}</span><small>{{ b.year }}</small></div>{% endfor %}
+      </div>
+    </div>
+    <div class="dues-stats">
+      <div class="st"><span class="eyebrow">Mês mais apertado</span>
+        {% if v.tight %}<span class="sv">{{ v.tight.total_cents|brl }}</span><span class="soft">{{ v.tight.month|month_short }}</span>
+        {% if pk and v.tight.new_cents %}{{ delta_chip('+' ~ ((v.tight.new_cents|brl)|replace('R$ ', '')), 'warn', 'up') }}{% endif %}
+        {% else %}<span class="sv">—</span><span class="soft">nada a vencer</span>{% endif %}</div>
+      <div class="st"><span class="eyebrow">Parcelas novas</span>
+        {% if pk %}<span class="sv">{{ pk.total_cents|brl }}</span><span class="soft">{{ p.installments }} × {{ (pk.lines[0].amount_cents|brl)|replace('R$ ', '') }}</span>
+        {% if p.price_cents %}{% set over = pk.total_cents - p.price_cents %}{{ delta_chip(('+' if over >= 0 else '−') ~ ((over|abs|brl)|replace('R$ ', '')) ~ ' sobre o à vista', 'neu') }}{% endif %}
+        {% else %}<span class="sv">—</span><span class="soft">compra única hoje</span>{% endif %}</div>
+      <div class="st"><span class="eyebrow">Última parcela</span>
+        {% if pk %}<span class="sv">{{ v.last_due|date }}</span><span class="soft">daqui a {{ v.last_days }} dias</span>{% else %}<span class="sv">—</span><span class="soft">sem vencimentos novos</span>{% endif %}</div>
+    </div>
+    {% endif %}
+  </section>
+
+  <div class="ese-side">
+    <section class="card ese-limits" aria-label="Limite dos cartões">
+      <h2>Limite dos cartões<sup class="fnr">6</sup></h2>
+      <p class="sub">{% if pk %}As {{ p.installments }} parcelas comprometem o limite de uma vez.{% else %}Escolha um cartão para ver o efeito no limite.{% endif %}</p>
+      {% for l in v.limits %}
+      {% set c = l.scenario.card %}
+      <div class="lim">
+        <div class="lim-head"><span><strong>{{ c.name }}</strong> <span class="soft">fecha {{ c.closing_days_before_due }} dias antes · vence dia {{ '%02d'|format(c.due_day) }}</span></span>
+          {% if l.picked and not l.unset %}{{ delta_chip('+' ~ ((l.percent_add|round(1))|string|replace('.', ',')) ~ ' pontos', ('neg' if l.scenario.fits_limit is false else ('warn' if (l.percent_after or 0) >= 80 else 'pos')), 'up') }}{% endif %}</div>
+        {% if l.unset %}{{ stroke_gauge(0, unset=True, label='Limite não informado') }}
+        {% else %}{{ stroke_gauge(l.percent_before if not l.picked else l.percent_before, add=(l.percent_add if l.picked else 0), label='Limite comprometido: ' ~ (((l.percent_before or 0)|round(1))|string|replace('.', ',')) ~ '% hoje' ~ (', ' ~ (((l.percent_after or 0)|round(1))|string|replace('.', ',')) ~ '% com esta compra' if l.picked else '')) }}{% endif %}
+        <div class="lim-foot">
+          {% if l.unset %}<span class="soft">Limite não informado</span><a href="/cards">informar</a>
+          {% else %}
+            {% set after = l.scenario.usage_after if l.picked else l.scenario.usage_before %}
+            <span class="soft">{{ ((l.percent_after or 0)|round(1))|string|replace('.', ',') }}% {{ 'do limite' if after.available_cents < 0 else 'comprometido' }}{% if l.picked %} <span class="soft">(hoje {{ ((l.percent_before or 0)|round(1))|string|replace('.', ',') }}%)</span>{% endif %}</span>
+            {% if after.available_cents < 0 %}<span class="neg b">faltam {{ (-after.available_cents)|brl }}</span>{% else %}<span class="b">disponível {{ after.available_cents|brl }}</span>{% endif %}
+          {% endif %}
+        </div>
+      </div>
+      {% else %}<p class="soft">Nenhum cartão configurado.</p>{% endfor %}
+    </section>
+
+    <section class="card ese-cash" aria-label="Caixa livre">
+      <h2>Caixa livre<sup class="fnr">5</sup></h2>
+      <p class="sub">Caixa em contas menos as faturas já fechadas.</p>
+      {% if v.facts.cash_cents is none %}
+        <p class="soft">Nenhuma conta corrente tem saldo informado, então o caixa livre não pode ser calculado. <a href="/accounts">Informar saldo</a></p>
+      {% else %}
+      {% set free = v.facts.cash_cents - v.facts.closed_statements_cents %}
+      {% set is_cash = v.picked and v.picked.is_cash %}
+      <dl class="ledger">
+        <div><dt>Caixa em contas</dt><dd>{{ v.facts.cash_cents|brl }}</dd></div>
+        <div><dt>Faturas fechadas</dt><dd>{{ (-v.facts.closed_statements_cents)|brl }}</dd></div>
+        <div class="total"><dt>Caixa livre hoje</dt><dd>{{ free|brl }}</dd></div>
+        <div><dt>{{ 'Compra à vista' if is_cash else 'Compra no cartão, hoje' }}</dt><dd class="{{ 'neg' if is_cash else 'soft' }}">{{ (-p.price_cents)|brl if is_cash else 'R$ 0,00' }}</dd></div>
+        {% set after = (free - (p.price_cents or 0)) if is_cash else free %}
+        <div class="total"><dt>Caixa livre depois</dt><dd class="{{ 'neg' if after < 0 }}">{{ after|brl }}</dd></div>
+        <div><dt class="soft">Primeira saída</dt><dd>{% if pk %}{{ pk.lines[0].due|date_short }} · {{ pk.lines[0].amount_cents|brl }}{% elif is_cash %}hoje · {{ p.price_cents|brl }}{% else %}—{% endif %}</dd></div>
+      </dl>
+      {% endif %}
+    </section>
+  </div>
+</div>
+
+{# 3 · Você decide #}
+{% set is_card = pk is not none %}
+<section class="verdict" aria-label="Veredito" aria-live="polite">
+  <div class="verdict-head"><span class="eyebrow gold"><span>3</span> · Você decide</span><span>o sistema calcula, a decisão é sua</span></div>
+  <div class="verdict-grid">
+    <div class="vleft">
+      <span class="eyebrow light">Cabe?</span>
+      {% set fits = v.picked.fits if v.picked else none %}
+      <div class="vword {{ 'no' if fits is false }}">{% if fits is none %}Sem dado{% elif fits %}Cabe{% else %}Não cabe{% endif %}</div>
+      <div class="vchip">
+        {% if not v.picked %}{% elif v.picked.is_cash %}
+          {% if fits is none %}{{ delta_chip('caixa livre indisponível', 'neu') }}{% elif fits %}{{ delta_chip('sobram ' ~ ((v.facts.cash_cents - v.facts.closed_statements_cents - p.price_cents)|brl), 'pos') }}{% else %}{{ delta_chip('faltam ' ~ ((p.price_cents - (v.facts.cash_cents - v.facts.closed_statements_cents))|brl), 'neg') }}{% endif %}
+        {% else %}
+          {% if fits is none %}{{ delta_chip('limite não informado', 'neu') }}{% else %}{{ delta_chip(((pk.usage_after.percent|round(1))|string|replace('.', ',')) ~ '% do limite', 'neg' if not fits else ('warn' if pk.usage_after.percent >= 80 else 'pos')) }}{% endif %}
+        {% endif %}
+      </div>
+      <p class="vbody">
+        {% if not v.picked %}Escolha como pagar acima.
+        {% elif v.picked.is_cash %}
+          {% if v.facts.cash_cents is none %}Sem saldo informado nas contas correntes, não dá para dizer se o caixa cobre a compra.
+          {% else %}O caixa em contas tem {{ v.facts.cash_cents|brl }}, e {{ v.facts.closed_statements_cents|brl }} já vão para as faturas fechadas. Ficam {{ (v.facts.cash_cents - v.facts.closed_statements_cents)|brl }} livres{% if fits %}; depois da compra sobram {{ (v.facts.cash_cents - v.facts.closed_statements_cents - p.price_cents)|brl }}.{% else %}, e a compra pede {{ p.price_cents|brl }}.{% endif %}
+          {% endif %}
+        {% elif fits is none %}O limite do {{ v.picked.name }} não foi informado, então não dá para dizer se cabe. Informe-o em <a class="lt" href="/cards">Cartões</a>. A 1ª parcela, {{ pk.lines[0].amount_cents|brl }}, vence em {{ pk.lines[0].due|date_short }}.
+        {% elif fits %}O disponível do {{ v.picked.name }} cai de {{ pk.usage_before.available_cents|brl }} para {{ pk.usage_after.available_cents|brl }}. A 1ª parcela, {{ pk.lines[0].amount_cents|brl }}, vence em {{ pk.lines[0].due|date_short }} e o caixa livre de hoje não muda.
+        {% else %}O disponível do {{ v.picked.name }} é {{ pk.usage_before.available_cents|brl }} e a compra comprometeria {{ pk.total_cents|brl }}: faltam {{ (-pk.usage_after.available_cents)|brl }} de limite.
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="vright">
+      <span class="eyebrow light">Compensa?<sup class="fnr gold">4</sup></span>
+      <div class="vnum">
+        {% if is_card and p.price_cents %}
+          <div class="vnum-main">
+            {{ odometer(v.difference_cents, size=68, dark=True) }}
+            <div class="vnum-text"><span class="vcheap">{% if v.cheaper == 'cash' %}À vista sai mais barato{% elif v.cheaper == 'card' %}Parcelar sai mais barato{% else %}Custam o mesmo{% endif %}</span>
+              {{ delta_chip(('−' if v.cheaper == 'card' else '+') ~ v.difference_percent_text ~ '% sobre o à vista', 'pos' if v.cheaper == 'card' else ('neg' if v.cheaper == 'cash' else 'neu'), 'down' if v.cheaper == 'card' else ('up' if v.cheaper == 'cash' else none)) }}</div>
+          </div>
+        {% elif is_card %}
+          <div class="vref"><span class="vref-t">Sem preço à vista</span><span>Informe o preço à vista para comparar (ex.: “geladeira 4.200 em 10x de 450”).</span></div>
+        {% else %}
+          <div class="vref"><span class="vref-t">Referência</span><span>As outras opções são comparadas com ela, em valor de hoje.</span></div>
+        {% endif %}
+      </div>
+
+      <div class="rate-head"><label for="rate">Seu dinheiro rende</label>
+        <span><span class="rate-num" id="rate-num">{{ v.rate_text }}</span> <span>% ao mês</span> <span class="rate-annual" id="rate-annual">≈ {{ v.rate_annual_text }}% ao ano</span></span></div>
+      <div class="rate-wrap">
+        {% for m in v.rate_marks %}<span class="rm" style="left: calc(14px + (100% - 28px) * {{ '%.4f'|format(m.left / 100) }})"><span class="rm-t">{{ m.name }} {{ m.text }}%</span><span class="rm-l"></span></span>{% endfor %}
+        <input id="rate" class="rg" type="range" name="rate" min="0" max="{{ max_rate }}" step="{{ rate_step }}" value="{{ v.rate_bps }}"
+               aria-valuetext="{{ v.rate_text }}% ao mês" style="--p: {{ '%.4f'|format(v.rate_bps / max_rate) }}">
+        <div class="rate-scale" aria-hidden="true"><span>0</span><span>0,5</span><span>1</span><span>1,5</span><span>2% a.m.</span></div>
+      </div>
+      <p class="vexplain">
+        {% if is_card and p.price_cents %}
+          {% if v.implied_text %}Juros embutidos no {{ v.picked.name }}: {{ v.implied_text }}% a.m. ({{ v.implied_annual_text }}% a.a.). {% endif %}Você assumiu que seu dinheiro rende {{ v.rate_text }}% a.m. ({{ v.rate_annual_text }}% a.a.){% if v.rate_bps == 0 %}: é uma suposição sua, começa em zero{% endif %}.
+          {% if v.cheaper == 'cash' %}{% if v.implied_text %} Abaixo de {{ ((pk.implied_rate * 100)|round(2))|string|replace('.', ',') }}% ao mês, pagar à vista sai mais barato.{% endif %}
+          {% elif v.cheaper == 'card' %} Acima de {{ ((pk.implied_rate * 100)|round(2))|string|replace('.', ',') }}% ao mês, parcelar sai mais barato.
+          {% else %} Os dois caminhos custam o mesmo.{% endif %}
+        {% else %}Parcelar só compensa se o seu dinheiro render mais que os juros embutidos{% if v.rate_marks %}: {% for m in v.rate_marks %}{{ m.text }}% a.m. no {{ m.name }}{{ ', ' if not loop.last else '.' }}{% endfor %}{% else %}.{% endif %}
+        {% endif %}<sup class="fnr gold">3</sup>
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="card ese-notes" aria-label="Como o sistema calculou">
+  <div class="ese-row-head"><h2>Como o sistema calculou</h2><span class="soft">cada número desta tela vem de uma destas contas</span></div>
+  <div class="notes-grid">
+    <div class="en"><span class="n">1</span><span>Total parcelado: {{ p.installments }} × {{ (pk.lines[0].amount_cents|brl) if pk else (p.price_cents|brl) }}{% if pk and p.price_cents and p.installment_cents is none %} (a 1ª parcela absorve os centavos que sobram){% endif %} = {{ p.total_cents|brl }}.{% if p.price_cents and p.total_cents %} A diferença para o à vista é {{ (p.total_cents - p.price_cents)|brl }}{% if p.price_cents %} ({{ ((p.total_cents - p.price_cents) / p.price_cents * 100)|round(1)|string|replace('.', ',') }}%){% endif %}.{% endif %}</span></div>
+    <div class="en"><span class="n">2</span><span>Datas: a compra é de {{ p.purchased_on|date }}. {{ v.explanation or 'Sem cartão configurado, não há fatura para calcular.' }} As parcelas seguintes vão para os meses seguintes, com as datas já guardadas nas faturas existentes (e as regras do cartão só para meses sem fatura).</span></div>
+    <div class="en"><span class="n">3</span><span>Juros embutidos: a taxa mensal em que o valor de hoje das {{ p.installments }} parcelas é igual ao à vista{% if p.price_cents %}, {{ p.price_cents|brl }}{% endif %}, contando os dias reais até cada vencimento (dias ÷ 30).{% if v.implied_text %} {{ v.picked.name }}: {{ v.implied_text }}% a.m., {{ v.implied_annual_text }}% a.a.{% endif %}</span></div>
+    <div class="en"><span class="n">4</span><span>Valor de hoje: cada parcela ÷ (1 + taxa)^(dias ÷ 30), somadas, com a taxa que você informa{% if pk %}: {{ pk.value_today_cents|brl }} a {{ v.rate_text }}% a.m.{% endif %}. É uma suposição sua; o sistema não tem CDI nem projeção de mercado.</span></div>
+    <div class="en"><span class="n">5</span><span>Caixa livre: caixa em contas{% if v.facts.cash_cents is not none %}, {{ v.facts.cash_cents|brl }},{% endif %} menos faturas fechadas, {{ v.facts.closed_statements_cents|brl }}. Parcelas de faturas ainda abertas não entram na conta.</span></div>
+    <div class="en"><span class="n">6</span><span>Limite: as parcelas comprometem o limite de uma vez (limite − tudo o que ainda não foi pago, incluindo parcelas futuras){% for l in v.limits if l.unset %}. O {{ l.scenario.card.name }} fica de fora porque o limite não foi informado{% endfor %}.</span></div>
+  </div>
+</section>
+
+<div class="e-pill glass">
+  {% set tone = 'neg' if fits is false else ('warn' if (is_card and pk.usage_after.percent is not none and pk.usage_after.percent >= 80) else 'pos') %}
+  <span class="pill-dot pill-{{ 'unk' if fits is none else tone }}" aria-hidden="true"></span>
+  <div class="pill-text"><span class="pill-title">{% if is_card %}{{ p.installments }}× no {{ v.picked.name }}{% else %}À vista{% endif %}</span>
+    <span class="soft">{% if fits is none %}Sem dado para dizer se cabe{% elif fits %}Cabe{% if is_card %}, a {{ ((pk.usage_after.percent)|round(1))|string|replace('.', ',') }}% do limite{% endif %}{% else %}Não cabe{% endif %}{% if is_card and p.price_cents and v.cheaper != 'unknown' %} · {% if v.cheaper == 'cash' %}à vista sai {{ v.difference_cents|brl }} mais barato{% elif v.cheaper == 'card' %}parcelar sai {{ v.difference_cents|brl }} mais barato{% else %}custo igual nos dois{% endif %}{% endif %}</span></div>
+  {% if is_card %}<a class="cta" href="/cards/purchase?card={{ v.pick }}">Registrar parcelado no {{ v.picked.name }}</a>
+  {% else %}<a class="cta" href="/entries#form">Registrar como despesa</a>{% endif %}
+</div>
+{% endif %}

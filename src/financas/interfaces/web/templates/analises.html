@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_ui.html" import state_empty %}
+{% from "_charts.html" import net_worth_card, pace_card, flow_card, donut_card, month_stepper %}
+{% block title %}Análises{% endblock %}
+{% block head %}
+  <link rel="stylesheet" href="/static/charts.css">
+  <script type="module" src="/static/charts.js"></script>
+{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <span class="eyebrow">Acompanhamento</span>
+    <h1>Análises</h1>
+    <p>{{ title|capitalize }} · {{ summary.entry_count }} lançamentos · tudo calculado aqui, a partir dos seus lançamentos.</p>
+  </div>
+  <div class="head-tools">{{ month_stepper(month_nav) }}</div>
+</header>
+
+{{ net_worth_card('nw-an') }}
+
+<div class="pn-pair pn-pair-wide">
+  {{ pace_card(month_key, month_name, 'pace-an') }}
+  {{ flow_card(year, 'flow-an') }}
+</div>
+
+<section class="card chart-card pn-cat-wide" aria-labelledby="h-cat">
+  <div class="pn-card-head">
+    <div class="ov" id="h-cat">Despesas por categoria</div>
+    <span class="soft">{{ title }} · passe o ponteiro ou use Tab nas linhas</span>
+  </div>
+  {% if breakdown.top %}
+  {{ donut_card(month_key, month_name, rows, rest_rows, breakdown, top_share, rest_share, 'wide', 248) }}
+  {% else %}
+  {{ state_empty('Nenhuma despesa neste período', 'Quando houver despesas, elas aparecem aqui por categoria.', 'Fazer um lançamento', '/entries#form', 'chart') }}
+  {% endif %}
+</section>
+{% endblock %}

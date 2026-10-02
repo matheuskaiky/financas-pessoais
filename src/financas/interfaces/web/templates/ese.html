@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}E se…?{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/ese.css"><script src="/static/ese.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><span class="eyebrow">Planejar</span><h1>E se…?</h1></div>
+  <p>Simule uma compra antes de fazer. As contas são do sistema, com os seus dados, por regras fixas. Nada é gravado e nada sai deste computador.</p>
+</header>
+
+<form id="ese-form" method="get" action="/ese" class="ese-form"
+      hx-get="/ese/result" hx-target="#ese-result" hx-swap="innerHTML" hx-push-url="false"
+      hx-trigger="submit, change, keyup changed delay:600ms from:#ese-q">
+  <section class="card ese-input" aria-label="Frase">
+    <label for="ese-q" class="eyebrow">Escreva como falaria</label>
+    <div class="ese-input-row">
+      <input id="ese-q" name="q" type="text" value="{{ view.q }}" maxlength="300" autocomplete="off" spellcheck="false"
+             placeholder="{{ example }}" aria-describedby="ese-hint">
+      <button type="submit" class="cta">Simular</button>
+    </div>
+    <p id="ese-hint" class="soft">Ex.: “geladeira de 4.200 em 10x no BB” ou “geladeira 4200 10x de 450 nubank”. O valor, as parcelas e o cartão são lidos da frase.</p>
+  </section>
+  <div id="ese-result" aria-live="polite">{% include "_ese_result.html" %}</div>
+</form>
+{% endblock %}

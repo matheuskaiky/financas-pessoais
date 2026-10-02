@@ -86,6 +86,7 @@ layers = [
 ignore_imports = [
     "financas.interfaces.cli -> financas.container",
     "financas.interfaces.web.app -> financas.container",
+    "financas.interfaces.web.routes -> financas.container",
 ]
 
 [[tool.importlinter.contracts]]
