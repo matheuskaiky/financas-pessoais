@@ -2,6 +2,7 @@
 
 import datetime as dt
 import re
+from decimal import Decimal, InvalidOperation
 
 from financas.domain.errors import DomainError
 from financas.domain.money import YearMonth, format_brl
@@ -77,3 +78,21 @@ def parse_date(text: str, today: dt.date) -> dt.date:
     except ValueError:
         pass
     raise DomainError("INVALID_DATE")
+
+
+def parse_percent_bps(text: str) -> int:
+    """``110`` / ``110,5`` / ``6.5%`` → basis points (11000 / 11050 / 650). Never rounds."""
+    cleaned = text.strip().removesuffix("%").strip().replace(",", ".")
+    try:
+        bps = Decimal(cleaned) * 100
+    except InvalidOperation:
+        raise DomainError("INVALID_RATE") from None
+    if bps != bps.to_integral_value() or bps < 0:
+        raise DomainError("INVALID_RATE")
+    return int(bps)
+
+
+def format_bps(bps: int, keep_decimals: bool = True) -> str:
+    """``1230`` → ``12,30%``; without decimals when whole and ``keep_decimals`` is false."""
+    whole, frac = divmod(bps, 100)
+    return f"{whole}%" if frac == 0 and not keep_decimals else f"{whole},{frac:02d}%"

@@ -16,6 +16,14 @@ from financas.application.queries.cards import (
     ListActiveInstallments,
     ListCards,
 )
+from financas.application.queries.investments import (
+    GetFixedIncomeOverview,
+    GetInvestmentPeriodTotals,
+    GetNetWorth,
+    GetYearEndPosition,
+    ListHoldings,
+    ListInvestments,
+)
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.cards import (
@@ -40,6 +48,21 @@ from financas.application.use_cases.catalog import (
     SetAccountActive,
     SetAppearance,
     SetAppearanceCommand,
+    SetInvestmentSettings,
+)
+from financas.application.use_cases.holdings import (
+    RecordHoldingValuation,
+    RecordHoldingValuationCommand,
+    RedeemHolding,
+    RedeemHoldingCommand,
+    RegisterHolding,
+    RegisterHoldingCommand,
+    SetHoldingFlags,
+)
+from financas.application.use_cases.investments import (
+    FlowDirection,
+    RegisterInvestmentFlow,
+    RegisterInvestmentFlowCommand,
 )
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
@@ -53,8 +76,14 @@ from financas.container import Container, build_container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
+    AssetClass,
     CategoryGroup,
     CategoryKind,
+    Indexer,
+    InstrumentType,
+    InvestmentTracking,
+    Liquidity,
+    RateMode,
     TransactionKind,
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
@@ -64,7 +93,9 @@ from financas.interfaces.formatting import (
     format_date_short,
     format_month_long,
     format_percent,
+    format_signed,
     parse_date,
+    parse_percent_bps,
 )
 from financas.interfaces.formatting import (
     format_month as format_month_short,
@@ -74,6 +105,7 @@ from financas.interfaces.resolve import (
     find_account,
     find_card,
     find_category,
+    find_holding,
     find_institution,
     find_statement,
 )
@@ -87,12 +119,18 @@ category_app = typer.Typer(help="Categorias.", no_args_is_help=True)
 balance_app = typer.Typer(help="Saldos informados.", no_args_is_help=True)
 card_app = typer.Typer(help="Cartões de crédito: compras, parcelas e limite.", no_args_is_help=True)
 statement_app = typer.Typer(help="Faturas dos cartões.", no_args_is_help=True)
+invest_app = typer.Typer(help="Contas de investimento e patrimônio.", no_args_is_help=True)
 app.add_typer(institution_app, name="institution")
 app.add_typer(account_app, name="account")
 app.add_typer(category_app, name="category")
 app.add_typer(balance_app, name="balance")
 app.add_typer(card_app, name="card")
 app.add_typer(statement_app, name="statement")
+app.add_typer(invest_app, name="invest")
+holding_app = typer.Typer(
+    help="Aplicações de renda fixa (CDB, LCI, Tesouro...).", no_args_is_help=True
+)
+invest_app.add_typer(holding_app, name="holding")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -192,14 +230,28 @@ def account_add(
     kind: Annotated[
         AccountKind, typer.Option("--kind", "-k", help="checking, credit_card ou investment.")
     ] = AccountKind.CHECKING,
+    asset_class: Annotated[
+        AssetClass | None,
+        typer.Option("--class", help="Classe do investimento: fixed_income, equities, ..."),
+    ] = None,
+    emergency: Annotated[
+        bool, typer.Option("--emergency", help="Conta marcada como reserva de emergência.")
+    ] = False,
     color: Color = None,
     image: Image = None,
 ) -> None:
-    """Cadastra uma conta, cartão ou conta de investimento."""
+    """Cadastra uma conta ou conta de investimento (cartões: use `card add`)."""
     c = container()
     inst = find_institution(c.uow, institution)
     account = CreateAccount(c.uow).execute(
-        CreateAccountCommand(kind, inst.id, nickname, color=color)
+        CreateAccountCommand(
+            kind,
+            inst.id,
+            nickname,
+            color=color,
+            asset_class=asset_class,
+            is_emergency_fund=emergency,
+        )
     )
     _set_appearance(c, AppearanceTarget.ACCOUNT, account.id, color, image)
     console.print(f"Conta criada: {account.nickname} ({messages.ACCOUNT_KIND_LABELS[kind]}).")
@@ -535,6 +587,11 @@ def summary(
         )
     console.print(f"Saldo:     {format_brl(result.balance_cents)}")
     console.print(f"Taxa de poupança: {format_percent(result.savings_rate)}")
+    if result.net_contributions_cents:
+        console.print(
+            f"Aportes líquidos: {format_brl(result.net_contributions_cents)} "
+            f"({format_percent(result.investment_rate)} da renda)"
+        )
     console.print(
         f"Recorrentes: {format_brl(result.recurring_expenses_cents)} · "
         f"Variáveis: {format_brl(result.variable_expenses_cents)}"
@@ -885,3 +942,484 @@ def statement_dates(
         statement.id, parse_date(closing, today), parse_date(due, today)
     )
     console.print(messages.statement_label(updated))
+
+
+# --- investments and net worth ----------------------------------------------------------------
+
+
+def _age_text(view) -> str:
+    if view.age_days is None:
+        return "sem avaliação"
+    base = f"há {view.age_days} dia(s)"
+    return f"[yellow]desatualizada · {base}[/yellow]" if view.stale else base
+
+
+@invest_app.command("list")
+@handle_errors
+def invest_list() -> None:
+    """Contas de investimento: valor atual (líquido), aportes, rendimento e avaliação."""
+    c = container()
+    overview = ListInvestments(c.uow, c.clock, c.settings.valuation_stale_days).execute()
+    table = Table(
+        "Conta", "Classe", "Valor atual", "Aportes líq.", "Rendimento", "Retorno", "%", "Avaliação"
+    )
+    for v in overview.accounts:
+        table.add_row(
+            v.account.nickname,
+            messages.ASSET_CLASS_LABELS[v.account.asset_class or AssetClass.OTHER],
+            format_brl(v.current_value_cents)
+            if v.current_value_cents is not None
+            else "sem avaliação",
+            format_brl(v.net_contributions_cents) if v.last_valuation else "—",
+            format_signed(v.yield_cents) if v.yield_cents is not None else "—",
+            format_percent(v.simple_return),
+            format_percent(v.share),
+            _age_text(v),
+        )
+    console.print(table)
+    console.print(f"Total investido (líquido): {format_brl(overview.total_cents)}")
+    if overview.pending:
+        names = ", ".join(a.nickname for a in overview.pending)
+        console.print(f"[yellow]Parcial · sem avaliação: {names}[/yellow]")
+    for row in overview.allocation.rows:
+        console.print(
+            f"  {messages.ASSET_CLASS_LABELS[row.asset_class]}: {format_brl(row.value_cents)} "
+            f"· {format_percent(row.share)}"
+        )
+    console.print("Valores líquidos informados pelas instituições; o sistema não calcula imposto.")
+
+
+@invest_app.command("value")
+@handle_errors
+def invest_value(
+    account: Annotated[str, typer.Argument(help="Apelido da conta de investimento.")],
+    net: Annotated[str, typer.Argument(help="Valor líquido que a instituição mostra.")],
+    gross: Annotated[str | None, typer.Option("--gross", help="Valor bruto (opcional).")] = None,
+    date: Annotated[str, typer.Option("--date", "-d", help="Data da avaliação.")] = "hoje",
+    note: Annotated[str | None, typer.Option("--note", help="Observação.")] = None,
+) -> None:
+    """Registra a avaliação (valor líquido) de uma conta de investimento numa data."""
+    c = container()
+    chosen = find_account(c.uow, account)
+    result = RecordBalance(c.uow).execute(
+        RecordBalanceCommand(
+            chosen.id,
+            parse_date(date, c.clock.today()),
+            parse_brl(net),
+            note,
+            gross_balance_cents=_optional_money(gross),
+        )
+    )
+    console.print(f"Avaliação registrada: {format_brl(result.anchor.balance_cents)}.")
+    if result.difference_cents is not None:
+        console.print(
+            f"Rendimento desde a última avaliação, descontadas as movimentações: "
+            f"{format_signed(result.difference_cents)} (não é renda)."
+        )
+
+
+@invest_app.command("flow")
+@handle_errors
+def invest_flow(
+    account: Annotated[str, typer.Argument(help="Apelido da conta de investimento.")],
+    amount: Annotated[str, typer.Argument(help="Valor, por exemplo 500,00.")],
+    from_account: Annotated[
+        str | None,
+        typer.Option(
+            "--from", "--with", help="Conta corrente do outro lado (omita se não controlada)."
+        ),
+    ] = None,
+    withdraw: Annotated[bool, typer.Option("--withdraw", help="Resgate em vez de aporte.")] = False,
+    date: Annotated[str, typer.Option("--date", "-d", help="Data da movimentação.")] = "hoje",
+) -> None:
+    """Registra um aporte (padrão) ou resgate. Não é receita nem despesa."""
+    c = container()
+    investment = find_account(c.uow, account)
+    other = find_account(c.uow, from_account) if from_account else None
+    legs = RegisterInvestmentFlow(c.uow).execute(
+        RegisterInvestmentFlowCommand(
+            investment.id,
+            FlowDirection.WITHDRAWAL if withdraw else FlowDirection.CONTRIBUTION,
+            parse_date(date, c.clock.today()),
+            parse_brl(amount),
+            other.id if other else None,
+        )
+    )
+    console.print(f"{'Resgate' if withdraw else 'Aporte'} registrado ({len(legs)} perna(s)).")
+
+
+@invest_app.command("settings")
+@handle_errors
+def invest_settings(
+    account: Annotated[str, typer.Argument(help="Apelido da conta de investimento.")],
+    asset_class: Annotated[
+        AssetClass | None, typer.Option("--class", help="Classe: fixed_income, equities, ...")
+    ] = None,
+    emergency: Annotated[
+        bool | None,
+        typer.Option(
+            "--emergency/--no-emergency", help="Marca ou desmarca como reserva de emergência."
+        ),
+    ] = None,
+    tracking: Annotated[
+        InvestmentTracking | None,
+        typer.Option(
+            "--tracking", help="Controle: account (por conta) ou holdings (por aplicação)."
+        ),
+    ] = None,
+) -> None:
+    """Altera classe, reserva de emergência e o nível de controle de uma conta de investimento."""
+    c = container()
+    chosen = find_account(c.uow, account)
+    SetInvestmentSettings(c.uow).execute(
+        chosen.id,
+        asset_class or chosen.asset_class or AssetClass.OTHER,
+        chosen.is_emergency_fund if emergency is None else emergency,
+        tracking,
+    )
+    console.print("Conta de investimento atualizada.")
+
+
+@invest_app.command("year")
+@handle_errors
+def invest_year(
+    year: Annotated[int | None, typer.Argument(help="Ano (padrão: o atual).")] = None,
+) -> None:
+    """Totais do ano e posição em 31/12 (apoio ao IRPF; o sistema não calcula imposto)."""
+    c = container()
+    chosen = year or c.clock.today().year
+    totals = GetInvestmentPeriodTotals(c.uow).execute(Period.year(chosen))
+    console.print(f"[bold]Investimentos em {chosen}[/bold]")
+    console.print(f"Aportes líquidos: {format_brl(totals.net_contributions_cents)}")
+    if totals.capitalized_yield_cents is None:
+        console.print("Rendimento capitalizado: sem avaliações para comparar")
+    else:
+        console.print(
+            f"Rendimento capitalizado: {format_signed(totals.capitalized_yield_cents)} "
+            f"(retorno simples {format_percent(totals.simple_return)} · não é renda)"
+        )
+    console.print(
+        "Distribuições pagas na conta (renda em “Rendimentos”): "
+        f"{format_brl(totals.distributions_cents)}"
+    )
+    position = GetYearEndPosition(c.uow).execute(chosen)
+    table = Table(
+        "Conta", "Posição", "Rendimento do ano", title=f"Posição em {format_date(position.date)}"
+    )
+    for row in position.rows:
+        table.add_row(
+            row.account.nickname,
+            format_brl(row.value_cents) if row.value_cents is not None else "sem avaliação",
+            format_signed(row.yield_cents) if row.yield_cents is not None else "—",
+        )
+    console.print(table)
+    console.print(f"Total: {format_brl(position.total_cents)}")
+    if position.pending:
+        console.print(
+            "[yellow]Parcial · sem avaliação: "
+            + ", ".join(a.nickname for a in position.pending)
+            + "[/yellow]"
+        )
+
+
+@app.command("networth")
+@handle_errors
+def networth() -> None:
+    """Patrimônio líquido: caixa + investimentos − faturas a pagar."""
+    c = container()
+    view = GetNetWorth(c.uow, c.clock).execute()
+    console.print(f"[bold]Patrimônio líquido: {format_brl(view.net_worth_cents)}[/bold]")
+    console.print(f"Caixa: {format_brl(view.cash_cents)}")
+    console.print(f"Investimentos: {format_brl(view.investments_cents)}")
+    console.print(f"Faturas fechadas a pagar: − {format_brl(view.closed_statements_cents)}")
+    console.print(f"Faturas abertas: − {format_brl(view.open_statements_cents)}")
+    console.print(
+        "Parcelas futuras (compromisso, fora do total): "
+        f"{format_brl(view.future_installments_cents)}"
+    )
+    if view.is_partial:
+        names = ", ".join(a.nickname for a in view.pending)
+        console.print(f"[yellow]Parcial · saldo ou avaliação pendente: {names}[/yellow]")
+
+
+# --- holdings (fixed income) ------------------------------------------------------------------
+
+
+@holding_app.command("add")
+@handle_errors
+def holding_add(
+    name: Annotated[str, typer.Argument(help="Nome, por exemplo: CDB Banco X 110% CDI.")],
+    account: Annotated[
+        str, typer.Option("--account", "-a", help="Conta de investimento (por aplicação).")
+    ],
+    instrument: Annotated[
+        InstrumentType, typer.Option("--type", "-t", help="cdb, lci, lca, treasury_ipca...")
+    ],
+    issuer: Annotated[str, typer.Option("--issuer", help="Instituição emissora.")],
+    applied: Annotated[str, typer.Option("--applied", help="Data da aplicação (dd/mm/aaaa).")],
+    principal: Annotated[str, typer.Option("--principal", help="Valor aplicado.")],
+    liquidity: Annotated[Liquidity, typer.Option("--liquidity", help="daily ou at_maturity.")],
+    maturity: Annotated[
+        str | None, typer.Option("--maturity", help="Vencimento (dd/mm/aaaa).")
+    ] = None,
+    liquid_from: Annotated[
+        str | None, typer.Option("--liquid-from", help="Fim da carência.")
+    ] = None,
+    indexer: Annotated[
+        Indexer | None, typer.Option("--indexer", help="cdi, selic, ipca, prefixed.")
+    ] = None,
+    mode: Annotated[
+        RateMode | None,
+        typer.Option("--mode", help="percent_of_index, spread_over_index ou fixed_annual."),
+    ] = None,
+    rate: Annotated[
+        str | None, typer.Option("--rate", help="Taxa em %: 110 (110% do CDI), 6,5 (IPCA + 6,5%).")
+    ] = None,
+    fgc: Annotated[
+        bool | None,
+        typer.Option("--fgc/--no-fgc", help="Coberta pelo FGC (padrão: sugestão do tipo)."),
+    ] = None,
+    emergency: Annotated[bool, typer.Option("--emergency", help="Reserva de emergência.")] = False,
+    contribute: Annotated[
+        bool, typer.Option("--contribute", help="Registra também o aporte do valor aplicado.")
+    ] = False,
+    from_account: Annotated[
+        str | None, typer.Option("--from", help="Conta corrente que pagou (com --contribute).")
+    ] = None,
+) -> None:
+    """Cadastra uma aplicação de renda fixa. Dados do contrato são só para exibição."""
+    c = container()
+    today = c.clock.today()
+    holding = RegisterHolding(c.uow).execute(
+        RegisterHoldingCommand(
+            account_id=find_account(c.uow, account).id,
+            name=name,
+            instrument_type=instrument,
+            issuer_id=find_institution(c.uow, issuer).id,
+            applied_on=parse_date(applied, today),
+            principal_cents=parse_brl(principal),
+            liquidity=liquidity,
+            indexer=indexer,
+            rate_mode=mode,
+            rate_bps=parse_percent_bps(rate) if rate else None,
+            maturity_on=parse_date(maturity, today) if maturity else None,
+            liquid_from=parse_date(liquid_from, today) if liquid_from else None,
+            fgc_covered=fgc,
+            is_emergency_fund=emergency,
+            contribute=contribute,
+            from_account_id=find_account(c.uow, from_account).id if from_account else None,
+        )
+    )
+    console.print(
+        f"Aplicação cadastrada: {holding.name} · "
+        f"{messages.format_rate(holding.rate_mode, holding.indexer, holding.rate_bps)} · "
+        f"FGC: {'sim' if holding.fgc_covered else 'não'}."
+    )
+
+
+@holding_app.command("list")
+@handle_errors
+def holding_list(
+    all_: Annotated[bool, typer.Option("--all", help="Inclui as resgatadas.")] = False,
+) -> None:
+    """Aplicações: taxa, vencimento, liquidez, FGC e valor líquido."""
+    c = container()
+    table = Table(
+        "Aplicação", "Emissor", "Taxa", "Vence", "Liquidez", "FGC", "Valor líquido", "Avaliação"
+    )
+    for v in ListHoldings(c.uow, c.clock, c.settings.valuation_stale_days).execute(
+        include_redeemed=all_
+    ):
+        h = v.holding
+        table.add_row(
+            h.name,
+            v.issuer.name,
+            messages.format_rate(h.rate_mode, h.indexer, h.rate_bps),
+            format_date(h.maturity_on) if h.maturity_on else "—",
+            messages.LIQUIDITY_LABELS[h.liquidity],
+            "sim" if h.fgc_covered else "não",
+            format_brl(v.current_value_cents)
+            if v.current_value_cents is not None
+            else "sem avaliação",
+            messages.HOLDING_STATUS_LABELS[h.status]
+            if h.status.value == "redeemed"
+            else _age_text(v),
+        )
+    console.print(table)
+
+
+@holding_app.command("value")
+@handle_errors
+def holding_value(
+    holding: Annotated[str, typer.Argument(help="Nome da aplicação.")],
+    net: Annotated[str, typer.Argument(help="Valor líquido que a instituição mostra.")],
+    gross: Annotated[str | None, typer.Option("--gross", help="Valor bruto (opcional).")] = None,
+    date: Annotated[str, typer.Option("--date", "-d", help="Data da avaliação.")] = "hoje",
+    note: Annotated[str | None, typer.Option("--note", help="Observação.")] = None,
+) -> None:
+    """Registra a avaliação (valor líquido) de uma aplicação numa data."""
+    c = container()
+    result = RecordHoldingValuation(c.uow).execute(
+        RecordHoldingValuationCommand(
+            find_holding(c.uow, holding).id,
+            parse_date(date, c.clock.today()),
+            parse_brl(net),
+            _optional_money(gross),
+            note,
+        )
+    )
+    console.print(f"Avaliação registrada: {format_brl(result.anchor.balance_cents)}.")
+    if result.difference_cents is not None:
+        console.print(
+            f"Rendimento desde a avaliação anterior: {format_signed(result.difference_cents)} "
+            "(não é renda)."
+        )
+
+
+@holding_app.command("flow")
+@handle_errors
+def holding_flow(
+    holding: Annotated[str, typer.Argument(help="Nome da aplicação.")],
+    amount: Annotated[str, typer.Argument(help="Valor.")],
+    from_account: Annotated[
+        str | None, typer.Option("--from", "--with", help="Conta corrente do outro lado.")
+    ] = None,
+    withdraw: Annotated[bool, typer.Option("--withdraw", help="Resgate parcial.")] = False,
+    date: Annotated[str, typer.Option("--date", "-d", help="Data.")] = "hoje",
+) -> None:
+    """Aporte (padrão) ou resgate parcial numa aplicação."""
+    c = container()
+    target = find_holding(c.uow, holding)
+    other = find_account(c.uow, from_account) if from_account else None
+    legs = RegisterInvestmentFlow(c.uow).execute(
+        RegisterInvestmentFlowCommand(
+            target.account_id,
+            FlowDirection.WITHDRAWAL if withdraw else FlowDirection.CONTRIBUTION,
+            parse_date(date, c.clock.today()),
+            parse_brl(amount),
+            other.id if other else None,
+            holding_id=target.id,
+        )
+    )
+    console.print(f"{'Resgate' if withdraw else 'Aporte'} registrado ({len(legs)} perna(s)).")
+
+
+@holding_app.command("redeem")
+@handle_errors
+def holding_redeem(
+    holding: Annotated[str, typer.Argument(help="Nome da aplicação.")],
+    amount: Annotated[str, typer.Argument(help="Valor líquido pago pela instituição.")],
+    to_account: Annotated[
+        str | None,
+        typer.Option("--to", help="Conta corrente que recebeu (omita se não controlada)."),
+    ] = None,
+    date: Annotated[str, typer.Option("--date", "-d", help="Data do resgate.")] = "hoje",
+) -> None:
+    """Resgata a aplicação inteira: saída, avaliação zero e situação “resgatada”."""
+    c = container()
+    target = find_holding(c.uow, holding)
+    RedeemHolding(c.uow).execute(
+        RedeemHoldingCommand(
+            target.id,
+            parse_date(date, c.clock.today()),
+            parse_brl(amount),
+            find_account(c.uow, to_account).id if to_account else None,
+        )
+    )
+    console.print(f"Aplicação resgatada: {target.name}.")
+
+
+@holding_app.command("flags")
+@handle_errors
+def holding_flags(
+    holding: Annotated[str, typer.Argument(help="Nome da aplicação.")],
+    fgc: Annotated[bool | None, typer.Option("--fgc/--no-fgc", help="Coberta pelo FGC.")] = None,
+    emergency: Annotated[
+        bool | None, typer.Option("--emergency/--no-emergency", help="Reserva de emergência.")
+    ] = None,
+) -> None:
+    """Edita a marca de FGC e de reserva de emergência de uma aplicação."""
+    c = container()
+    target = find_holding(c.uow, holding)
+    SetHoldingFlags(c.uow).execute(
+        target.id,
+        target.fgc_covered if fgc is None else fgc,
+        target.is_emergency_fund if emergency is None else emergency,
+    )
+    console.print("Aplicação atualizada.")
+
+
+def _fixed_income() -> tuple[Container, "object"]:
+    c = container()
+    overview = GetFixedIncomeOverview(
+        c.uow, c.clock, c.settings.valuation_stale_days, c.settings.fgc_limit_cents
+    ).execute()
+    return c, overview
+
+
+@invest_app.command("ladder")
+@handle_errors
+def invest_ladder() -> None:
+    """Escada de vencimentos: quanto vence em cada mês (só aplicações com avaliação)."""
+    _, overview = _fixed_income()
+    table = Table("Mês", "Valor líquido", title="Escada de vencimentos")
+    for row in overview.ladder:  # type: ignore[attr-defined]
+        table.add_row(format_month_short(row.month), format_brl(row.value_cents))
+    console.print(table)
+    console.print(
+        "Títulos marcados a mercado podem valer menos que a curva contratada; "
+        "o sistema não projeta valor no vencimento."
+    )
+
+
+@invest_app.command("liquidity")
+@handle_errors
+def invest_liquidity() -> None:
+    """Liquidez: quanto está disponível hoje e em até 30, 90, 180 e 365 dias."""
+    _, overview = _fixed_income()
+    table = Table("Faixa", "Valor líquido", title="Liquidez das aplicações")
+    for row in overview.liquidity:  # type: ignore[attr-defined]
+        table.add_row(messages.LIQUIDITY_BUCKET_LABELS[row.bucket], format_brl(row.value_cents))
+    console.print(table)
+
+
+@invest_app.command("fgc")
+@handle_errors
+def invest_fgc() -> None:
+    """Exposição ao FGC por grupo: aplicações cobertas + conta corrente do mesmo grupo."""
+    _, overview = _fixed_income()
+    limit = overview.fgc_limit_cents  # type: ignore[attr-defined]
+    table = Table("Grupo", "Aplicações cobertas", "Conta corrente", "Exposição", "% do limite")
+    for row in overview.fgc:  # type: ignore[attr-defined]
+        flag = " [red]acima do limite[/red]" if row.exceeded else ""
+        table.add_row(
+            row.group,
+            format_brl(row.covered_holdings_cents),
+            format_brl(row.checking_cents),
+            format_brl(row.exposure_cents),
+            f"{row.percent_of_limit:.1f}%".replace(".", ",") + flag,
+        )
+    console.print(table)
+    console.print(
+        f"Limite configurado: {format_brl(limit)} por grupo e por CPF. Confirme o valor vigente em "
+        "fgc.org.br (FINANCAS_FGC_LIMIT_CENTS). O teto global de vários anos não é modelado."
+    )
+
+
+@invest_app.command("emergency")
+@handle_errors
+def invest_emergency() -> None:
+    """Reserva de emergência: cobertura em meses de gasto essencial."""
+    _, overview = _fixed_income()
+    fund = overview.emergency  # type: ignore[attr-defined]
+    console.print(
+        f"Marcado como reserva: {format_brl(fund.value_cents)} ({', '.join(fund.items) or '—'})"
+    )
+    console.print(
+        "Gasto essencial médio dos últimos 3 meses fechados: "
+        f"{format_brl(fund.average_essential_cents)}"
+    )
+    if fund.months is None:
+        console.print("Cobertura: sem gasto essencial para comparar.")
+    else:
+        console.print(f"Cobertura: {fund.months:.1f} meses".replace(".", ","))

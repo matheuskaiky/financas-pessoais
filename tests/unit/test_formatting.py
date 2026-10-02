@@ -78,3 +78,33 @@ def test_signed_and_short_date() -> None:
     assert format_signed(-18743) == "− R$ 187,43"
     assert format_signed(0) == "R$ 0,00"
     assert format_date_short(dt.date(2026, 7, 5)) == "05/07"
+
+
+@pytest.mark.parametrize(
+    ("text", "bps"),
+    [("110", 11_000), ("110,5", 11_050), ("6.5%", 650), (" 12,30 % ", 1_230), ("0", 0)],
+)
+def test_parse_percent_bps(text: str, bps: int) -> None:
+    from financas.interfaces.formatting import parse_percent_bps
+
+    assert parse_percent_bps(text) == bps
+
+
+@pytest.mark.parametrize("text", ["", "abc", "-1", "6,555", "1e2x"])
+def test_parse_percent_bps_rejects(text: str) -> None:
+    from financas.interfaces.formatting import parse_percent_bps
+
+    with pytest.raises(DomainError) as exc:
+        parse_percent_bps(text)
+    assert exc.value.code == "INVALID_RATE"
+
+
+def test_format_rate() -> None:
+    from financas.domain.models import Indexer, RateMode
+    from financas.interfaces.messages import format_rate
+
+    assert format_rate(RateMode.PERCENT_OF_INDEX, Indexer.CDI, 11_000) == "110% do CDI"
+    assert format_rate(RateMode.PERCENT_OF_INDEX, Indexer.CDI, 10_050) == "100,50% do CDI"
+    assert format_rate(RateMode.SPREAD_OVER_INDEX, Indexer.IPCA, 650) == "IPCA + 6,50%"
+    assert format_rate(RateMode.FIXED_ANNUAL, Indexer.PREFIXED, 1_230) == "12,30% a.a."
+    assert format_rate(None, None, None) == "—"

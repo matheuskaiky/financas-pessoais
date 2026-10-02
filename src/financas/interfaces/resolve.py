@@ -3,7 +3,14 @@
 from collections.abc import Callable, Sequence
 
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, Category, Institution, Statement
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    Category,
+    Institution,
+    InvestmentHolding,
+    Statement,
+)
 from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
 from financas.domain.services.text import normalize_search
@@ -74,3 +81,9 @@ def find_statement(uow: UnitOfWork, card_reference: str, month: str) -> tuple[Ac
     if statement is None:
         raise DomainError("NOT_FOUND", entity="statement")
     return card, statement
+
+
+def find_holding(uow: UnitOfWork, reference: str) -> InvestmentHolding:
+    with uow as work:
+        items = work.holdings.list_all()
+    return _pick(reference, items, "holding", lambda h: [h.id, normalize_search(h.name)])
