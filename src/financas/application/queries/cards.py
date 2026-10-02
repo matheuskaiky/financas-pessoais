@@ -9,6 +9,7 @@ Definitions (each one has a test):
 """
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from financas.domain.errors import DomainError
@@ -133,19 +134,28 @@ def _previous_closing(
     return closing_date(previous, card.due_day, card.closing_days_before_due)
 
 
-def statement_views(uow: Work, card: Account, today: dt.date) -> list[StatementView]:
+def statement_views(
+    uow: Work,
+    card: Account,
+    today: dt.date,
+    counts: Callable[[Transaction], bool] | None = None,
+) -> list[StatementView]:
+    """Views of the card's statements as of ``today``.
+
+    ``counts`` (optional) keeps only the entries that already existed on a past ``today``
+    (used by the net-worth series); without it every entry counts.
+    """
     statements = uow.statements.list_for_card(card.id)
     by_month = {s.month: s for s in statements}
-    return [
-        make_statement_view(
-            card,
-            s,
-            uow.transactions.list_by_statement(s.id),
-            today,
-            _previous_closing(card, s, by_month),
+    views: list[StatementView] = []
+    for s in statements:
+        entries = uow.transactions.list_by_statement(s.id)
+        if counts is not None:
+            entries = [t for t in entries if counts(t)]
+        views.append(
+            make_statement_view(card, s, entries, today, _previous_closing(card, s, by_month))
         )
-        for s in statements
-    ]
+    return views
 
 
 def statement_view(uow: Work, statement: Statement, today: dt.date) -> StatementView:

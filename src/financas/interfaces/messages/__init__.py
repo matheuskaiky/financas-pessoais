@@ -225,6 +225,7 @@ ERROR_MESSAGES: dict[str, str] = {
         "Classe de ativo e reserva de emergência só existem em contas de investimento."
     ),
     "INVESTMENT_REQUIRED": "Esta operação exige uma conta de investimento.",
+    "INVALID_DAYS": "O número de dias até o vencimento não pode ser negativo.",
     "INVALID_RATE": (
         "Taxa inválida: informe o tipo e o valor, e o índice quando a taxa depende dele."
     ),

@@ -13,6 +13,7 @@ Definitions (each one has a test):
 """
 
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from financas.application.queries.cards import card_accounts, statement_views
@@ -28,6 +29,7 @@ from financas.domain.models import (
     InvestmentHolding,
     InvestmentTracking,
     StatementStatus,
+    Transaction,
     TransactionKind,
 )
 from financas.domain.money import YearMonth
@@ -418,68 +420,98 @@ class NetWorthView:
         return bool(self.pending or self.pending_holdings)
 
 
+def net_worth_at(uow: Work, day: dt.date, *, historical: bool = False) -> NetWorthView:
+    """Net worth on ``day`` (CLAUDE.md 10): cash + investments - outstanding statements.
+
+    With ``historical=False`` it is the current definition, exactly (``day`` is today). With
+    ``historical=True`` it looks back at a past date: only what already existed on ``day`` counts
+    (entries posted up to it; installments of a plan bought by then; redeemed holdings that still
+    had value; holdings applied by then), and an account whose first valuation comes later is
+    simply not there yet (it is pending only when it has no valuation at all).
+    """
+    cash = investments = 0
+    pending: list[Account] = []
+    pending_holdings: list[InvestmentHolding] = []
+    closed = opened = future = 0
+    for account in uow.accounts.list_all():
+        if account.kind is AccountKind.CREDIT_CARD:
+            continue
+        # a deactivated account still holds money: it counts when it has a balance, and
+        # is only listed as pending while it is active
+        if account.tracking is InvestmentTracking.HOLDINGS:
+            views = [
+                v
+                for v in holding_views(uow, day, 0, include_redeemed=historical)
+                if v.holding.account_id == account.id
+                and not (historical and v.holding.applied_on > day)
+            ]
+            investments += sum(v.current_value_cents or 0 for v in views)
+            for v in views:
+                if v.current_value_cents is None and not (
+                    historical and uow.anchors.list_for_holding(v.holding.id)
+                ):
+                    pending_holdings.append(v.holding)
+            continue
+        anchors_all = uow.anchors.list_for_account(account.id)
+        anchors = _points(anchors_all)
+        flows = uow.transactions.movements(account.id)
+        if account.kind is AccountKind.CHECKING:
+            value = balance_on(anchors, flows, day)
+        else:
+            value = current_value(anchors, flows, day)
+        if value is None:
+            if account.is_active and not (historical and anchors_all):
+                pending.append(account)
+        elif account.kind is AccountKind.CHECKING:
+            cash += value
+        else:
+            investments += value
+    counts = _existed_on(uow, day) if historical else None
+    for card in card_accounts(uow):
+        for view in statement_views(uow, card, day, counts):
+            if view.status is StatementStatus.CLOSED:
+                closed += view.outstanding_cents
+            elif view.status is StatementStatus.OPEN:
+                opened += view.outstanding_cents
+            elif view.status is StatementStatus.FUTURE:
+                future += view.outstanding_cents
+    return NetWorthView(
+        cash,
+        investments,
+        closed,
+        opened,
+        cash + investments - closed - opened,
+        future,
+        pending,
+        pending_holdings,
+    )
+
+
+def _existed_on(uow: Work, day: dt.date) -> Callable[[Transaction], bool]:
+    """Which card entries existed on a past ``day``: posted by then, or an installment of a plan
+    already bought (its later installments are committed even though they post at closing)."""
+    plans = {p.id: p for p in uow.plans.list_all()}
+
+    def counts(entry: Transaction) -> bool:
+        if entry.posted_on <= day:
+            return True
+        plan = plans.get(entry.plan_id) if entry.plan_id else None
+        return plan is not None and (plan.purchased_on is None or plan.purchased_on <= day)
+
+    return counts
+
+
 class GetNetWorth:
     def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
         self._clock = clock
 
-    def execute(self) -> NetWorthView:
+    def execute(self, on: dt.date | None = None) -> NetWorthView:
+        """Net worth today, or looking back at ``on`` (a past date)."""
         today = self._clock.today()
-        cash = investments = 0
-        pending: list[Account] = []
-        pending_holdings: list[InvestmentHolding] = []
-        closed = opened = future = 0
+        day = on if on is not None and on < today else today
         with self._uow as uow:
-            for account in uow.accounts.list_all():
-                if account.kind is AccountKind.CREDIT_CARD:
-                    continue
-                # a deactivated account still holds money: it counts when it has a balance, and
-                # is only listed as pending while it is active
-                if account.tracking is InvestmentTracking.HOLDINGS:
-                    views = [
-                        v
-                        for v in holding_views(uow, today, 0)
-                        if v.holding.account_id == account.id
-                    ]
-                    investments += sum(v.current_value_cents or 0 for v in views)
-                    pending_holdings.extend(
-                        v.holding for v in views if v.current_value_cents is None
-                    )
-                    continue
-                anchors = _points(uow.anchors.list_for_account(account.id))
-                flows = uow.transactions.movements(account.id)
-                if account.kind is AccountKind.CHECKING:
-                    value = balance_on(anchors, flows, today)
-                    if value is None:
-                        if account.is_active:
-                            pending.append(account)
-                    else:
-                        cash += value
-                else:
-                    value = current_value(anchors, flows, today)
-                    if value is None:
-                        if account.is_active:
-                            pending.append(account)
-                    else:
-                        investments += value
-            for card in card_accounts(uow):
-                for view in statement_views(uow, card, today):
-                    if view.status is StatementStatus.CLOSED:
-                        closed += view.outstanding_cents
-                    elif view.status is StatementStatus.OPEN:
-                        opened += view.outstanding_cents
-                    elif view.status is StatementStatus.FUTURE:
-                        future += view.outstanding_cents
-        return NetWorthView(
-            cash,
-            investments,
-            closed,
-            opened,
-            cash + investments - closed - opened,
-            future,
-            pending,
-            pending_holdings,
-        )
+            return net_worth_at(uow, day, historical=day < today)
 
 
 @dataclass(frozen=True)
