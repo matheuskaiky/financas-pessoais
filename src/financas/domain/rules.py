@@ -66,3 +66,16 @@ def validate_group_kind(group: CategoryGroup, kind: CategoryKind) -> None:
     }[group]
     if kind is not expected:
         raise DomainError("CATEGORY_GROUP_KIND_MISMATCH", group=group.value, kind=kind.value)
+
+
+def validate_card_settings(
+    closing_day: int | None, due_day: int | None, credit_limit_cents: int | None
+) -> None:
+    """A card needs a closing day and a due day (1-31); the limit is optional and not negative."""
+    if closing_day is None or due_day is None:
+        raise DomainError("CARD_DAYS_REQUIRED")
+    for day in (closing_day, due_day):
+        if not 1 <= day <= 31:
+            raise DomainError("INVALID_CARD_DAY", day=day)
+    if credit_limit_cents is not None and credit_limit_cents < 0:
+        raise DomainError("AMOUNT_NOT_POSITIVE")

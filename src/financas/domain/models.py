@@ -4,6 +4,8 @@ import datetime as dt
 from dataclasses import dataclass
 from enum import StrEnum
 
+from financas.domain.money import YearMonth
+
 
 class TransactionKind(StrEnum):
     EXPENSE = "expense"
@@ -25,6 +27,13 @@ class CategoryGroup(StrEnum):
     INCOME = "income"
     MOVEMENT = "movement"
     REVIEW = "review"
+
+
+class StatementStatus(StrEnum):
+    FUTURE = "future"
+    OPEN = "open"
+    CLOSED = "closed"
+    PAID = "paid"
 
 
 class AccountKind(StrEnum):
@@ -52,6 +61,9 @@ class Account:
     is_active: bool = True
     color: str | None = None
     image_id: str | None = None
+    closing_day: int | None = None  # credit cards only
+    due_day: int | None = None
+    credit_limit_cents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +90,9 @@ class Transaction:
     is_recurring: bool = False
     transfer_id: str | None = None
     notes: str | None = None
+    statement_id: str | None = None  # card accounts only
+    plan_id: str | None = None
+    installment_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -87,3 +102,27 @@ class BalanceAnchor:
     on_date: dt.date
     balance_cents: int
     note: str | None = None
+
+
+@dataclass(frozen=True)
+class Statement:
+    """A card statement, identified by its closing month. Dates are stored at creation."""
+
+    id: str
+    account_id: str
+    month: YearMonth
+    closing_date: dt.date
+    due_date: dt.date
+    informed_total_cents: int | None = None
+
+
+@dataclass(frozen=True)
+class InstallmentPlan:
+    """Exists only when the purchase has more than one installment."""
+
+    id: str
+    account_id: str
+    description: str
+    category_id: str
+    installment_total: int
+    purchased_on: dt.date | None = None
