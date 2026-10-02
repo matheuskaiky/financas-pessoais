@@ -388,7 +388,7 @@ def test_purchase_preview_problems_are_shown_not_raised(
     )
     assert response.status_code == 200 and "Informe o valor" in response.text
     garbage = client.post("/cards/purchase/preview", data={"account_id": card, "installments": "x"})
-    assert garbage.status_code == 200 and "Confira os campos" in garbage.text
+    assert garbage.status_code == 200 and "Número de parcelas inválido" in garbage.text
 
 
 def test_purchase_save_creates_every_installment_and_the_statement_page(
@@ -891,3 +891,142 @@ def test_net_worth_lists_holdings_without_valuation(
     page = client.get("/networth")
     assert "CDB Banco X 110% CDI" in page.text and "Informar avaliação" in page.text
     assert "Parcial" in page.text
+
+
+def body_of(html: str) -> str:
+    """The page after ``</head>``: a template bug can hide content inside ``<title>``."""
+    assert html.count("<title>") == 1 and html.count("</title>") == 1
+    head, _, body = html.partition("</head>")
+    assert len(head) < 2_000, "the head is suspiciously large: content leaked into <title>"
+    return body
+
+
+def test_every_page_keeps_its_content_in_the_body(client: TestClient, container: Container) -> None:
+    _, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer)
+    expected = {
+        "/investments": ("Nova aplicação", "Escada de vencimentos", "Exposição ao FGC por grupo"),
+        "/networth": ("Patrimônio líquido",),
+        "/entries": ("Lançamento rápido",),
+        "/accounts": ("Contas e investimentos",),
+        "/categories": ("Nova categoria",),
+        "/": ("Despesas por categoria",),
+        "/more": ("Investimentos",),
+        "/cards": ("Novo cartão",),
+    }
+    for path, texts in expected.items():
+        response = client.get(path)
+        assert response.status_code == 200, path
+        body = body_of(response.text)
+        for text in texts:
+            assert text in body, (path, text)
+
+
+def test_framework_errors_are_pt_br_pages(client: TestClient, container: Container) -> None:
+    missing = client.get("/nao-existe")
+    assert missing.status_code == 404 and "Página não encontrada" in missing.text
+    assert "detail" not in missing.text.lower() or "Esse endereço" in missing.text
+    wrong = client.get("/institutions")  # POST-only
+    assert wrong.status_code == 405 and "Ação não permitida" in wrong.text
+    # tampered numbers and choices: a pt-BR message, never a 500 or an English JSON
+    assert client.get("/?year=abc&month=x").status_code == 200
+    assert client.get("/entries?limit=abc").status_code == 200
+    assert client.get("/investments?year=zzz").status_code == 200
+    checking, _ = setup_accounts(client, container)
+    bad_kind = client.post(
+        "/entries",
+        data={
+            "kind": "gift",
+            "account_id": checking,
+            "date": "2026-07-01",
+            "amount": "1",
+            "description": "x",
+        },
+    )
+    assert bad_kind.status_code == 400 and "Opção inválida" in bad_kind.text
+    with container.uow as work:
+        inst = work.institutions.list_all()[0]
+    bad_day = client.post(
+        "/cards",
+        data={"nickname": "X", "institution_id": inst.id, "closing_day": "abc", "due_day": "5"},
+    )
+    assert bad_day.status_code == 400 and "Dia inválido" in bad_day.text
+    missing_field = client.post("/institutions", data={})
+    assert missing_field.status_code == 400 and "Confira os campos" in missing_field.text
+    no_account = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "account_id": "",
+            "date": "2026-07-01",
+            "amount": "1",
+            "description": "x",
+        },
+    )
+    assert no_account.status_code == 400 and "Escolha a conta" in no_account.text
+
+
+def test_a_bad_image_does_not_leave_a_half_created_record(
+    client: TestClient, container: Container
+) -> None:
+    bad = client.post(
+        "/institutions",
+        data={"name": "Banco Ação"},
+        files={"image": ("logo.png", b"GIF89a......", "image/png")},
+    )
+    assert bad.status_code == 400 and "Formato de imagem não permitido" in bad.text
+    with container.uow as work:
+        assert work.institutions.list_all() == []
+    good = client.post(
+        "/institutions",
+        data={"name": "Banco Ação"},
+        files={"image": ("logo.png", PNG, "image/png")},
+    )
+    assert good.status_code == 303  # the same name now works: nothing was left behind
+
+
+def test_totals_strip_and_recurring_list_follow_the_statement_month(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "account_id": card,
+            "date": "2026-09-30",  # after the closing on the 25th: the October statement
+            "amount": "100,00",
+            "description": "Assinatura",
+            "recurring": "1",
+        },
+    )
+    assert "R$ 0,00" in client.get("/entries?month=2026-09").text.split("Despesas")[1][:80]
+    october = client.get("/entries?month=2026-10").text
+    assert "− R$ 100,00" in october.split("Despesas")[1][:80] or "R$ 100,00" in october
+    assert "Assinatura" in client.get("/?year=2026&month=10").text  # recurring list by competence
+
+
+def test_deleting_an_installment_is_refused_with_a_message(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    client.post(
+        "/cards/purchase",
+        data={
+            "account_id": card,
+            "date": "2099-01-26",
+            "description": "Fone",
+            "amount": "300,00",
+            "installments": "3",
+        },
+    )
+    with container.uow as work:
+        installment = work.transactions.list_by_account(card)[0]
+    plain = client.post(f"/entries/{installment.id}/delete")
+    assert plain.status_code == 303 and "err=USE_DELETE_PURCHASE" in plain.headers["location"]
+    page = client.get(plain.headers["location"])
+    assert "apague a compra inteira" in page.text
+    htmx = client.post(f"/entries/{installment.id}/delete", headers={"hx-request": "true"})
+    assert htmx.status_code == 200 and "err=USE_DELETE_PURCHASE" in htmx.headers["hx-redirect"]
+    with container.uow as work:
+        assert len(work.transactions.list_by_account(card)) == 3

@@ -33,7 +33,7 @@
   <div class="card"><span class="label">Despesas</span><strong>{{ summary.expenses_cents|brl }}</strong>
     <small>{% if summary.refunds_cents %}Estornos à parte: {{ summary.refunds_cents|brl }} · líquido {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
   <div class="card"><span class="label">Saldo do período</span>
-    <strong class="{{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas</small></div>
+    <strong class="{{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas líquidas</small></div>
   <div class="card"><span class="label">Aportes líquidos</span><strong>{{ summary.net_contributions_cents|brl }}</strong>
     <small>{% if summary.investment_rate is none %}Aportes − resgates{% else %}{{ summary.investment_rate|percent }} da renda investida{% endif %}</small></div>
   <div class="card"><span class="label">Taxa de poupança</span><strong>{{ summary.savings_rate|percent }}</strong>

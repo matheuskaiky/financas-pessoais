@@ -1,133 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, dot %}
-{% block title %}Investimentos
-{% set holding_accounts = investment_accounts|selectattr('tracking.value', 'equalto', 'holdings')|list %}
-<section class="panel" id="holdings" aria-labelledby="h-hold">
-  <h2 id="h-hold">Aplicações</h2>
-  {% if holding_accounts %}
-  <p class="soft" style="margin: -6px 0 0">Conta controlada por aplicação · valor líquido de resgate. O contrato é só para exibição: o sistema não calcula imposto nem projeta o valor no vencimento.</p>
-  {% for a in holding_accounts %}
-  <h3>{{ a.nickname }} <small class="soft">· {{ institutions[a.institution_id].name }}</small></h3>
-  {% set mine = holdings|selectattr('holding.account_id', 'equalto', a.id)|list %}
-  {% if mine %}
-  <div class="table-scroll">
-  <table>
-    <thead><tr><th>Aplicação</th><th>Taxa</th><th>Vence</th><th>Liquidez</th><th>FGC</th><th class="num">Valor líquido</th><th>Avaliação</th></tr></thead>
-    <tbody>
-    {% for v in mine %}{% set h = v.holding %}
-      <tr class="{{ 'inactive' if h.status.value == 'redeemed' }}">
-        <td><strong>{{ h.name }}</strong><br><small>{{ instrument_labels[h.instrument_type] }} · {{ v.issuer.name }}{% if h.is_emergency_fund %} · reserva{% endif %}</small></td>
-        <td>{{ rate(h.rate_mode, h.indexer, h.rate_bps) }}</td>
-        <td>{{ h.maturity_on|date if h.maturity_on else '—' }}</td>
-        <td>{{ liquidity_labels[h.liquidity] }}{% if h.liquid_from %}<br><small>carência até {{ h.liquid_from|date }}</small>{% endif %}</td>
-        <td>{{ 'sim' if h.fgc_covered else 'não' }}</td>
-        <td class="num">{% if h.status.value == 'redeemed' %}<span class="pill grey">Resgatada</span>
-          {% elif v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>
-          {% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|signed }}</small>{% endif %}{% endif %}</td>
-        <td>{% if h.status.value == 'active' %}
-          {% if v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>{% elif v.age_days is not none %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
-          <details><summary>Avaliar</summary>
-            <form method="post" action="/investments/holdings/{{ h.id }}/valuation" class="row-form">
-              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
-              <label class="field"><span>Líquido</span><input type="text" name="net" inputmode="decimal" required></label>
-              <label class="field"><span>Bruto (opcional)</span><input type="text" name="gross" inputmode="decimal"></label>
-              <button type="submit" class="secondary">Salvar</button></form></details>
-          <details><summary>Marcas</summary>
-            <form method="post" action="/investments/holdings/{{ h.id }}/flags" class="row-form">
-              <label class="check"><input type="checkbox" name="fgc" value="1" {{ 'checked' if h.fgc_covered }}> Coberta pelo FGC</label>
-              <label class="check"><input type="checkbox" name="emergency" value="1" {{ 'checked' if h.is_emergency_fund }}> Reserva de emergência</label>
-              <button type="submit" class="secondary">Salvar</button></form></details>
-          <details><summary>Resgatar tudo</summary>
-            <form method="post" action="/investments/holdings/{{ h.id }}/redeem" class="row-form" data-confirm="Resgatar esta aplicação? Ela deixa de contar nos totais.">
-              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
-              <label class="field"><span>Valor líquido recebido</span><input type="text" name="amount" inputmode="decimal" required></label>
-              <label class="field"><span>Conta que recebeu</span>
-                <select name="to_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
-              <button type="submit" class="secondary">Resgatar</button></form></details>
-          {% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}<p class="empty">Nenhuma aplicação nesta conta ainda.</p>{% endif %}
-  {% endfor %}
-  <details {{ 'open' if not holdings }}>
-    <summary>Nova aplicação</summary>
-    <form method="post" action="/investments/holdings" class="grid-form">
-      <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="160" placeholder="CDB Banco X 110% CDI"></label>
-      <label class="field"><span>Conta</span>
-        <select name="account_id">{% for a in holding_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Tipo</span>
-        <select name="instrument_type">{% for t in instrument_types %}<option value="{{ t.value }}">{{ instrument_labels[t] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Emissor</span>
-        <select name="issuer_id">{% for i in issuers %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Data da aplicação</span><input type="date" name="applied_on" value="{{ today }}" required></label>
-      <label class="field"><span>Valor aplicado</span><input type="text" name="principal" inputmode="decimal" placeholder="0,00" required></label>
-      <label class="field"><span>Liquidez</span>
-        <select name="liquidity">{% for l in liquidities %}<option value="{{ l.value }}">{{ liquidity_labels[l] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Vencimento</span><input type="date" name="maturity_on"><small>Obrigatório com liquidez no vencimento</small></label>
-      <label class="field"><span>Fim da carência</span><input type="date" name="liquid_from"><small>Só liquidez diária</small></label>
-      <label class="field"><span>Índice</span>
-        <select name="indexer"><option value="">—</option>{% for i in indexers %}<option value="{{ i.value }}">{{ indexer_labels[i] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Tipo de taxa</span>
-        <select name="rate_mode"><option value="">—</option>{% for m in rate_modes %}<option value="{{ m.value }}">{{ rate_mode_labels[m] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Taxa (%)</span><input type="text" name="rate" inputmode="decimal" placeholder="110 ou 6,5"><small>110 = 110% do CDI · 6,5 = índice + 6,5%</small></label>
-      <label class="field"><span>FGC</span>
-        <select name="fgc"><option value="">Sugestão do tipo</option><option value="yes">Coberta</option><option value="no">Não coberta</option></select></label>
-      <label class="check"><input type="checkbox" name="emergency" value="1"> Reserva de emergência</label>
-      <label class="check"><input type="checkbox" name="contribute" value="1"> Registrar também o aporte do valor aplicado</label>
-      <label class="field"><span>Conta corrente que pagou</span>
-        <select name="from_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
-      <button type="submit">Salvar aplicação</button>
-    </form>
-    <p class="hint">O sistema sugere a cobertura do FGC pelo tipo, mas a decisão é sua. Confirme as regras do produto com a instituição.</p>
-  </details>
-  {% else %}
-  <p class="empty">Para controlar CDB, LCI, LCA e Tesouro um a um, mude uma conta de investimento para “Por aplicação” em <em>Ajustes</em>, na tabela acima.</p>
-  {% endif %}
-</section>
-
-{% if holdings or holding_accounts %}
-<div class="cols">
-  <div class="stack">
-    <section class="panel" aria-labelledby="h-ladder">
-      <h2 id="h-ladder">Escada de vencimentos</h2>
-      {% if fixed.ladder %}
-      <ul class="plain">{% for r in fixed.ladder %}<li><span>{{ r.month|month_short }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
-      {% else %}<p class="empty">Nenhuma aplicação avaliada com vencimento.</p>{% endif %}
-      <small>Títulos marcados a mercado podem valer menos que a curva contratada; o sistema não projeta valor no vencimento.</small>
-    </section>
-    <section class="panel" aria-labelledby="h-liq">
-      <h2 id="h-liq">Liquidez</h2>
-      <ul class="plain">{% for r in fixed.liquidity %}<li><span>{{ bucket_labels[r.bucket] }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
-      <small>Só aplicações com avaliação. Faixas: hoje, até 30, 90, 180 e 365 dias, e mais tarde.</small>
-    </section>
-  </div>
-  <div class="stack">
-    <section class="panel" aria-labelledby="h-fgc">
-      <h2 id="h-fgc">Exposição ao FGC por grupo</h2>
-      {% if fixed.fgc %}
-      <ul class="plain">
-        {% for r in fixed.fgc %}<li><span><strong>{{ r.group }}</strong><br><small>aplicações cobertas {{ r.covered_holdings_cents|brl }} + conta corrente {{ r.checking_cents|brl }}</small></span>
-          <span class="num"><strong>{{ r.exposure_cents|brl }}</strong><br><small>{{ (r.percent_of_limit / 100)|percent }} de {{ r.limit_cents|brl }}</small>{% if r.exceeded %}<br><span class="pill warn">Acima do limite</span>{% endif %}</span></li>{% endfor %}
-      </ul>
-      {% else %}<p class="empty">Nenhuma aplicação coberta com avaliação.</p>{% endif %}
-      <small>Confirme o limite vigente em fgc.org.br; o valor fica em configuração (FINANCAS_FGC_LIMIT_CENTS). O teto global de vários anos não é modelado.</small>
-    </section>
-    <section class="panel" aria-labelledby="h-emg">
-      <h2 id="h-emg">Reserva de emergência</h2>
-      {% if fixed.emergency.items %}
-      {% if fixed.emergency.months is none %}<strong style="font-size: 28px">—</strong><span class="soft">Sem gasto essencial nos últimos 3 meses fechados para comparar.</span>
-      {% else %}<strong style="font-size: 28px; color: var(--navy)">{{ '%.1f'|format(fixed.emergency.months)|replace('.', ',') }} meses</strong>{% endif %}
-      <span class="soft">{{ fixed.emergency.value_cents|brl }} marcados como reserva ÷ gasto essencial médio dos últimos 3 meses fechados ({{ fixed.emergency.average_essential_cents|brl }}).</span>
-      <small>{{ fixed.emergency.items|join(', ') }}</small>
-      {% else %}<p class="empty">Marque aplicações ou contas como reserva de emergência para ver a cobertura.</p>{% endif %}
-    </section>
-  </div>
-</div>
-{% endif %}
-{% endblock %}
+{% block title %}Investimentos{% endblock %}
 {% block content %}
 <header class="page-head">
   <div><h1>Investimentos</h1><p>Valores líquidos informados pelas instituições · o sistema não calcula imposto</p></div>
@@ -269,4 +142,131 @@
     </section>
   </div>
 </div>
+
+{% set holding_accounts = investment_accounts|selectattr('tracking.value', 'equalto', 'holdings')|list %}
+<section class="panel" id="holdings" aria-labelledby="h-hold">
+  <h2 id="h-hold">Aplicações</h2>
+  {% if holding_accounts %}
+  <p class="soft" style="margin: -6px 0 0">Conta controlada por aplicação · valor líquido de resgate. O contrato é só para exibição: o sistema não calcula imposto nem projeta o valor no vencimento.</p>
+  {% for a in holding_accounts %}
+  <h3>{{ a.nickname }} <small class="soft">· {{ institutions[a.institution_id].name }}</small></h3>
+  {% set mine = holdings|selectattr('holding.account_id', 'equalto', a.id)|list %}
+  {% if mine %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Aplicação</th><th>Taxa</th><th>Vence</th><th>Liquidez</th><th>FGC</th><th class="num">Valor líquido</th><th>Avaliação</th></tr></thead>
+    <tbody>
+    {% for v in mine %}{% set h = v.holding %}
+      <tr class="{{ 'inactive' if h.status.value == 'redeemed' }}">
+        <td><strong>{{ h.name }}</strong><br><small>{{ instrument_labels[h.instrument_type] }} · {{ v.issuer.name }}{% if h.is_emergency_fund %} · reserva{% endif %}</small></td>
+        <td>{{ rate(h.rate_mode, h.indexer, h.rate_bps) }}</td>
+        <td>{{ h.maturity_on|date if h.maturity_on else '—' }}</td>
+        <td>{{ liquidity_labels[h.liquidity] }}{% if h.liquid_from %}<br><small>carência até {{ h.liquid_from|date }}</small>{% endif %}</td>
+        <td>{{ 'sim' if h.fgc_covered else 'não' }}</td>
+        <td class="num">{% if h.status.value == 'redeemed' %}<span class="pill grey">Resgatada</span>
+          {% elif v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>
+          {% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|signed }}</small>{% endif %}{% endif %}</td>
+        <td>{% if h.status.value == 'active' %}
+          {% if v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>{% elif v.age_days is not none %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
+          <details><summary>Avaliar</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/valuation" class="row-form">
+              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+              <label class="field"><span>Líquido</span><input type="text" name="net" inputmode="decimal" required></label>
+              <label class="field"><span>Bruto (opcional)</span><input type="text" name="gross" inputmode="decimal"></label>
+              <button type="submit" class="secondary">Salvar</button></form></details>
+          <details><summary>Marcas</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/flags" class="row-form">
+              <label class="check"><input type="checkbox" name="fgc" value="1" {{ 'checked' if h.fgc_covered }}> Coberta pelo FGC</label>
+              <label class="check"><input type="checkbox" name="emergency" value="1" {{ 'checked' if h.is_emergency_fund }}> Reserva de emergência</label>
+              <button type="submit" class="secondary">Salvar</button></form></details>
+          <details><summary>Resgatar tudo</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/redeem" class="row-form" data-confirm="Resgatar esta aplicação? Ela deixa de contar nos totais.">
+              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+              <label class="field"><span>Valor líquido recebido</span><input type="text" name="amount" inputmode="decimal" required></label>
+              <label class="field"><span>Conta que recebeu</span>
+                <select name="to_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
+              <button type="submit" class="secondary">Resgatar</button></form></details>
+          {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nenhuma aplicação nesta conta ainda.</p>{% endif %}
+  {% endfor %}
+  <details {{ 'open' if not holdings }}>
+    <summary>Nova aplicação</summary>
+    <form method="post" action="/investments/holdings" class="grid-form">
+      <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="160" placeholder="CDB Banco X 110% CDI"></label>
+      <label class="field"><span>Conta</span>
+        <select name="account_id">{% for a in holding_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Tipo</span>
+        <select name="instrument_type">{% for t in instrument_types %}<option value="{{ t.value }}">{{ instrument_labels[t] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Emissor</span>
+        <select name="issuer_id">{% for i in issuers %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Data da aplicação</span><input type="date" name="applied_on" value="{{ today }}" required></label>
+      <label class="field"><span>Valor aplicado</span><input type="text" name="principal" inputmode="decimal" placeholder="0,00" required></label>
+      <label class="field"><span>Liquidez</span>
+        <select name="liquidity">{% for l in liquidities %}<option value="{{ l.value }}">{{ liquidity_labels[l] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Vencimento</span><input type="date" name="maturity_on"><small>Obrigatório com liquidez no vencimento</small></label>
+      <label class="field"><span>Fim da carência</span><input type="date" name="liquid_from"><small>Só liquidez diária</small></label>
+      <label class="field"><span>Índice</span>
+        <select name="indexer"><option value="">—</option>{% for i in indexers %}<option value="{{ i.value }}">{{ indexer_labels[i] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Tipo de taxa</span>
+        <select name="rate_mode"><option value="">—</option>{% for m in rate_modes %}<option value="{{ m.value }}">{{ rate_mode_labels[m] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Taxa (%)</span><input type="text" name="rate" inputmode="decimal" placeholder="110 ou 6,5"><small>110 = 110% do CDI · 6,5 = índice + 6,5%</small></label>
+      <label class="field"><span>FGC</span>
+        <select name="fgc"><option value="">Sugestão do tipo</option><option value="yes">Coberta</option><option value="no">Não coberta</option></select></label>
+      <label class="check"><input type="checkbox" name="emergency" value="1"> Reserva de emergência</label>
+      <label class="check"><input type="checkbox" name="contribute" value="1"> Registrar também o aporte do valor aplicado</label>
+      <label class="field"><span>Conta corrente que pagou</span>
+        <select name="from_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
+      <button type="submit">Salvar aplicação</button>
+    </form>
+    <p class="hint">O sistema sugere a cobertura do FGC pelo tipo, mas a decisão é sua. Confirme as regras do produto com a instituição.</p>
+  </details>
+  {% else %}
+  <p class="empty">Para controlar CDB, LCI, LCA e Tesouro um a um, mude uma conta de investimento para “Por aplicação” em <em>Ajustes</em>, na tabela acima.</p>
+  {% endif %}
+</section>
+
+{% if holdings or holding_accounts %}
+<div class="cols">
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-ladder">
+      <h2 id="h-ladder">Escada de vencimentos</h2>
+      {% if fixed.ladder %}
+      <ul class="plain">{% for r in fixed.ladder %}<li><span>{{ r.month|month_short }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
+      {% else %}<p class="empty">Nenhuma aplicação avaliada com vencimento.</p>{% endif %}
+      <small>Títulos marcados a mercado podem valer menos que a curva contratada; o sistema não projeta valor no vencimento.</small>
+    </section>
+    <section class="panel" aria-labelledby="h-liq">
+      <h2 id="h-liq">Liquidez</h2>
+      <ul class="plain">{% for r in fixed.liquidity %}<li><span>{{ bucket_labels[r.bucket] }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
+      <small>Só aplicações com avaliação. Faixas: hoje, até 30, 90, 180 e 365 dias, e mais tarde.</small>
+    </section>
+  </div>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-fgc">
+      <h2 id="h-fgc">Exposição ao FGC por grupo</h2>
+      {% if fixed.fgc %}
+      <ul class="plain">
+        {% for r in fixed.fgc %}<li><span><strong>{{ r.group }}</strong><br><small>aplicações cobertas {{ r.covered_holdings_cents|brl }} + conta corrente {{ r.checking_cents|brl }}</small></span>
+          <span class="num"><strong>{{ r.exposure_cents|brl }}</strong><br><small>{{ (r.percent_of_limit / 100)|percent }} de {{ r.limit_cents|brl }}</small>{% if r.exceeded %}<br><span class="pill warn">Acima do limite</span>{% endif %}</span></li>{% endfor %}
+      </ul>
+      {% else %}<p class="empty">Nenhuma aplicação coberta com avaliação.</p>{% endif %}
+      <small>Confirme o limite vigente em fgc.org.br; o valor fica em configuração (FINANCAS_FGC_LIMIT_CENTS). O teto global de vários anos não é modelado.</small>
+    </section>
+    <section class="panel" aria-labelledby="h-emg">
+      <h2 id="h-emg">Reserva de emergência</h2>
+      {% if fixed.emergency.items %}
+      {% if fixed.emergency.months is none %}<strong style="font-size: 28px">—</strong><span class="soft">Sem gasto essencial nos últimos 3 meses fechados para comparar.</span>
+      {% else %}<strong style="font-size: 28px; color: var(--navy)">{{ '%.1f'|format(fixed.emergency.months)|replace('.', ',') }} meses</strong>{% endif %}
+      <span class="soft">{{ fixed.emergency.value_cents|brl }} marcados como reserva ÷ gasto essencial médio dos últimos 3 meses fechados ({{ fixed.emergency.average_essential_cents|brl }}).</span>
+      <small>{{ fixed.emergency.items|join(', ') }}</small>
+      {% else %}<p class="empty">Marque aplicações ou contas como reserva de emergência para ver a cobertura.</p>{% endif %}
+    </section>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

@@ -86,8 +86,11 @@ def test_delete_and_backup(tmp_path: Path) -> None:
     setup_basic()
     out = run("add", "10", "Teste", "-d", "10/07/2026")
     code = out.split("Código:")[1].strip().rstrip(".")
-    assert "apagados: 1" in run("delete", code)
-    assert "não encontrado" in run("delete", "zzzzzzzz", ok=False)
+    declined = runner.invoke(app, ["delete", code], input="n\n", terminal_width=200)
+    assert declined.exit_code == 0 and "Nada foi apagado" in declined.output
+    assert "apagados: 1" in run("delete", code, "--yes")
+    assert "não encontrado" in run("delete", "zzzzzzzz", "-y", ok=False)
+    assert "não encontrado" in run("delete", "", "-y", ok=False)  # an empty prefix matches nothing
     assert "Backup criado" in run("backup")
     assert len(list((tmp_path / "data" / "backups").iterdir())) == 1
 
@@ -406,3 +409,26 @@ def test_ladder_liquidity_fgc_and_emergency_views() -> None:
     assert "sem gasto essencial" in emergency
     run("invest", "holding", "flags", "tesouro", "--fgc")  # the user can mark it as covered
     assert "R$ 36.320,00" in run("invest", "fgc")
+
+
+def test_inform_without_an_amount_does_not_wipe_the_total() -> None:
+    setup_card()
+    run("card", "buy", "Mochila", "--card", "nubank", "-d", "10/07/2026", "--total", "100,00", "-y")
+    run("statement", "inform", "nubank", "2026-07", "100,00")
+    assert "Informe o total" in run("statement", "inform", "nubank", "2026-07", ok=False)
+    assert "informado pelo banco R$ 100,00" in run("statement", "show", "nubank", "2026-07")
+
+
+def test_user_text_with_brackets_does_not_break_the_tables() -> None:
+    setup_basic()
+    run("add", "10", "Pagamento [/pagamento] [Casa]", "-d", "10/07/2026")
+    listing = run("list", "-m", "2026-07")
+    assert "[/pagamento]" in listing and "[Casa]" in listing
+
+
+def test_a_bad_image_creates_nothing(tmp_path: Path) -> None:
+    run("init")
+    bad = tmp_path / "logo.png"
+    bad.write_bytes(b"GIF89a....")
+    assert "Formato de imagem" in run("institution", "add", "Banco", "--image", str(bad), ok=False)
+    assert "Banco" not in run("institution", "list")

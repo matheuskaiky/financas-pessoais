@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from financas.application.queries.balances import ListAccountBalances
 from financas.application.queries.cards import (
@@ -87,6 +88,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
+from financas.domain.services.images import detect_image_type
 from financas.interfaces import messages
 from financas.interfaces.formatting import (
     format_date,
@@ -111,7 +113,9 @@ from financas.interfaces.resolve import (
 )
 
 app = typer.Typer(
-    help="Finanças pessoais: tudo local, nada sai do seu computador.", no_args_is_help=True
+    help="Finanças pessoais: tudo local, nada sai do seu computador.",
+    no_args_is_help=True,
+    pretty_exceptions_show_locals=False,  # a traceback must not print amounts or descriptions
 )
 institution_app = typer.Typer(help="Instituições (bancos, corretoras).", no_args_is_help=True)
 account_app = typer.Typer(help="Contas, cartões e investimentos.", no_args_is_help=True)
@@ -132,8 +136,10 @@ holding_app = typer.Typer(
 )
 invest_app.add_typer(holding_app, name="holding")
 
-console = Console()
-err_console = Console(stderr=True)
+# markup is off: descriptions and names typed by the user may contain "[...]" (Rich would eat or
+# reject it); colors are applied with styles instead
+console = Console(markup=False)
+err_console = Console(stderr=True, markup=False)
 
 Color = Annotated[str | None, typer.Option("--color", help="Cor no formato #RRGGBB.")]
 Image = Annotated[
@@ -154,10 +160,16 @@ def handle_errors[**P, R](func: Callable[P, R]) -> Callable[P, R]:
         try:
             return func(*args, **kwargs)
         except DomainError as error:
-            err_console.print(f"[red]{messages.render_error(error)}[/red]")
+            err_console.print(messages.render_error(error), style="red")
             raise typer.Exit(1) from error
 
     return wrapper
+
+
+def _check_image(image: Path | None) -> None:
+    """Reject a bad image before the entity is created (no half-created record)."""
+    if image is not None:
+        detect_image_type(image.read_bytes())
 
 
 def _set_appearance(
@@ -173,7 +185,7 @@ def _set_appearance(
 
 
 def _swatch(color: str | None) -> str:
-    return f"[{color}]■[/{color}] {color}" if color else "—"
+    return Text.assemble(("■ ", color), color) if color else Text("—")
 
 
 @app.command("init")
@@ -199,6 +211,7 @@ def institution_add(
 ) -> None:
     """Cadastra uma instituição."""
     c = container()
+    _check_image(image)
     institution = CreateInstitution(c.uow).execute(
         CreateInstitutionCommand(name=name, group_slug=group, color=color)
     )
@@ -242,6 +255,7 @@ def account_add(
 ) -> None:
     """Cadastra uma conta ou conta de investimento (cartões: use `card add`)."""
     c = container()
+    _check_image(image)
     inst = find_institution(c.uow, institution)
     account = CreateAccount(c.uow).execute(
         CreateAccountCommand(
@@ -407,7 +421,7 @@ def add(
     chosen = find_account(c.uow, account) if account else default_checking_account(c.uow)
     if chosen is None:
         err_console.print(
-            "[red]Informe a conta com --account (há zero ou várias contas correntes).[/red]"
+            "Informe a conta com --account (há zero ou várias contas correntes).", style="red"
         )
         raise typer.Exit(1)
     if category:
@@ -496,7 +510,7 @@ def list_entries(
             messages.TRANSACTION_KIND_LABELS[t.kind],
             categories[t.category_id],
             t.description,
-            f"[{style_}]{format_brl(t.amount_cents)}[/{style_}]",
+            Text(format_brl(t.amount_cents), style=style_),
         )
     console.print(table)
 
@@ -505,8 +519,11 @@ def list_entries(
 @handle_errors
 def delete(
     code: Annotated[str, typer.Argument(help="Código do lançamento (do comando list).")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Apagar sem perguntar.")] = False,
 ) -> None:
     """Apaga um lançamento (numa transferência, apaga as duas pernas)."""
+    if len(code.strip()) < 4:
+        raise DomainError("NOT_FOUND", entity="transaction")  # a short prefix would match anything
     c = container()
     with c.uow as work:
         matches = [
@@ -518,7 +535,13 @@ def delete(
         raise DomainError(
             "AMBIGUOUS_REFERENCE" if matches else "NOT_FOUND", reference=code, entity="transaction"
         )
-    count = DeleteTransaction(c.uow).execute(matches[0].id)
+    target = matches[0]
+    if not yes and not typer.confirm(
+        f"Apagar {format_brl(target.amount_cents)} de {format_date(target.posted_on)}?"
+    ):
+        console.print("Nada foi apagado.")
+        raise typer.Exit(0)
+    count = DeleteTransaction(c.uow, c.clock).execute(target.id)
     console.print(f"Lançamentos apagados: {count}.")
 
 
@@ -577,7 +600,7 @@ def summary(
     result = GetSummary(c.uow).execute(period)
     with c.uow as work:
         categories = {x.id: x for x in work.categories.list_all()}
-    console.print(f"[bold]{title}[/bold]")
+    console.print(title, style="bold")
     console.print(f"Receitas:  {format_brl(result.income_cents)}")
     console.print(f"Despesas:  {format_brl(result.expenses_cents)}")
     if result.refunds_cents:
@@ -628,7 +651,8 @@ def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) ->
     c = container()
     c.migrate()
     c.seed()
-    uvicorn.run(create_app(c), host=c.settings.host, port=port)
+    # no access log: URLs can carry search text (descriptions never go to logs, rule 4)
+    uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
 
 
 # --- cards ------------------------------------------------------------------------------------
@@ -653,6 +677,7 @@ def card_add(
 ) -> None:
     """Cadastra um cartão de crédito."""
     c = container()
+    _check_image(image)
     inst = find_institution(c.uow, institution)
     card = CreateAccount(c.uow).execute(
         CreateAccountCommand(
@@ -846,7 +871,9 @@ def statement_show(
     _, statement = find_statement(c.uow, card, month)
     detail = GetStatementDetail(c.uow, c.clock).execute(statement.id)
     view = detail.view
-    console.print(f"[bold]{messages.statement_label(statement)}[/bold] · {_status_text(view)}")
+    console.print(
+        Text.assemble((messages.statement_label(statement), "bold"), f" · {_status_text(view)}")
+    )
     console.print(
         f"Total lançado {format_brl(view.total_cents)} · pago {format_brl(view.paid_cents)}"
         f" · a pagar {format_brl(view.outstanding_cents)}"
@@ -907,9 +934,9 @@ def statement_inform(
     """Informa o total da fatura segundo o banco, para conferir com os lançamentos."""
     c = container()
     _, statement = find_statement(c.uow, card, month)
-    InformStatementTotal(c.uow).execute(
-        statement.id, None if clear else (parse_brl(amount) if amount else None)
-    )
+    if not clear and not amount:
+        raise DomainError("TOTAL_REQUIRED")  # never wipe the informed total by omission
+    InformStatementTotal(c.uow).execute(statement.id, None if clear else parse_brl(amount or ""))
     console.print("Total informado atualizado.")
 
 
@@ -951,7 +978,7 @@ def _age_text(view) -> str:
     if view.age_days is None:
         return "sem avaliação"
     base = f"há {view.age_days} dia(s)"
-    return f"[yellow]desatualizada · {base}[/yellow]" if view.stale else base
+    return Text(f"desatualizada · {base}", style="yellow") if view.stale else Text(base)
 
 
 @invest_app.command("list")
@@ -980,7 +1007,7 @@ def invest_list() -> None:
     console.print(f"Total investido (líquido): {format_brl(overview.total_cents)}")
     if overview.pending:
         names = ", ".join(a.nickname for a in overview.pending)
-        console.print(f"[yellow]Parcial · sem avaliação: {names}[/yellow]")
+        console.print(f"Parcial · sem avaliação: {names}", style="yellow")
     for row in overview.allocation.rows:
         console.print(
             f"  {messages.ASSET_CLASS_LABELS[row.asset_class]}: {format_brl(row.value_cents)} "
@@ -1089,7 +1116,7 @@ def invest_year(
     c = container()
     chosen = year or c.clock.today().year
     totals = GetInvestmentPeriodTotals(c.uow).execute(Period.year(chosen))
-    console.print(f"[bold]Investimentos em {chosen}[/bold]")
+    console.print(f"Investimentos em {chosen}", style="bold")
     console.print(f"Aportes líquidos: {format_brl(totals.net_contributions_cents)}")
     if totals.capitalized_yield_cents is None:
         console.print("Rendimento capitalizado: sem avaliações para comparar")
@@ -1115,11 +1142,8 @@ def invest_year(
     console.print(table)
     console.print(f"Total: {format_brl(position.total_cents)}")
     if position.pending:
-        console.print(
-            "[yellow]Parcial · sem avaliação: "
-            + ", ".join(a.nickname for a in position.pending)
-            + "[/yellow]"
-        )
+        names = ", ".join(a.nickname for a in position.pending)
+        console.print(f"Parcial · sem avaliação: {names}", style="yellow")
 
 
 @app.command("networth")
@@ -1128,7 +1152,7 @@ def networth() -> None:
     """Patrimônio líquido: caixa + investimentos − faturas a pagar."""
     c = container()
     view = GetNetWorth(c.uow, c.clock).execute()
-    console.print(f"[bold]Patrimônio líquido: {format_brl(view.net_worth_cents)}[/bold]")
+    console.print(f"Patrimônio líquido: {format_brl(view.net_worth_cents)}", style="bold")
     console.print(f"Caixa: {format_brl(view.cash_cents)}")
     console.print(f"Investimentos: {format_brl(view.investments_cents)}")
     console.print(f"Faturas fechadas a pagar: − {format_brl(view.closed_statements_cents)}")
@@ -1139,7 +1163,7 @@ def networth() -> None:
     )
     if view.is_partial:
         names = ", ".join(a.nickname for a in view.pending)
-        console.print(f"[yellow]Parcial · saldo ou avaliação pendente: {names}[/yellow]")
+        console.print(f"Parcial · saldo ou avaliação pendente: {names}", style="yellow")
 
 
 # --- holdings (fixed income) ------------------------------------------------------------------
@@ -1391,13 +1415,13 @@ def invest_fgc() -> None:
     limit = overview.fgc_limit_cents  # type: ignore[attr-defined]
     table = Table("Grupo", "Aplicações cobertas", "Conta corrente", "Exposição", "% do limite")
     for row in overview.fgc:  # type: ignore[attr-defined]
-        flag = " [red]acima do limite[/red]" if row.exceeded else ""
+        percent = f"{row.percent_of_limit:.1f}%".replace(".", ",")
         table.add_row(
             row.group,
             format_brl(row.covered_holdings_cents),
             format_brl(row.checking_cents),
             format_brl(row.exposure_cents),
-            f"{row.percent_of_limit:.1f}%".replace(".", ",") + flag,
+            Text.assemble(percent, (" acima do limite", "red")) if row.exceeded else Text(percent),
         )
     console.print(table)
     console.print(

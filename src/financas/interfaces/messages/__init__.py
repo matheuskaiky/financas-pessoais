@@ -165,7 +165,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "EMPTY_NAME": "Informe um nome.",
     "EMPTY_DESCRIPTION": "Informe uma descrição.",
     "DUPLICATE_SLUG": "Já existe um registro com o identificador “{slug}”.",
-    "NOT_FOUND": "{entity_label} não encontrado(a).",
+    "NOT_FOUND": "{entity_label}: registro não encontrado.",
     "AMBIGUOUS_REFERENCE": "Mais de um registro corresponde a “{reference}”. Seja mais específico.",
     "ACCOUNT_INACTIVE": "Esta conta está desativada.",
     "ACCOUNT_KIND_NOT_ALLOWED": (
@@ -218,6 +218,19 @@ ERROR_MESSAGES: dict[str, str] = {
     "ACCOUNT_TRACKS_HOLDINGS": (
         "Esta conta é controlada por aplicação: informe o saldo de cada aplicação."
     ),
+    "TOTAL_REQUIRED": "Informe o total da fatura (ou use --clear para remover o total informado).",
+    "INVALID_CHOICE": "Opção inválida. Escolha um dos valores da lista.",
+    "INVALID_NUMBER": "Número inválido.",
+    "INVALID_INSTALLMENT_COUNT": "Número de parcelas inválido: use um número de 1 a 120.",
+    "ACCOUNT_REQUIRED": "Escolha a conta.",
+    "INVALID_REDEMPTION_DATE": (
+        "A data do resgate não pode ser antes da aplicação nem da última avaliação."
+    ),
+    "BUDGET_ONLY_FOR_EXPENSES": "Só categorias de despesa têm meta de orçamento.",
+    "CARD_HAS_NO_DAILY_FLOW": "Cartões não têm fluxo diário: veja a fatura.",
+    "USE_DELETE_PURCHASE": (
+        "Esta parcela faz parte de uma compra parcelada: apague a compra inteira."
+    ),
     "TRACKING_IN_USE": (
         "Não dá para trocar o controle enquanto houver avaliações ou aplicações no nível atual."
     ),
@@ -250,6 +263,16 @@ FLASH_MESSAGES: dict[str, str] = {
     "holding_flags": "Aplicação atualizada.",
     "redeemed": "Aplicação resgatada.",
 }
+
+# errors whose sentence needs no parameters: safe to show from a code in the URL (?err=CODE)
+PARAMETERLESS_ERRORS = frozenset(
+    {
+        "STATEMENT_ALREADY_PAID",
+        "USE_DELETE_PURCHASE",
+        "NOT_A_CARD_PURCHASE",
+        "HOLDING_REDEEMED",
+    }
+)
 
 _FALLBACK = "Erro inesperado ({code})."
 

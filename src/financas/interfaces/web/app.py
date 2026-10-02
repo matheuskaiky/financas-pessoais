@@ -1,14 +1,17 @@
 """FastAPI + Jinja2 + HTMX adapter. All user-visible text is pt-BR (templates and messages)."""
 
 import datetime as dt
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from financas.application.queries.balances import ListAccountBalances
 from financas.application.queries.cards import (
@@ -26,7 +29,7 @@ from financas.application.queries.investments import (
     ListHoldings,
     ListInvestments,
 )
-from financas.application.queries.summary import GetSummary, Period, summarize
+from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.cards import (
     AdjustInstallment,
@@ -92,7 +95,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
-from financas.domain.services.images import MAX_IMAGE_BYTES
+from financas.domain.services.images import MAX_IMAGE_BYTES, detect_image_type
 from financas.domain.services.text import normalize_search
 from financas.interfaces import appearance, messages
 from financas.interfaces.formatting import (
@@ -121,6 +124,28 @@ _GROUP_COLORS = {
     "review": "#8A5A00",
 }
 _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.REFUND)
+
+
+def _enum[E: StrEnum](cls: type[E], value: str) -> E:
+    """A form choice as an enum; tampered data becomes a pt-BR error, never a 500."""
+    try:
+        return cls(value)
+    except ValueError:
+        raise DomainError("INVALID_CHOICE") from None
+
+
+def _int(value: str, code: str = "INVALID_NUMBER") -> int:
+    try:
+        return int(value.strip())
+    except ValueError:
+        raise DomainError(code) from None
+
+
+def _opt_int(value: str | None) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except ValueError:
+        return None
 
 
 def _color(color: str | None, use_color: str | None) -> str | None:
@@ -224,6 +249,9 @@ def create_app(c: Container) -> FastAPI:
         error: DomainError | None = None,
         status: int = 200,
     ) -> HTMLResponse:
+        err = request.query_params.get("err")
+        if err in messages.PARAMETERLESS_ERRORS and error is None:
+            error = DomainError(err)
         ok = request.query_params.get("ok")
         notice = messages.FLASH_MESSAGES.get(ok) if ok else None
         if ok == "balance":
@@ -298,6 +326,27 @@ def create_app(c: Container) -> FastAPI:
             },
         }
 
+    # pt-BR pages for framework errors (the defaults are English JSON)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, exc: StarletteHTTPException):
+        heading, detail = {
+            404: ("Página não encontrada", "Esse endereço não existe neste sistema."),
+            405: ("Ação não permitida", "Esse endereço não aceita esta ação."),
+        }.get(exc.status_code, ("Algo deu errado", "Não foi possível concluir a ação."))
+        return render(
+            request, "error.html", {"heading": heading, "detail": detail}, status=exc.status_code
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        return render(
+            request,
+            "error.html",
+            {"heading": "Confira os campos", "detail": "Algum campo está faltando ou inválido."},
+            status=400,
+        )
+
     # --- dashboard -----------------------------------------------------------------------------
 
     def attention_items(data: dict[str, object]) -> list[dict[str, str]]:
@@ -360,7 +409,7 @@ def create_app(c: Container) -> FastAPI:
         with c.uow as work:
             recurring = [
                 t
-                for t in work.transactions.list_between(period.start, period.end)
+                for t in work.transactions.list_for_competence(period.start, period.end)
                 if t.kind is TransactionKind.EXPENSE and t.is_recurring
             ]
         recurring.sort(key=lambda t: t.amount_cents)  # most negative (biggest) first
@@ -392,10 +441,12 @@ def create_app(c: Container) -> FastAPI:
         }
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request, year: int | None = None, month: int | None = None):
+    def dashboard(request: Request, year: str = "", month: str = ""):
         now = today()
-        year = year if year and 1900 <= year <= 9999 else now.year
-        month = month if month is not None and 0 <= month <= 12 else now.month
+        y, m = _opt_int(year), _opt_int(month)
+        year_value = y if y and 1900 <= y <= 9999 else now.year
+        month_value = m if m is not None and 0 <= m <= 12 else now.month
+        year, month = year_value, month_value  # type: ignore[assignment]
         return render(request, "dashboard.html", dashboard_context(year, month))
 
     # --- entries -------------------------------------------------------------------------------
@@ -427,7 +478,7 @@ def create_app(c: Container) -> FastAPI:
             and (not filters.get("category") or t.category_id == filters["category"])
             and (not wanted or wanted in t.description_search)
         ]
-        summary = summarize(month_rows, categories, period)
+        summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -482,7 +533,10 @@ def create_app(c: Container) -> FastAPI:
         }
 
     def category_options(kind: str) -> list[object]:
-        wanted = CategoryKind.NEUTRAL if kind == "refund" else CategoryKind(kind)
+        try:
+            wanted = CategoryKind.NEUTRAL if kind == "refund" else CategoryKind(kind)
+        except ValueError:
+            wanted = CategoryKind.EXPENSE
         with c.uow as work:
             options = [x for x in work.categories.list_all() if x.kind is wanted]
         return sorted(options, key=lambda x: normalize_search(x.name))
@@ -495,10 +549,14 @@ def create_app(c: Container) -> FastAPI:
         kind: str = "",
         category: str = "",
         q: str = "",
-        limit: int = PAGE_SIZE,
+        limit: str = "",
     ):
         filters = {"account": account, "kind": kind, "category": category, "q": q}
-        return render(request, "entries.html", entries_context(month, filters, limit=limit))
+        return render(
+            request,
+            "entries.html",
+            entries_context(month, filters, limit=_opt_int(limit) or PAGE_SIZE),
+        )
 
     @app.get("/entries/category-field", response_class=HTMLResponse)
     def category_field(
@@ -543,6 +601,8 @@ def create_app(c: Container) -> FastAPI:
     ):
         form = {k: v for k, v in locals().items() if isinstance(v, str)}
         try:
+            if kind != TransactionKind.TRANSFER.value and not account_id:
+                raise DomainError("ACCOUNT_REQUIRED")
             if kind == TransactionKind.TRANSFER.value:
                 RegisterTransfer(c.uow).execute(
                     RegisterTransferCommand(
@@ -559,7 +619,7 @@ def create_app(c: Container) -> FastAPI:
                 RegisterTransactionCommand(
                     account_id=account_id,
                     posted_on=parse_date(date, today()),
-                    kind=TransactionKind(kind),
+                    kind=_enum(TransactionKind, kind),
                     amount_cents=parse_brl(amount),
                     description=description,
                     category_id=category_id or None,
@@ -597,9 +657,13 @@ def create_app(c: Container) -> FastAPI:
     @app.post("/entries/{transaction_id}/delete")
     def delete_entry(request: Request, transaction_id: str):
         try:
-            DeleteTransaction(c.uow).execute(transaction_id)
+            DeleteTransaction(c.uow, c.clock).execute(transaction_id)
         except DomainError as error:
-            return render(request, "entries.html", entries_context(None, {}), error=error)
+            # HTMX does not swap 4xx pages: go back to the list with the message in the URL
+            target = f"/entries?{urlencode({'err': error.code})}"
+            if request.headers.get("hx-request"):
+                return Response(status_code=200, headers={"HX-Redirect": target})
+            return RedirectResponse(target, status_code=303)
         if request.headers.get("hx-request"):
             return Response(status_code=200, headers={"HX-Refresh": "true"})
         return back("/entries", "deleted")
@@ -632,10 +696,12 @@ def create_app(c: Container) -> FastAPI:
     ):
         try:
             chosen = _color(color, use_color)
+            data = await _upload(image)
+            if data is not None:
+                detect_image_type(data)  # reject a bad image before anything is created
             institution = CreateInstitution(c.uow).execute(
                 CreateInstitutionCommand(name=name, group_slug=group or None, color=chosen)
             )
-            data = await _upload(image)
             if data is not None:
                 SetAppearance(c.uow, c.images).execute(
                     SetAppearanceCommand(
@@ -658,10 +724,14 @@ def create_app(c: Container) -> FastAPI:
     ):
         try:
             chosen = _color(color, use_color)
-            account = CreateAccount(c.uow).execute(
-                CreateAccountCommand(AccountKind(kind), institution_id, nickname, color=chosen)
-            )
             data = await _upload(image)
+            if data is not None:
+                detect_image_type(data)
+            account = CreateAccount(c.uow).execute(
+                CreateAccountCommand(
+                    _enum(AccountKind, kind), institution_id, nickname, color=chosen
+                )
+            )
             if data is not None:
                 SetAppearance(c.uow, c.images).execute(
                     SetAppearanceCommand(
@@ -797,8 +867,8 @@ def create_app(c: Container) -> FastAPI:
         request: Request,
         nickname: Annotated[str, Form()],
         institution_id: Annotated[str, Form()],
-        closing_day: Annotated[int, Form()],
-        due_day: Annotated[int, Form()],
+        closing_day: Annotated[str, Form()],
+        due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
         use_color: Annotated[str, Form()] = "",
@@ -806,14 +876,17 @@ def create_app(c: Container) -> FastAPI:
     ):
         try:
             chosen = _color(color, use_color)
+            data = await _upload(image)
+            if data is not None:
+                detect_image_type(data)
             card = CreateAccount(c.uow).execute(
                 CreateAccountCommand(
                     AccountKind.CREDIT_CARD,
                     institution_id,
                     nickname,
                     color=chosen,
-                    closing_day=closing_day,
-                    due_day=due_day,
+                    closing_day=_int(closing_day, "INVALID_CARD_DAY"),
+                    due_day=_int(due_day, "INVALID_CARD_DAY"),
                     credit_limit_cents=_money(limit),
                 )
             )
@@ -832,12 +905,17 @@ def create_app(c: Container) -> FastAPI:
     def card_settings(
         request: Request,
         card_id: str,
-        closing_day: Annotated[int, Form()],
-        due_day: Annotated[int, Form()],
+        closing_day: Annotated[str, Form()],
+        due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
     ):
         try:
-            SetCardSettings(c.uow).execute(card_id, closing_day, due_day, _money(limit))
+            SetCardSettings(c.uow).execute(
+                card_id,
+                _int(closing_day, "INVALID_CARD_DAY"),
+                _int(due_day, "INVALID_CARD_DAY"),
+                _money(limit),
+            )
         except DomainError as error:
             return render(request, "cards.html", cards_context(card_id, None), error=error)
         return back("/cards", "card_settings", card=card_id)
@@ -972,14 +1050,16 @@ def create_app(c: Container) -> FastAPI:
     def purchase_command(form: dict[str, str]) -> CardPurchaseCommand:
         amount = parse_brl(form.get("amount", "")) if form.get("amount", "").strip() else None
         by_installment = form.get("amount_mode") == "installment"
-        count = int(form.get("installments") or 1)
+        count = _int(form.get("installments") or "1", "INVALID_INSTALLMENT_COUNT")
         return CardPurchaseCommand(
             account_id=form.get("account_id", ""),
             description=form.get("description", ""),
             purchased_on=parse_date(form["date"], today()) if form.get("date") else None,
             category_id=form.get("category_id") or None,
             installments=count,
-            current_installment=int(form.get("current_installment") or 1),
+            current_installment=_int(
+                form.get("current_installment") or "1", "INVALID_INSTALLMENT_COUNT"
+            ),
             total_cents=None if by_installment else amount,
             installment_cents=amount if by_installment else None,
             statement_month=YearMonth.parse(form["statement_month"])
@@ -1072,8 +1152,8 @@ def create_app(c: Container) -> FastAPI:
         }
 
     @app.get("/investments", response_class=HTMLResponse)
-    def investments(request: Request, year: int | None = None):
-        return render(request, "investments.html", investments_context(year))
+    def investments(request: Request, year: str = ""):
+        return render(request, "investments.html", investments_context(_opt_int(year)))
 
     @app.post("/investments/flow")
     def investment_flow(
@@ -1099,7 +1179,7 @@ def create_app(c: Container) -> FastAPI:
             RegisterInvestmentFlow(c.uow).execute(
                 RegisterInvestmentFlowCommand(
                     investment_account_id,
-                    FlowDirection(direction),
+                    _enum(FlowDirection, direction),
                     parse_date(date, today()),
                     parse_brl(amount),
                     other_account_id or None,
@@ -1146,9 +1226,9 @@ def create_app(c: Container) -> FastAPI:
         try:
             SetInvestmentSettings(c.uow).execute(
                 account_id,
-                AssetClass(asset_class),
+                _enum(AssetClass, asset_class),
                 bool(emergency),
-                InvestmentTracking(tracking) if tracking else None,
+                _enum(InvestmentTracking, tracking) if tracking else None,
             )
         except DomainError as error:
             return render(request, "investments.html", investments_context(None), error=error)
@@ -1182,13 +1262,13 @@ def create_app(c: Container) -> FastAPI:
                 RegisterHoldingCommand(
                     account_id=account_id,
                     name=name,
-                    instrument_type=InstrumentType(instrument_type),
+                    instrument_type=_enum(InstrumentType, instrument_type),
                     issuer_id=issuer_id,
                     applied_on=parse_date(applied_on, today()),
                     principal_cents=parse_brl(principal),
-                    liquidity=Liquidity(liquidity),
-                    indexer=Indexer(indexer) if indexer else None,
-                    rate_mode=RateMode(rate_mode) if rate_mode else None,
+                    liquidity=_enum(Liquidity, liquidity),
+                    indexer=_enum(Indexer, indexer) if indexer else None,
+                    rate_mode=_enum(RateMode, rate_mode) if rate_mode else None,
                     rate_bps=parse_percent_bps(rate) if rate.strip() else None,
                     maturity_on=_optional_date(maturity_on),
                     liquid_from=_optional_date(liquid_from),
@@ -1293,8 +1373,8 @@ def create_app(c: Container) -> FastAPI:
             CreateCategory(c.uow).execute(
                 CreateCategoryCommand(
                     name=name,
-                    group=CategoryGroup(group),
-                    kind=CategoryKind(kind),
+                    group=_enum(CategoryGroup, group),
+                    kind=_enum(CategoryKind, kind),
                     monthly_budget_cents=parse_brl(budget) if budget.strip() else None,
                     color=_color(color, use_color),
                 )

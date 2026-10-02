@@ -63,7 +63,10 @@ def test_every_error_code_raised_in_the_code_base_has_a_message() -> None:
 
 def test_messages_render_for_codes_with_parameters() -> None:
     err = DomainError
-    assert messages.render_error(err("NOT_FOUND", entity="account")) == "Conta não encontrado(a)."
+    assert (
+        messages.render_error(err("NOT_FOUND", entity="account"))
+        == "Conta: registro não encontrado."
+    )
     assert "máximo de 512 KB" in messages.render_error(err("IMAGE_TOO_LARGE", max_bytes=524288))
     assert "Cartão de crédito" in messages.render_error(
         err("ACCOUNT_KIND_NOT_ALLOWED", account_kind="credit_card")
