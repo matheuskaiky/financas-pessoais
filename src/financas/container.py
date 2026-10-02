@@ -52,7 +52,7 @@ class Container:
             self.settings.db_url,
             self.settings.images_dir,
             self.settings.backups_dir,
-            now or dt.datetime.now(),
+            now or self.clock.now(),
         )
 
     def last_backup_date(self) -> dt.date | None:

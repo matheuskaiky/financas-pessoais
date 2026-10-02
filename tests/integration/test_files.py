@@ -90,7 +90,9 @@ def test_settings_defaults_and_environment(monkeypatch: pytest.MonkeyPatch, tmp_
     for key in ("DB_URL", "DATA_DIR", "HOST", "BACKUP_WARN_DAYS"):
         monkeypatch.delenv(f"FINANCAS_{key}", raising=False)
     settings = Settings()
-    assert settings.db_url == "sqlite:///data/financas.db"
+    # relative paths are anchored to the project, never to the current directory
+    assert settings.db_url.endswith("/data/financas.db") and tmp_path.name not in settings.db_url
+    assert settings.data_dir.is_absolute() and tmp_path not in settings.data_dir.parents
     assert settings.host == "127.0.0.1"
     assert settings.backup_warn_days == 7
     assert settings.fgc_limit_cents == 25_000_000
@@ -100,3 +102,42 @@ def test_settings_defaults_and_environment(monkeypatch: pytest.MonkeyPatch, tmp_
     assert custom.images_dir == Path("/x/data/images")
     assert custom.backups_dir == Path("/x/data/backups")
     assert custom.backup_warn_days == 3
+
+
+def test_a_failed_backup_leaves_nothing_that_looks_like_a_backup(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.db"
+    bad.write_bytes(b"this is not a database" * 100)
+    backups = tmp_path / "backups"
+    with pytest.raises(sqlite3.DatabaseError):
+        make_backup(
+            f"sqlite:///{bad}", tmp_path / "images", backups, dt.datetime(2026, 7, 25, 1, 2, 3)
+        )
+    assert last_backup_date(backups) is None
+    assert [p for p in backups.iterdir() if p.name.startswith("financas-")] == []
+    assert list(backups.iterdir()) == []  # not even a temporary folder
+
+
+def test_backups_in_the_same_second_do_not_collide_and_a_missing_db_is_not_created(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    upgrade_to_head(url)
+    now = dt.datetime(2026, 7, 25, 1, 2, 3)
+    first = make_backup(url, tmp_path / "images", tmp_path / "b", now)
+    second = make_backup(url, tmp_path / "images", tmp_path / "b", now)
+    assert first.name == "financas-20260725-010203" and second.name == "financas-20260725-010203-2"
+    assert last_backup_date(tmp_path / "b") == dt.date(2026, 7, 25)
+    with pytest.raises(DomainError):
+        make_backup(
+            f"sqlite:///{tmp_path / 'missing.db'}", tmp_path / "images", tmp_path / "b", now
+        )
+    assert not (tmp_path / "missing.db").exists()
+
+
+def test_settings_keep_absolute_paths_and_other_databases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    absolute = Settings(db_url=f"sqlite:///{tmp_path}/x.db", data_dir=tmp_path, _env_file=None)  # type: ignore[call-arg]
+    assert absolute.db_url == f"sqlite:///{tmp_path}/x.db" and absolute.data_dir == tmp_path
+    memory = Settings(db_url="sqlite:///:memory:", _env_file=None)  # type: ignore[call-arg]
+    assert memory.db_url == "sqlite:///:memory:"

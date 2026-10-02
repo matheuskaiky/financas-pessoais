@@ -21,19 +21,38 @@ def sqlite_path(db_url: str) -> Path:
 
 
 def make_backup(db_url: str, images_dir: Path, backups_dir: Path, now: dt.datetime) -> Path:
-    """Copy the database (and the images) into ``backups_dir/financas-<timestamp>/``."""
+    """Copy the database (and the images) into ``backups_dir/financas-<timestamp>/``.
+
+    The copy is built in a temporary folder and renamed only when it is complete, so a failed
+    backup never looks like a fresh one. Two backups in the same second get a numeric suffix.
+    """
     source = sqlite_path(db_url)
-    target = backups_dir / f"{_PREFIX}{now.strftime(_STAMP)}"
-    target.mkdir(parents=True, exist_ok=False)
-    src = sqlite3.connect(source)
-    dst = sqlite3.connect(target / "financas.db")
+    if not source.is_file():
+        raise DomainError("BACKUP_NEEDS_SQLITE_FILE")
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    stamp = f"{_PREFIX}{now.strftime(_STAMP)}"
+    target = backups_dir / stamp
+    suffix = 1
+    while target.exists():
+        suffix += 1
+        target = backups_dir / f"{stamp}-{suffix}"
+    work = backups_dir / f".tmp-{target.name}"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
     try:
-        src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
-    if images_dir.is_dir():
-        shutil.copytree(images_dir, target / "images")
+        src = sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)
+        dst = sqlite3.connect(work / "financas.db")
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+        if images_dir.is_dir():
+            shutil.copytree(images_dir, work / "images")
+        work.rename(target)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
     return target
 
 
@@ -42,7 +61,8 @@ def last_backup_date(backups_dir: Path) -> dt.date | None:
     dates: list[dt.date] = []
     for folder in backups_dir.glob(f"{_PREFIX}*") if backups_dir.is_dir() else []:
         try:
-            dates.append(dt.datetime.strptime(folder.name[len(_PREFIX) :], _STAMP).date())
+            stamp = folder.name[len(_PREFIX) :][: len("20260101-000000")]
+            dates.append(dt.datetime.strptime(stamp, _STAMP).date())
         except ValueError:
             continue
     return max(dates, default=None)

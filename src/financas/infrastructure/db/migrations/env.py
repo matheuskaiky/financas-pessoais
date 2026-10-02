@@ -33,6 +33,12 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     engine = make_engine(_url())
     with engine.connect() as connection:
+        sqlite = connection.dialect.name == "sqlite"
+        if sqlite:
+            # Batch mode recreates tables. With foreign keys ON, DROP TABLE of a parent that has
+            # rows fails and leaves the database half-migrated; the check below makes up for it.
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -40,6 +46,11 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+        if sqlite:
+            broken = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            if broken:
+                raise RuntimeError(f"foreign key check failed after migrating: {len(broken)} rows")
     engine.dispose()
 
 

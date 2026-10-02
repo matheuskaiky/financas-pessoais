@@ -10,6 +10,8 @@ data/
 *.ofx
 *.pdf
 .env
+.env.*
+!.env.example
 
 # Python / tooling
 .venv/

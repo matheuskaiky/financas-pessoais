@@ -334,3 +334,103 @@ def test_database_rejects_invalid_holding_rows(sql_uow: SqlUnitOfWork) -> None:
         insert, row(id="ok2", liquidity="daily", maturity=None, mode=None, bps=None, indexer=None)
     )
     raw.close()
+
+
+def test_migrating_a_database_with_data_in_every_table(tmp_path: Path) -> None:
+    """Batch migrations recreate tables: parents with child rows must survive (foreign keys)."""
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    command.upgrade(alembic_config(url), "ba63e5e4254f")  # the Phase 1 schema
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("PRAGMA foreign_keys=ON")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind)'
+        " values ('c', 'food', 'Alimentação',"
+        " 'non_essential', 'expense')"
+    )
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1), ('s', 'investment', 'i', 'Caixinha', 1)"
+    )
+    raw.execute(
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring)"
+        " values ('t', 'a', '2026-07-01', 'expense', 'c', -500, 'Café', 'cafe', 0)"
+    )
+    raw.execute(
+        "insert into balance_anchors (id, account_id, on_date, balance_cents)"
+        " values ('b', 'a', '2026-07-01', 1000), ('b2', 's', '2026-07-01', 5000)"
+    )
+    raw.commit()
+    raw.close()
+    upgrade_to_head(url)  # must not fail and must not leave a half-migrated database
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert db.execute("select count(*) from transactions").fetchone() == (1,)
+        assert db.execute("select count(*) from balance_anchors").fetchone() == (2,)
+        assert db.execute("select id, tracking from accounts order by id").fetchall() == [
+            ("a", None),
+            ("s", "account"),
+        ]
+        assert (
+            db.execute("select name from sqlite_master where name like '_alembic_tmp%'").fetchall()
+            == []
+        )
+        version = db.execute("select version_num from alembic_version").fetchone()[0]
+    from financas.infrastructure.db.migrate import head_revision
+
+    assert version == head_revision(url)
+
+
+def test_database_rejects_more_invalid_rows(sql_uow: SqlUnitOfWork) -> None:
+    seed_categories(sql_uow)
+    inst = CreateInstitution(sql_uow).execute(CreateInstitutionCommand(name="BB"))
+    engine_url = sql_uow._factory.kw["bind"].url  # type: ignore[attr-defined]
+    raw = sqlite3.connect(engine_url.database)
+    raw.execute("PRAGMA foreign_keys=ON")
+
+    def fails(sql: str, *params: object) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute(sql, params)
+
+    fails("update institutions set color = 'red' where id = ?", inst.id)
+    fails("update institutions set color = '#abcdef' where id = ?", inst.id)  # uppercase only
+    raw.execute("update institutions set color = '#ABCDEF' where id = ?", (inst.id,))
+    fails("update categories set monthly_budget_cents = 0 where slug = 'food'")
+    fails("update categories set monthly_budget_cents = -5 where slug = 'food'")
+    fails("update categories set kind = 'income' where slug = 'food'")  # group x kind
+    fails("update categories set \"group\" = 'movement' where slug = 'salary'")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active) values"
+        " ('a', 'checking', ?, 'CC', 1)",
+        (inst.id,),
+    )
+    cat = raw.execute("select id from categories where slug = 'food'").fetchone()[0]
+    fails(  # a transfer id only on transfers
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring, transfer_id)"
+        " values ('t', 'a', '2026-07-01', 'expense', ?, -1, 'x', 'x', 0, 'trf')",
+        cat,
+    )
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active, closing_day,"
+        " due_day) values ('k', 'credit_card', ?, 'K', 1, 25, 5)",
+        (inst.id,),
+    )
+    for month in ("2026-00", "2026-13", "2026-19", "2026-7"):
+        fails(
+            "insert into statements (id, account_id, month, closing_date, due_date)"
+            " values (?, 'k', ?, '2026-07-25', '2026-08-05')",
+            f"s{month}",
+            month,
+        )
+    raw.execute(
+        "insert into statements (id, account_id, month, closing_date, due_date)"
+        " values ('ok', 'k', '2026-12', '2026-12-25', '2027-01-05')"
+    )
+    raw.close()

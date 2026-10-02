@@ -1,6 +1,7 @@
 """SQLAlchemy repositories and the unit of work."""
 
 import datetime as dt
+import threading
 from collections.abc import Sequence
 from types import TracebackType
 from typing import Self
@@ -365,7 +366,9 @@ class SqlStatements:
         return [_statement(r) for r in rows]
 
     def list_all(self) -> list[Statement]:
-        rows = self._s.scalars(sa.select(StatementRow).order_by(StatementRow.month))
+        rows = self._s.scalars(
+            sa.select(StatementRow).order_by(StatementRow.month, sa.text("statements.rowid"))
+        )
         return [_statement(r) for r in rows]
 
 
@@ -466,24 +469,10 @@ class SqlHoldings:
         return [_holding(r) for r in rows]
 
 
-class SqlUnitOfWork:
-    """One session per ``with`` block; rolled back unless ``commit()`` was called."""
+class SqlWork:
+    """The repositories of one open session (what ``with uow as work`` hands out)."""
 
-    institutions: SqlInstitutions
-    accounts: SqlAccounts
-    categories: SqlCategories
-    transactions: SqlTransactions
-    anchors: SqlAnchors
-    statements: SqlStatements
-    plans: SqlPlans
-    holdings: SqlHoldings
-
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
-        self._factory = session_factory
-        self._session: Session | None = None
-
-    def __enter__(self) -> Self:
-        session = self._factory()
+    def __init__(self, session: Session) -> None:
         self._session = session
         self.institutions = SqlInstitutions(session)
         self.accounts = SqlAccounts(session)
@@ -493,6 +482,11 @@ class SqlUnitOfWork:
         self.statements = SqlStatements(session)
         self.plans = SqlPlans(session)
         self.holdings = SqlHoldings(session)
+
+    def commit(self) -> None:
+        self._session.commit()
+
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -501,11 +495,36 @@ class SqlUnitOfWork:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        assert self._session is not None
-        self._session.rollback()  # no-op after commit
-        self._session.close()
-        self._session = None
+        return None
 
-    def commit(self) -> None:
-        assert self._session is not None
-        self._session.commit()
+
+class SqlUnitOfWork:
+    """One session per ``with`` block; rolled back unless ``commit()`` was called.
+
+    The object itself holds no session: every ``with`` gets its own, kept on a per-thread stack,
+    so the web server's worker threads never share one, and blocks may nest.
+    """
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._factory = session_factory
+        self._local = threading.local()
+
+    def _stack(self) -> list[Session]:
+        if not hasattr(self._local, "stack"):
+            self._local.stack = []
+        return self._local.stack
+
+    def __enter__(self) -> SqlWork:
+        session = self._factory()
+        self._stack().append(session)
+        return SqlWork(session)
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        session = self._stack().pop()
+        session.rollback()  # no-op after commit
+        session.close()

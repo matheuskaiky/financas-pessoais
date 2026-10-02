@@ -584,3 +584,29 @@ def test_valuations_and_flows_are_kept_per_holding(uow: UnitOfWork) -> None:
         ]
         assert [a.balance_cents for a in work.anchors.list_for_holding(h2.id)] == [2_000]
         assert [a.balance_cents for a in work.anchors.list_for_account(acc.id)] == [9_000]
+
+
+def test_units_of_work_do_not_share_state_between_threads_or_nested_blocks(uow: UnitOfWork) -> None:
+    import threading
+
+    populate(uow)
+    errors: list[BaseException] = []
+
+    def reader() -> None:
+        try:
+            for _ in range(30):
+                with uow as work:
+                    assert [i.slug for i in work.institutions.list_all()] == ["bb"]
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=reader) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    with uow as outer:  # nesting works: the inner block has its own session
+        with uow as inner:
+            assert inner.institutions.get_by_slug("bb") is not None
+        assert outer.institutions.get_by_slug("bb") is not None

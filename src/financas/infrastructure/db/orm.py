@@ -44,8 +44,15 @@ def enum_column[E: StrEnum](enum: type[E], name: str) -> sa.Enum:
     )
 
 
+COLOR_CHECK = (
+    "color IS NULL OR (length(color) = 7"
+    " AND color GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]')"
+)
+
+
 class InstitutionRow(Base):
     __tablename__ = "institutions"
+    __table_args__ = (sa.CheckConstraint(COLOR_CHECK, name="color_format"),)
 
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     slug: Mapped[str] = mapped_column(sa.String(64), unique=True)
@@ -68,6 +75,7 @@ class AccountRow(Base):
         sa.CheckConstraint(
             "credit_limit_cents IS NULL OR credit_limit_cents >= 0", name="limit_not_negative"
         ),
+        sa.CheckConstraint(COLOR_CHECK, name="color_format"),
         sa.CheckConstraint(
             "(kind = 'investment' AND tracking IS NOT NULL AND asset_class IS NOT NULL)"
             " OR (kind <> 'investment' AND tracking IS NULL AND asset_class IS NULL"
@@ -95,6 +103,19 @@ class AccountRow(Base):
 
 class CategoryRow(Base):
     __tablename__ = "categories"
+    __table_args__ = (
+        sa.CheckConstraint(COLOR_CHECK, name="color_format"),
+        sa.CheckConstraint(
+            "monthly_budget_cents IS NULL OR monthly_budget_cents > 0", name="budget_positive"
+        ),
+        # the group must agree with the kind (the spreadsheet violated this)
+        sa.CheckConstraint(
+            "(\"group\" IN ('essential', 'non_essential', 'charges', 'review')"
+            " AND kind = 'expense') OR (\"group\" = 'income' AND kind = 'income')"
+            " OR (\"group\" = 'movement' AND kind = 'neutral')",
+            name="group_matches_kind",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
     slug: Mapped[str] = mapped_column(sa.String(64), unique=True)
@@ -121,6 +142,9 @@ class InvestmentHoldingRow(Base):
         ),
         sa.CheckConstraint(
             "maturity_on IS NULL OR maturity_on > applied_on", name="maturity_after_application"
+        ),
+        sa.CheckConstraint(
+            "liquid_from IS NULL OR liquid_from >= applied_on", name="grace_after_application"
         ),
     )
 
@@ -149,7 +173,11 @@ class StatementRow(Base):
     __tablename__ = "statements"
     __table_args__ = (
         sa.UniqueConstraint("account_id", "month"),
-        sa.CheckConstraint("month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'", name="month_format"),
+        sa.CheckConstraint(
+            "month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'"
+            " AND substr(month, 6, 2) BETWEEN '01' AND '12'",
+            name="month_format",
+        ),
         sa.CheckConstraint("due_date > closing_date", name="due_after_closing"),
     )
 
@@ -176,6 +204,9 @@ class InstallmentPlanRow(Base):
 class TransactionRow(Base):
     __tablename__ = "transactions"
     __table_args__ = (
+        sa.CheckConstraint(
+            "transfer_id IS NULL OR kind = 'transfer'", name="transfer_id_only_on_transfers"
+        ),
         sa.CheckConstraint(
             "(plan_id IS NULL AND installment_number IS NULL)"
             " OR (plan_id IS NOT NULL AND installment_number IS NOT NULL"
