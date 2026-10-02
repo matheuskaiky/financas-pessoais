@@ -210,3 +210,7 @@ tr.inactive { opacity: .6; }
 .light-link:hover { color: #fff; text-decoration: underline; }
 .more-links li { align-items: center; min-height: 52px; }
 .more-links a { font-weight: 600; font-size: 17px; text-decoration: none; }
+
+/* budget */
+td.over { color: var(--red); text-decoration: underline; font-weight: 600; }
+tr.subtotal td { background: var(--band); }
