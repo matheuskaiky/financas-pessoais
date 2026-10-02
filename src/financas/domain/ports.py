@@ -124,23 +124,37 @@ class ImageStore(Protocol):
     def delete(self, image_id: str) -> None: ...
 
 
+class Work(Protocol):
+    """The repositories of one open unit of work, plus ``commit()``."""
+
+    # Read-only properties: a mutable attribute is invariant, so no implementation would match.
+    @property
+    def institutions(self) -> InstitutionRepository: ...
+    @property
+    def accounts(self) -> AccountRepository: ...
+    @property
+    def categories(self) -> CategoryRepository: ...
+    @property
+    def transactions(self) -> TransactionRepository: ...
+    @property
+    def anchors(self) -> BalanceAnchorRepository: ...
+    @property
+    def statements(self) -> StatementRepository: ...
+    @property
+    def plans(self) -> PlanRepository: ...
+    @property
+    def holdings(self) -> HoldingRepository: ...
+
+    def commit(self) -> None: ...
+
+
 class UnitOfWork(Protocol):
     """One atomic unit of work. Leaving the ``with`` block without ``commit()`` rolls back."""
 
-    institutions: InstitutionRepository
-    accounts: AccountRepository
-    categories: CategoryRepository
-    transactions: TransactionRepository
-    anchors: BalanceAnchorRepository
-    statements: StatementRepository
-    plans: PlanRepository
-    holdings: HoldingRepository
-
-    def __enter__(self) -> "UnitOfWork": ...
+    def __enter__(self) -> Work: ...
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None: ...
-    def commit(self) -> None: ...

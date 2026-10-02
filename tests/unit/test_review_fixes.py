@@ -289,9 +289,10 @@ def test_an_empty_closed_statement_is_not_locked(uow: MemoryUnitOfWork, card: Ac
         .transactions[0]
     )  # statement 2026-09
     MoveEntryToStatement(uow, FixedClock(D(2026, 10, 1))).execute(entry.id, YM(2026, 7))
-    assert uow.statements.get(uow.transactions.get(entry.id).statement_id or "").month == YM(
-        2026, 7
-    )  # type: ignore[union-attr]
+    moved = uow.transactions.get(entry.id)
+    assert moved is not None
+    statement = uow.statements.get(moved.statement_id or "")
+    assert statement is not None and statement.month == YM(2026, 7)
 
 
 # --- net worth keeps deactivated accounts that still hold money ---

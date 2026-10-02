@@ -81,12 +81,13 @@ def test_several_goals_are_saved_all_or_nothing(uow: MemoryUnitOfWork) -> None:
     food, health, salary = category(uow, "food"), category(uow, "health"), category(uow, "salary")
     SetCategoryBudgets(uow).execute({food: 70_000, health: None})
     assert uow.categories.get(food).monthly_budget_cents == 70_000  # type: ignore[union-attr]
-    for goals, code in [
+    bad_goals: list[tuple[dict[str, int | None], str]] = [
         ({food: 90_000, health: -1}, "AMOUNT_NOT_POSITIVE"),
         ({food: 90_000, salary: 10}, "BUDGET_ONLY_FOR_EXPENSES"),
         ({food: 90_000, health: 10**13}, "AMOUNT_TOO_LARGE"),
         ({food: 90_000, "nope": 5}, "NOT_FOUND"),
-    ]:
+    ]
+    for goals, code in bad_goals:
         with pytest.raises(DomainError) as exc:
             SetCategoryBudgets(uow).execute(goals)
         assert exc.value.code == code

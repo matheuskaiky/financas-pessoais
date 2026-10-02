@@ -22,7 +22,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth
-from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.services.card_cycle import closing_date
 from financas.domain.services.statements import (
     LimitUsage,
@@ -99,7 +99,7 @@ def is_locked(view: StatementView) -> bool:
     return view.status is StatementStatus.PAID and (view.total_cents != 0 or view.paid_cents != 0)
 
 
-def card_accounts(uow: UnitOfWork) -> list[Account]:
+def card_accounts(uow: Work) -> list[Account]:
     return [a for a in uow.accounts.list_all() if a.kind is AccountKind.CREDIT_CARD]
 
 
@@ -133,7 +133,7 @@ def _previous_closing(
     return closing_date(previous, card.due_day, card.closing_days_before_due)
 
 
-def statement_views(uow: UnitOfWork, card: Account, today: dt.date) -> list[StatementView]:
+def statement_views(uow: Work, card: Account, today: dt.date) -> list[StatementView]:
     statements = uow.statements.list_for_card(card.id)
     by_month = {s.month: s for s in statements}
     return [
@@ -148,7 +148,7 @@ def statement_views(uow: UnitOfWork, card: Account, today: dt.date) -> list[Stat
     ]
 
 
-def statement_view(uow: UnitOfWork, statement: Statement, today: dt.date) -> StatementView:
+def statement_view(uow: Work, statement: Statement, today: dt.date) -> StatementView:
     card = uow.accounts.get(statement.account_id)
     assert card is not None
     by_month = {s.month: s for s in uow.statements.list_for_card(card.id)}

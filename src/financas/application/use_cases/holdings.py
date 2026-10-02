@@ -27,13 +27,13 @@ from financas.domain.models import (
     RateMode,
     Transaction,
 )
-from financas.domain.ports import UnitOfWork
+from financas.domain.ports import UnitOfWork, Work
 from financas.domain.rules import validate_gross_balance, validate_holding
 from financas.domain.services.holdings import suggest_fgc_covered
 from financas.domain.services.text import clean_text
 
 
-def _require_checking(uow: UnitOfWork, account_id: str | None) -> None:
+def _require_checking(uow: Work, account_id: str | None) -> None:
     """The other side of a contribution or redemption is a tracked checking account."""
     if account_id is None:
         return
@@ -42,7 +42,7 @@ def _require_checking(uow: UnitOfWork, account_id: str | None) -> None:
         raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=other.kind.value)
 
 
-def _holdings_account(uow: UnitOfWork, account_id: str) -> Account:
+def _holdings_account(uow: Work, account_id: str) -> Account:
     account = found(uow.accounts.get(account_id), "account")
     if account.kind is not AccountKind.INVESTMENT:
         raise DomainError("INVESTMENT_REQUIRED")

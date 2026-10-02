@@ -15,7 +15,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth
-from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.rules import (
     validate_category_kind,
     validate_sign,
@@ -133,7 +133,7 @@ class RegisterTransferCommand:
     holding_id: str | None = None
 
 
-def build_transfer_legs(uow: UnitOfWork, cmd: RegisterTransferCommand) -> list[Transaction]:
+def build_transfer_legs(uow: Work, cmd: RegisterTransferCommand) -> list[Transaction]:
     """Validate and build the legs inside an open unit of work (the caller adds and commits)."""
     magnitude = _magnitude(cmd.amount_cents)
     validate_transfer_accounts(cmd.from_account_id, cmd.to_account_id)

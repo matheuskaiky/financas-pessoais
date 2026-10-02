@@ -6,7 +6,7 @@ from financas.application.use_cases._common import found, new_id
 from financas.domain.errors import DomainError
 from financas.domain.models import Account, AccountKind, Statement
 from financas.domain.money import YearMonth
-from financas.domain.ports import UnitOfWork
+from financas.domain.ports import Work
 from financas.domain.services.card_cycle import (
     StatementAssignment,
     assign_statement,
@@ -15,7 +15,7 @@ from financas.domain.services.card_cycle import (
 )
 
 
-def require_card(uow: UnitOfWork, account_id: str) -> Account:
+def require_card(uow: Work, account_id: str) -> Account:
     card = found(uow.accounts.get(account_id), "account")
     if card.kind is not AccountKind.CREDIT_CARD:
         raise DomainError("CARD_REQUIRED")
@@ -25,13 +25,13 @@ def require_card(uow: UnitOfWork, account_id: str) -> Account:
     return card
 
 
-def known_dates(uow: UnitOfWork, card: Account) -> dict[YearMonth, tuple[dt.date, dt.date]]:
+def known_dates(uow: Work, card: Account) -> dict[YearMonth, tuple[dt.date, dt.date]]:
     """Stored dates of the card's existing statements: they are frozen (9.3)."""
     return {s.month: (s.closing_date, s.due_date) for s in uow.statements.list_for_card(card.id)}
 
 
 def assignment_for(
-    uow: UnitOfWork, card: Account, posted_on: dt.date | None, statement_month: YearMonth | None
+    uow: Work, card: Account, posted_on: dt.date | None, statement_month: YearMonth | None
 ) -> StatementAssignment:
     """The statement of an entry: the user's choice when given, else the card cycle (9.3).
 
@@ -48,7 +48,7 @@ def assignment_for(
     return assign_statement(posted_on, card.due_day, card.closing_days_before_due, known)
 
 
-def ensure_statement(uow: UnitOfWork, card: Account, month: YearMonth) -> Statement:
+def ensure_statement(uow: Work, card: Account, month: YearMonth) -> Statement:
     """The card's statement for ``month``; created with the card's current dates if missing."""
     existing = uow.statements.get_by_card_month(card.id, month)
     if existing is not None:

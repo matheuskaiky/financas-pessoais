@@ -31,7 +31,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth
-from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.services.balances import AnchorPoint, balance_on
 from financas.domain.services.holdings import (
     BucketRow,
@@ -96,7 +96,7 @@ class HoldingView:
 
 
 def holding_views(
-    uow: UnitOfWork,
+    uow: Work,
     today: dt.date,
     stale_after_days: int,
     account_id: str | None = None,
@@ -189,7 +189,7 @@ def _holdings_account_view(account: Account, views: list[HoldingView]) -> Invest
     )
 
 
-def investment_accounts(uow: UnitOfWork) -> list[Account]:
+def investment_accounts(uow: Work) -> list[Account]:
     return [a for a in uow.accounts.list_all() if a.kind is AccountKind.INVESTMENT]
 
 
@@ -411,7 +411,7 @@ class NetWorthView:
     net_worth_cents: int
     future_installments_cents: int  # shown apart, as commitments
     pending: list[Account]  # accounts without balance or valuation: the total is partial
-    pending_holdings: list[InvestmentHolding] = field(default_factory=list)
+    pending_holdings: list[InvestmentHolding] = field(default_factory=list[InvestmentHolding])
 
     @property
     def is_partial(self) -> bool:

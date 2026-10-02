@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from financas.application.queries.summary import Period, summarize
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, CategoryKind, TransactionKind
+from financas.domain.models import Account, AccountKind, Category, CategoryKind, TransactionKind
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork
 from financas.domain.services.balances import AnchorPoint, balance_on
@@ -40,7 +40,7 @@ class BudgetView:
     budget: Budget
     range: BudgetRange
     year: int
-    categories: dict[str, object]  # category id -> Category, for names and colors
+    categories: dict[str, Category]  # category id -> Category, for names and colors
 
 
 class GetBudget:

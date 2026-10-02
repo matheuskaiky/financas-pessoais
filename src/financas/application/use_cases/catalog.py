@@ -15,7 +15,7 @@ from financas.domain.models import (
     Institution,
     InvestmentTracking,
 )
-from financas.domain.ports import ImageStore, UnitOfWork
+from financas.domain.ports import ImageStore, UnitOfWork, Work
 from financas.domain.rules import normalize_color, validate_card_settings, validate_group_kind
 from financas.domain.services.text import clean_text, slugify
 
@@ -231,7 +231,7 @@ class SetAppearance:
             self._images.delete(old_image_id)
 
     def _load_and_update(
-        self, uow: UnitOfWork, cmd: SetAppearanceCommand, color: str | None
+        self, uow: Work, cmd: SetAppearanceCommand, color: str | None
     ) -> tuple[str | None, str | None]:
         match cmd.target:
             case AppearanceTarget.CATEGORY:
