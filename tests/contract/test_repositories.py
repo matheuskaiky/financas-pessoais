@@ -259,7 +259,7 @@ def card(inst: Institution, n: int = 9) -> Account:
         kind=AccountKind.CREDIT_CARD,
         institution_id=inst.id,
         nickname="Cartão",
-        closing_day=25,
+        closing_days_before_due=11,
         due_day=5,
         credit_limit_cents=1_200_000,
     )
@@ -279,12 +279,16 @@ def test_card_account_round_trip(uow: UnitOfWork) -> None:
     with uow as work:
         assert work.accounts.get(k.id) == k
         work.accounts.update(
-            Account(k.id, k.kind, k.institution_id, k.nickname, True, None, None, 10, 17, None)
+            Account(k.id, k.kind, k.institution_id, k.nickname, True, None, None, 7, 17, None)
         )
         work.commit()
     with uow as work:
         got = work.accounts.get(k.id)
-        assert got and (got.closing_day, got.due_day, got.credit_limit_cents) == (10, 17, None)
+        assert got and (got.closing_days_before_due, got.due_day, got.credit_limit_cents) == (
+            7,
+            17,
+            None,
+        )
 
 
 def test_statements_are_unique_per_card_and_month_and_ordered(uow: UnitOfWork) -> None:

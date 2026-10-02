@@ -678,7 +678,12 @@ def _optional_money(text: str | None) -> int | None:
 def card_add(
     nickname: Annotated[str, typer.Argument(help="Apelido do cartão.")],
     institution: Annotated[str, typer.Option("--institution", "-i", help="Instituição.")],
-    closing: Annotated[int, typer.Option("--closing", help="Dia de fechamento (1 a 31).")],
+    closes_before_due: Annotated[
+        int,
+        typer.Option(
+            "--closes-before-due", help="Quantos dias antes do vencimento fecha (1 a 27)."
+        ),
+    ],
     due: Annotated[int, typer.Option("--due", help="Dia de vencimento (1 a 31).")],
     limit: Annotated[
         str | None, typer.Option("--limit", help="Limite, por exemplo 6.000,00.")
@@ -696,37 +701,40 @@ def card_add(
             inst.id,
             nickname,
             color=color,
-            closing_day=closing,
+            closing_days_before_due=closes_before_due,
             due_day=due,
             credit_limit_cents=_optional_money(limit),
         )
     )
     _set_appearance(c, AppearanceTarget.ACCOUNT, card.id, color, image)
-    console.print(f"Cartão criado: {card.nickname} (fecha dia {closing}, vence dia {due}).")
+    console.print(
+        f"Cartão criado: {card.nickname} (vence dia {due}, fecha {closes_before_due} dias antes)."
+    )
 
 
 @card_app.command("edit")
 @handle_errors
 def card_edit(
     name: Annotated[str, typer.Argument(help="Apelido do cartão.")],
-    closing: Annotated[
-        int | None, typer.Option("--closing", help="Novo dia de fechamento.")
+    closes_before_due: Annotated[
+        int | None,
+        typer.Option("--closes-before-due", help="Novos dias de antecedência do fechamento."),
     ] = None,
     due: Annotated[int | None, typer.Option("--due", help="Novo dia de vencimento.")] = None,
     limit: Annotated[str | None, typer.Option("--limit", help="Novo limite.")] = None,
     no_limit: Annotated[bool, typer.Option("--no-limit", help="Remove o limite.")] = False,
 ) -> None:
-    """Altera fechamento, vencimento ou limite. Só vale para lançamentos novos."""
+    """Altera vencimento, fechamento ou limite. Só vale para faturas criadas depois."""
     c = container()
     card = find_card(c.uow, name)
     new_limit = None if no_limit else (_optional_money(limit) if limit else card.credit_limit_cents)
     SetCardSettings(c.uow).execute(
         card.id,
-        closing if closing is not None else card.closing_day or 0,
+        closes_before_due if closes_before_due is not None else card.closing_days_before_due or 0,
         due if due is not None else card.due_day or 0,
         new_limit,
     )
-    console.print("Cartão atualizado. Faturas já criadas mantêm as datas.")
+    console.print("Cartão atualizado. Faturas já criadas mantêm o fechamento e o vencimento.")
 
 
 @card_app.command("list")
@@ -735,12 +743,12 @@ def card_list() -> None:
     """Cartões: limite, comprometido, faturas a pagar e parcelas futuras."""
     c = container()
     overview = ListCards(c.uow, c.clock).execute()
-    table = Table("Cartão", "Fecha / vence", "Limite", "Comprometido", "Disponível", "Uso")
+    table = Table("Cartão", "Ciclo", "Limite", "Comprometido", "Disponível", "Uso")
     for view in overview.cards:
         usage, account = view.usage, view.account
         table.add_row(
             account.nickname,
-            f"dia {account.closing_day} / dia {account.due_day}",
+            f"vence dia {account.due_day} · fecha {account.closing_days_before_due} dias antes",
             format_brl(usage.limit_cents)
             if usage.limit_cents is not None
             else "limite não informado",

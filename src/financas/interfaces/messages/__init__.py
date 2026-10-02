@@ -195,6 +195,10 @@ ERROR_MESSAGES: dict[str, str] = {
     "INSTALLMENT_OUT_OF_RANGE": (
         "Parcela atual {number} fora do intervalo: a compra tem {count} parcela(s)."
     ),
+    "INVALID_DAYS_BEFORE_DUE": (
+        "Informe de 1 a 27 dias: quantos dias antes do vencimento a fatura fecha."
+    ),
+    "NO_STATEMENT_FOR_MONTH": "Não foi possível calcular a fatura deste mês.",
     "INVALID_CARD_DAY": "Dia inválido: use um dia de 1 a 31.",
     "INVALID_STATEMENT_DATES": "O vencimento precisa ser depois do fechamento.",
     "NOT_A_CARD_PURCHASE": "Este lançamento não é uma compra de cartão.",
@@ -330,19 +334,18 @@ def explain_assignment(a: StatementAssignment) -> str:
     if a.reason is AssignmentReason.EXPLICIT or a.purchase_date is None:
         return f"Fatura escolhida por você: {where}."
     when = format_date(a.purchase_date)
+    closing = format_date_short(a.closing_date)
     if a.reason is AssignmentReason.BEFORE_CLOSING:
-        return f"Compra em {when}, antes do fechamento do dia {a.closing_day} → {where}."
+        return f"Compra em {when}, antes do fechamento em {closing} → {where}."
     if a.reason is AssignmentReason.ON_CLOSING_DAY:
-        return (
-            f"Compra em {when}, no dia do fechamento (dia {a.closing_day}), ainda entra → {where}."
-        )
-    return f"Compra em {when}, depois do fechamento do dia {a.closing_day} → {where}."
+        return f"Compra em {when}, no dia do fechamento ({closing}), ainda entra → {where}."
+    missed = format_date_short(a.own_closing_date or a.closing_date)
+    return f"Compra em {when}, depois do fechamento em {missed} → {where}."
 
 
 def best_day_hint(a: StatementAssignment) -> str:
-    return (
-        f"Melhor dia de compra neste cartão: dia {a.best_purchase_day} (logo depois do fechamento)."
-    )
+    best = format_date(a.best_purchase_date)
+    return f"Melhor dia de compra neste cartão: {best} (logo depois do fechamento)."
 
 
 def format_rate(mode: RateMode | None, indexer: Indexer | None, bps: int | None) -> str:

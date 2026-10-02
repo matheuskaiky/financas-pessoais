@@ -21,20 +21,31 @@ def require_card(uow: UnitOfWork, account_id: str) -> Account:
         raise DomainError("CARD_REQUIRED")
     if not card.is_active:
         raise DomainError("ACCOUNT_INACTIVE")
-    assert card.closing_day is not None and card.due_day is not None
+    assert card.closing_days_before_due is not None and card.due_day is not None
     return card
 
 
+def known_dates(uow: UnitOfWork, card: Account) -> dict[YearMonth, tuple[dt.date, dt.date]]:
+    """Stored dates of the card's existing statements: they are frozen (9.3)."""
+    return {s.month: (s.closing_date, s.due_date) for s in uow.statements.list_for_card(card.id)}
+
+
 def assignment_for(
-    card: Account, posted_on: dt.date | None, statement_month: YearMonth | None
+    uow: UnitOfWork, card: Account, posted_on: dt.date | None, statement_month: YearMonth | None
 ) -> StatementAssignment:
-    """The statement of an entry: the user's choice when given, else the card cycle (9.3)."""
-    assert card.closing_day is not None and card.due_day is not None
+    """The statement of an entry: the user's choice when given, else the card cycle (9.3).
+
+    Existing statements keep the dates stored on them, whatever the card's settings say now.
+    """
+    known = known_dates(uow, card)
+    assert card.closing_days_before_due is not None and card.due_day is not None
     if statement_month is not None:
-        return explicit_assignment(statement_month, card.closing_day, card.due_day, posted_on)
+        return explicit_assignment(
+            statement_month, card.due_day, card.closing_days_before_due, posted_on, known
+        )
     if posted_on is None:
         raise DomainError("PURCHASE_DATE_REQUIRED")
-    return assign_statement(posted_on, card.closing_day, card.due_day)
+    return assign_statement(posted_on, card.due_day, card.closing_days_before_due, known)
 
 
 def ensure_statement(uow: UnitOfWork, card: Account, month: YearMonth) -> Statement:
@@ -42,8 +53,8 @@ def ensure_statement(uow: UnitOfWork, card: Account, month: YearMonth) -> Statem
     existing = uow.statements.get_by_card_month(card.id, month)
     if existing is not None:
         return existing
-    assert card.closing_day is not None and card.due_day is not None
-    closing, due = statement_dates(month, card.closing_day, card.due_day)
+    assert card.closing_days_before_due is not None and card.due_day is not None
+    closing, due = statement_dates(month, card.due_day, card.closing_days_before_due)
     statement = Statement(new_id(), card.id, month, closing, due)
     uow.statements.add(statement)
     return statement

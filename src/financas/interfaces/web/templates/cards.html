@@ -26,7 +26,7 @@
   {% for v in overview.cards %}
   <a class="tile {{ 'on' if chosen and chosen.account.id == v.account.id }}" href="/cards?card={{ v.account.id }}" {% if chosen and chosen.account.id == v.account.id %}aria-current="true"{% endif %}>
     <span class="with-avatar">{{ avatar(account_looks[v.account.id], 36) }}
-      <span><strong>{{ v.account.nickname }}</strong><br><small>fecha {{ v.account.closing_day }} · vence {{ v.account.due_day }}</small></span></span>
+      <span><strong>{{ v.account.nickname }}</strong><br><small>vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes</small></span></span>
     {{ limit_bar(v.usage) }}
     <small>Comprometido {{ v.usage.committed_cents|brl }}{% if v.usage.limit_cents is not none %} · Limite {{ v.usage.limit_cents|brl }}{% endif %}</small>
   </a>
@@ -154,14 +154,14 @@
     <section class="panel" aria-labelledby="h-cfg">
       <h2 id="h-cfg">{{ chosen.account.nickname }}</h2>
       <details>
-        <summary>Fechamento, vencimento e limite</summary>
+        <summary>Vencimento, fechamento e limite</summary>
         <form method="post" action="/cards/{{ chosen.account.id }}/settings" class="grid-form">
-          <label class="field"><span>Dia de fechamento</span><input type="text" name="closing_day" inputmode="numeric" value="{{ chosen.account.closing_day }}" required></label>
           <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" value="{{ chosen.account.due_day }}" required></label>
+          <label class="field"><span>Fecha quantos dias antes do vencimento</span><input type="text" name="closing_days_before_due" inputmode="numeric" value="{{ chosen.account.closing_days_before_due }}" required></label>
           <label class="field"><span>Limite (vazio = não informado)</span><input type="text" name="limit" inputmode="decimal" value="{{ decimal(chosen.account.credit_limit_cents) if chosen.account.credit_limit_cents is not none }}"></label>
           <button type="submit" class="secondary">Salvar</button>
         </form>
-        <p class="hint">Mudanças valem só para lançamentos novos; faturas já criadas mantêm as datas.</p>
+        <p class="hint">Mudanças valem só para faturas criadas depois: as já cadastradas mantêm o fechamento e o vencimento. Se uma fatura já criada estiver errada, corrija as datas nela.</p>
       </details>
     </section>
   </div>
@@ -180,14 +180,14 @@
       <label class="field wide"><span>Apelido</span><input type="text" name="nickname" required maxlength="120" placeholder="Nubank"></label>
       <label class="field"><span>Instituição</span>
         <select name="institution_id" required>{% for i in institution_choices %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Dia de fechamento</span><input type="text" name="closing_day" inputmode="numeric" required></label>
       <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" required></label>
+      <label class="field"><span>Fecha quantos dias antes do vencimento</span><input type="text" name="closing_days_before_due" inputmode="numeric" required><small>De 1 a 27 (ex.: 7)</small></label>
       <label class="field"><span>Limite (opcional)</span><input type="text" name="limit" inputmode="decimal" placeholder="0,00"></label>
       {{ color_fields() }}
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
       <button type="submit">Salvar cartão</button>
     </form>
-    <p class="hint">Use os dias reais do seu cartão: o sistema não adivinha o fechamento.</p>
+    <p class="hint">Use os dados reais do seu cartão (o dia do vencimento e quantos dias antes ele fecha): o sistema não adivinha o fechamento.</p>
   </details>
   {% endif %}
 </section>

@@ -46,7 +46,7 @@ def _account(r: AccountRow) -> Account:
         r.is_active,
         r.color,
         r.image_id,
-        r.closing_day,
+        r.closing_days_before_due,
         r.due_day,
         r.credit_limit_cents,
         r.tracking,

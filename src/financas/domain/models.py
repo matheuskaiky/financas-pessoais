@@ -121,7 +121,7 @@ class Account:
     is_active: bool = True
     color: str | None = None
     image_id: str | None = None
-    closing_day: int | None = None  # credit cards only
+    closing_days_before_due: int | None = None  # credit cards only (CLAUDE.md 9.3)
     due_day: int | None = None
     credit_limit_cents: int | None = None
     tracking: InvestmentTracking | None = None  # investment accounts only

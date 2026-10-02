@@ -69,7 +69,7 @@ class CreateAccountCommand:
     institution_id: str
     nickname: str
     color: str | None = None
-    closing_day: int | None = None  # credit cards only
+    closing_days_before_due: int | None = None  # credit cards only
     due_day: int | None = None
     credit_limit_cents: int | None = None
     asset_class: AssetClass | None = None  # investment accounts only (default: other)
@@ -82,8 +82,12 @@ class CreateAccount:
 
     def execute(self, cmd: CreateAccountCommand) -> Account:
         if cmd.kind is AccountKind.CREDIT_CARD:
-            validate_card_settings(cmd.closing_day, cmd.due_day, cmd.credit_limit_cents)
-        elif (cmd.closing_day, cmd.due_day, cmd.credit_limit_cents) != (None, None, None):
+            validate_card_settings(cmd.closing_days_before_due, cmd.due_day, cmd.credit_limit_cents)
+        elif (cmd.closing_days_before_due, cmd.due_day, cmd.credit_limit_cents) != (
+            None,
+            None,
+            None,
+        ):
             raise DomainError("CARD_FIELDS_ONLY_FOR_CARDS")
         investment = cmd.kind is AccountKind.INVESTMENT
         if not investment and (cmd.asset_class is not None or cmd.is_emergency_fund):
@@ -94,7 +98,7 @@ class CreateAccount:
             institution_id=cmd.institution_id,
             nickname=_name(cmd.nickname),
             color=normalize_color(cmd.color),
-            closing_day=cmd.closing_day,
+            closing_days_before_due=cmd.closing_days_before_due,
             due_day=cmd.due_day,
             credit_limit_cents=cmd.credit_limit_cents,
             tracking=InvestmentTracking.ACCOUNT if investment else None,

@@ -16,7 +16,7 @@
       <label class="field"><span>Cartão</span>
         <select name="account_id" required>
           <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
-          {% for a in card_list %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · fecha {{ a.closing_day }} · vence {{ a.due_day }}</option>{% endfor %}
+          {% for a in card_list %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · vence dia {{ a.due_day }} · fecha {{ a.closing_days_before_due }} dias antes</option>{% endfor %}
         </select></label>
       <label class="field"><span>Data da compra</span><input type="date" name="date" value="{{ form.date }}"></label>
       <label class="field wide"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" required maxlength="300" autocomplete="off"></label>

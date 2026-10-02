@@ -104,14 +104,14 @@ def setup_card() -> None:
         "Nubank",
         "-i",
         "banco",
-        "--closing",
-        "25",
+        "--closes-before-due",
+        "11",
         "--due",
         "5",
         "--limit",
         "12.000,00",
     )
-    assert "Cartão criado: Nubank (fecha dia 25, vence dia 5)" in out
+    assert "Cartão criado: Nubank (vence dia 5, fecha 11 dias antes)" in out
 
 
 def test_card_purchase_with_schedule_and_explanation() -> None:
@@ -120,9 +120,9 @@ def test_card_purchase_with_schedule_and_explanation() -> None:
         "card", "buy", "Fone de ouvido", "--card", "nubank", "-d", "26/07/2026",
         "--total", "301,00", "-n", "3", "-y",
     )  # fmt: skip
-    assert "Compra em 26/07/2026, depois do fechamento do dia 25 → fatura de ago/2026" in out
+    assert "Compra em 26/07/2026, depois do fechamento em 25/07 → fatura de ago/2026" in out
     assert "(fecha 25/08 · vence 05/09)" in out
-    assert "Melhor dia de compra neste cartão: dia 26" in out
+    assert "Melhor dia de compra neste cartão: 26/08/2026" in out
     assert "1/3" in out and "R$ 100,34" in out and "R$ 100,33" in out
     assert "3 lançamento(s)" in out
     listing = run("statement", "list")
@@ -192,7 +192,7 @@ def test_card_list_edit_and_limit() -> None:
     assert "Nubank" in listing and "R$ 12.000,00" in listing and "R$ 100,00" in listing
     run("card", "edit", "nubank", "--no-limit")
     assert "limite não informado" in run("card", "list")
-    assert "Dia inválido" in run("card", "edit", "nubank", "--closing", "40", ok=False)
+    assert "de 1 a 27 dias" in run("card", "edit", "nubank", "--closes-before-due", "40", ok=False)
     assert "veja" in run("account", "list")  # cards are not shown as an unavailable balance
 
 

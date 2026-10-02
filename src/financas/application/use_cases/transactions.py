@@ -85,7 +85,7 @@ class RegisterTransaction:
                 if cmd.kind is TransactionKind.INCOME:
                     raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=account.kind.value)
                 card = require_card(uow, account.id)
-                month = assignment_for(card, cmd.posted_on, cmd.statement_month).month
+                month = assignment_for(uow, card, cmd.posted_on, cmd.statement_month).month
                 statement_id = ensure_statement(uow, card, month).id
             else:
                 if cmd.statement_month is not None:

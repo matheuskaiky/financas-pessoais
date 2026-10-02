@@ -38,16 +38,20 @@ class SetCardSettings:
         self._uow = uow
 
     def execute(
-        self, account_id: str, closing_day: int, due_day: int, credit_limit_cents: int | None
+        self,
+        account_id: str,
+        closing_days_before_due: int,
+        due_day: int,
+        credit_limit_cents: int | None,
     ) -> Account:
-        validate_card_settings(closing_day, due_day, credit_limit_cents)
+        validate_card_settings(closing_days_before_due, due_day, credit_limit_cents)
         with self._uow as uow:
             card = found(uow.accounts.get(account_id), "account")
             if card.kind is not AccountKind.CREDIT_CARD:
                 raise DomainError("CARD_REQUIRED")
             card = replace(
                 card,
-                closing_day=closing_day,
+                closing_days_before_due=closing_days_before_due,
                 due_day=due_day,
                 credit_limit_cents=credit_limit_cents,
             )
@@ -127,7 +131,7 @@ def _build_preview(uow: UnitOfWork, cmd: CardPurchaseCommand) -> tuple[Account, 
         )
     if cmd.current_installment > 1 and cmd.statement_month is None:
         raise DomainError("STATEMENT_REQUIRED")
-    assignment = assignment_for(card, cmd.purchased_on, cmd.statement_month)
+    assignment = assignment_for(uow, card, cmd.purchased_on, cmd.statement_month)
     schedule = build_schedule(
         count=cmd.installments,
         first_number=cmd.current_installment,
@@ -135,14 +139,14 @@ def _build_preview(uow: UnitOfWork, cmd: CardPurchaseCommand) -> tuple[Account, 
         total_cents=cmd.total_cents,
         installment_cents=cmd.installment_cents,
     )
-    assert card.closing_day is not None and card.due_day is not None
+    assert card.closing_days_before_due is not None and card.due_day is not None
     lines: list[PreviewLine] = []
     for line in schedule:
         stored = uow.statements.get_by_card_month(card.id, line.statement_month)
         closing, due = (
             (stored.closing_date, stored.due_date)
             if stored
-            else statement_dates(line.statement_month, card.closing_day, card.due_day)
+            else statement_dates(line.statement_month, card.due_day, card.closing_days_before_due)
         )
         # installment 1 is dated on the purchase; the others on their statement's closing date
         posted_on = cmd.purchased_on if line.number == 1 and cmd.purchased_on else closing

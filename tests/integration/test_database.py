@@ -99,7 +99,9 @@ def test_use_cases_end_to_end_and_atomic_transfer(sql_uow: SqlUnitOfWork) -> Non
         CreateAccountCommand(AccountKind.CHECKING, inst.id, "CC")
     )
     card = CreateAccount(sql_uow).execute(
-        CreateAccountCommand(AccountKind.CREDIT_CARD, inst.id, "Cartão", closing_day=25, due_day=5)
+        CreateAccountCommand(
+            AccountKind.CREDIT_CARD, inst.id, "Cartão", closing_days_before_due=11, due_day=5
+        )
     )
     RegisterTransaction(sql_uow).execute(
         RegisterTransactionCommand(
@@ -150,18 +152,18 @@ def test_database_rejects_invalid_card_rows(sql_uow: SqlUnitOfWork) -> None:
     raw = sqlite3.connect(engine_url.database)
     raw.execute("PRAGMA foreign_keys=ON")
     insert = (
-        "insert into accounts (id, kind, institution_id, nickname, is_active, closing_day, due_day,"
-        " credit_limit_cents) values (?, ?, ?, 'x', 1, ?, ?, ?)"
+        "insert into accounts (id, kind, institution_id, nickname, is_active,"
+        " closing_days_before_due, due_day, credit_limit_cents) values (?, ?, ?, 'x', 1, ?, ?, ?)"
     )
     with pytest.raises(sqlite3.IntegrityError):  # a card needs both days
-        raw.execute(insert, ("1" * 32, "credit_card", inst.id, 25, None, None))
-    with pytest.raises(sqlite3.IntegrityError):  # day out of range
-        raw.execute(insert, ("2" * 32, "credit_card", inst.id, 32, 5, None))
+        raw.execute(insert, ("1" * 32, "credit_card", inst.id, 11, None, None))
+    with pytest.raises(sqlite3.IntegrityError):  # more than 27 days before the due date
+        raw.execute(insert, ("2" * 32, "credit_card", inst.id, 28, 5, None))
     with pytest.raises(sqlite3.IntegrityError):  # a checking account has no card fields
-        raw.execute(insert, ("3" * 32, "checking", inst.id, 25, 5, None))
+        raw.execute(insert, ("3" * 32, "checking", inst.id, 11, 5, None))
     with pytest.raises(sqlite3.IntegrityError):  # negative limit
-        raw.execute(insert, ("4" * 32, "credit_card", inst.id, 25, 5, -1))
-    raw.execute(insert, ("5" * 32, "credit_card", inst.id, 25, 5, 100))
+        raw.execute(insert, ("4" * 32, "credit_card", inst.id, 11, 5, -1))
+    raw.execute(insert, ("5" * 32, "credit_card", inst.id, 11, 5, 100))
     entry = (
         "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
         " description, description_search, is_recurring, plan_id, installment_number)"
@@ -216,6 +218,53 @@ def test_investment_migration_keeps_existing_investment_accounts(tmp_path: Path)
             "select id, tracking, asset_class, is_emergency_fund from accounts order by id"
         ).fetchall()
     assert rows == [("a1", "account", "other", 0), ("a2", None, None, 0)]
+
+
+def test_closing_days_migration_converts_cards_and_keeps_statements(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    command.upgrade(alembic_config(url), "b7d2c4e1a9f3")  # closing_day still exists
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active, closing_day,"
+        " due_day) values ('a', 'credit_card', 'i', 'A', 1, 20, 5),"
+        " ('b', 'credit_card', 'i', 'B', 1, 10, 17), ('c', 'credit_card', 'i', 'C', 1, 25, 5)"
+    )
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('k', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(  # card A's latest statement shows its real gap: 10 days
+        "insert into statements (id, account_id, month, closing_date, due_date) values"
+        " ('s1', 'a', '2026-06', '2026-06-25', '2026-07-05'),"
+        " ('s2', 'a', '2026-07', '2026-07-26', '2026-08-05')"
+    )
+    raw.commit()
+    raw.close()
+    upgrade_to_head(url)
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        cards = db.execute(
+            "select id, closing_days_before_due, due_day from accounts order by id"
+        ).fetchall()
+        statements = db.execute(
+            "select id, closing_date, due_date from statements order by id"
+        ).fetchall()
+        assert "closing_day" not in [r[1] for r in db.execute("pragma table_info(accounts)")]
+    # A: latest statement (10 days); B: 10 -> due 17 in the same month (7); C: 25 -> 5 (11)
+    assert cards == [("a", 10, 5), ("b", 7, 17), ("c", 11, 5), ("k", None, None)]
+    assert statements == [  # frozen history is untouched
+        ("s1", "2026-06-25", "2026-07-05"),
+        ("s2", "2026-07-26", "2026-08-05"),
+    ]
+    command.downgrade(alembic_config(url), "b7d2c4e1a9f3")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        old = db.execute("select id, closing_day, due_day from accounts order by id").fetchall()
+    assert old == [("a", 26, 5), ("b", 10, 17), ("c", 25, 5), ("k", None, None)]
+    upgrade_to_head(url)  # and forward again
 
 
 def test_database_rejects_invalid_investment_rows(sql_uow: SqlUnitOfWork) -> None:
@@ -418,8 +467,8 @@ def test_database_rejects_more_invalid_rows(sql_uow: SqlUnitOfWork) -> None:
         cat,
     )
     raw.execute(
-        "insert into accounts (id, kind, institution_id, nickname, is_active, closing_day,"
-        " due_day) values ('k', 'credit_card', ?, 'K', 1, 25, 5)",
+        "insert into accounts (id, kind, institution_id, nickname, is_active,"
+        " closing_days_before_due, due_day) values ('k', 'credit_card', ?, 'K', 1, 11, 5)",
         (inst.id,),
     )
     for month in ("2026-00", "2026-13", "2026-19", "2026-7"):

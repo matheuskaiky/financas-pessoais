@@ -41,21 +41,22 @@ def test_assignment_explanations() -> None:
     from financas.interfaces.messages import best_day_hint, explain_assignment
 
     D = dt.date
-    assert explain_assignment(assign_statement(D(2026, 7, 26), 25, 5)) == (
-        "Compra em 26/07/2026, depois do fechamento do dia 25 → "
+    # card due on day 5, closing 11 days before the due date
+    assert explain_assignment(assign_statement(D(2026, 7, 26), 5, 11)) == (
+        "Compra em 26/07/2026, depois do fechamento em 25/07 → "
         "fatura de ago/2026 (fecha 25/08 · vence 05/09)."
     )
-    assert "antes do fechamento do dia 25" in explain_assignment(
-        assign_statement(D(2026, 7, 20), 25, 5)
+    assert "antes do fechamento em 25/07" in explain_assignment(
+        assign_statement(D(2026, 7, 20), 5, 11)
     )
-    assert "no dia do fechamento (dia 25), ainda entra" in explain_assignment(
-        assign_statement(D(2026, 7, 25), 25, 5)
+    assert "no dia do fechamento (25/07), ainda entra" in explain_assignment(
+        assign_statement(D(2026, 7, 25), 5, 11)
     )
-    assert explain_assignment(explicit_assignment(YearMonth(2026, 9), 25, 5)).startswith(
-        "Fatura escolhida por você: fatura de set/2026"
+    assert explain_assignment(explicit_assignment(YearMonth(2026, 9), 5, 11)).startswith(
+        "Fatura escolhida por você: fatura de set/2026 (fecha 24/09 · vence 05/10)"
     )
-    assert best_day_hint(assign_statement(D(2026, 7, 1), 25, 5)).startswith(
-        "Melhor dia de compra neste cartão: dia 26"
+    assert best_day_hint(assign_statement(D(2026, 7, 1), 5, 11)) == (
+        "Melhor dia de compra neste cartão: 26/07/2026 (logo depois do fechamento)."
     )
 
 

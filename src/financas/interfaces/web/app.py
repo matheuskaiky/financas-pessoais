@@ -894,7 +894,7 @@ def create_app(c: Container) -> FastAPI:
         request: Request,
         nickname: Annotated[str, Form()],
         institution_id: Annotated[str, Form()],
-        closing_day: Annotated[str, Form()],
+        closing_days_before_due: Annotated[str, Form()],
         due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
@@ -912,7 +912,9 @@ def create_app(c: Container) -> FastAPI:
                     institution_id,
                     nickname,
                     color=chosen,
-                    closing_day=_int(closing_day, "INVALID_CARD_DAY"),
+                    closing_days_before_due=_int(
+                        closing_days_before_due, "INVALID_DAYS_BEFORE_DUE"
+                    ),
                     due_day=_int(due_day, "INVALID_CARD_DAY"),
                     credit_limit_cents=_money(limit),
                 )
@@ -932,14 +934,14 @@ def create_app(c: Container) -> FastAPI:
     def card_settings(
         request: Request,
         card_id: str,
-        closing_day: Annotated[str, Form()],
+        closing_days_before_due: Annotated[str, Form()],
         due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
     ):
         try:
             SetCardSettings(c.uow).execute(
                 card_id,
-                _int(closing_day, "INVALID_CARD_DAY"),
+                _int(closing_days_before_due, "INVALID_DAYS_BEFORE_DUE"),
                 _int(due_day, "INVALID_CARD_DAY"),
                 _money(limit),
             )

@@ -31,9 +31,11 @@ Este projeto troca isso por código testado:
 
 ## Como funcionam fechamento e parcelas
 
-Cada cartão tem **dia de fechamento**, **dia de vencimento** e **limite**.
+Cada cartão tem **dia de vencimento**, **quantos dias antes do vencimento a fatura fecha** (de 1 a 27) e **limite**. O fechamento é calculado a partir do vencimento: vence dia 5 e fecha 11 dias antes significa fechar no dia 25 ou 24, conforme o mês.
 
-**Qual fatura recebe a compra.** Compra até o dia do fechamento (inclusive) entra na fatura que fecha naquele mês; depois disso, na do mês seguinte. A fatura é identificada pelo mês de **fechamento**. O vencimento é a primeira ocorrência do dia de vencimento depois do fechamento. Exemplo, cartão que fecha dia 25 e vence dia 5:
+**Datas congeladas.** Quando uma fatura é criada, o fechamento e o vencimento são calculados uma única vez e **gravados**. Mudar o vencimento ou os dias de fechamento do cartão vale só para faturas que ainda não existem; as já criadas (inclusive parcelas futuras geradas antes) mantêm suas datas. Você ainda pode editar as datas de uma fatura específica.
+
+**Qual fatura recebe a compra.** Compra até o dia do fechamento (inclusive) entra na fatura que fecha naquele mês; depois disso, na do mês seguinte. A fatura é identificada pelo mês de **fechamento**. Para faturas que já existem vale a data gravada. Exemplo, cartão que vence dia 5 e fecha 11 dias antes do vencimento:
 
 | Compra em | Fatura | Fecha | Vence |
 |---|---|---|---|
@@ -155,7 +157,7 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 | `financas balance set \| list` | Saldo informado; mostra a diferença para o saldo calculado |
 | `financas summary -m 2026-07 \| -y 2026` | Totais do mês ou do ano |
 | `financas style institution \| account \| category` | Cor e imagem escolhidas por você |
-| `financas card add \| edit \| list` | Cartões: fechamento, vencimento, limite, comprometido e disponível |
+| `financas card add \| edit \| list` | Cartões: vencimento, dias de fechamento antes do vencimento (`--closes-before-due`), limite, comprometido e disponível |
 | `financas card buy` | Compra no cartão: à vista, parcelada ou em andamento; mostra o cronograma e a explicação da fatura antes de salvar |
 | `financas card installments` | Parcelas ativas: pagas, restantes e quanto falta pagar |
 | `financas statement list \| show \| pay \| inform \| difference \| dates` | Faturas: situação, pagamento (parcial ou total), conferência com o total do banco, diferença e correção de datas |

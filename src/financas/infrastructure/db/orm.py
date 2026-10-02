@@ -66,9 +66,10 @@ class AccountRow(Base):
     __tablename__ = "accounts"
     __table_args__ = (
         sa.CheckConstraint(
-            "(kind = 'credit_card' AND closing_day IS NOT NULL AND closing_day BETWEEN 1 AND 31"
+            "(kind = 'credit_card' AND closing_days_before_due IS NOT NULL"
+            " AND closing_days_before_due BETWEEN 1 AND 27"
             " AND due_day IS NOT NULL AND due_day BETWEEN 1 AND 31)"
-            " OR (kind <> 'credit_card' AND closing_day IS NULL AND due_day IS NULL"
+            " OR (kind <> 'credit_card' AND closing_days_before_due IS NULL AND due_day IS NULL"
             " AND credit_limit_cents IS NULL)",
             name="card_fields",
         ),
@@ -91,7 +92,7 @@ class AccountRow(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     color: Mapped[str | None] = mapped_column(sa.String(7))
     image_id: Mapped[str | None] = mapped_column(sa.String(32))
-    closing_day: Mapped[int | None] = mapped_column(sa.Integer)
+    closing_days_before_due: Mapped[int | None] = mapped_column(sa.Integer)
     due_day: Mapped[int | None] = mapped_column(sa.Integer)
     credit_limit_cents: Mapped[int | None] = mapped_column(sa.BigInteger)
     tracking: Mapped[InvestmentTracking | None] = mapped_column(

@@ -12,6 +12,7 @@ from financas.domain.models import (
     RateMode,
     TransactionKind,
 )
+from financas.domain.services.card_cycle import MAX_DAYS_BEFORE_DUE
 
 _CATEGORY_FOR_KIND = {
     TransactionKind.EXPENSE: CategoryKind.EXPENSE,
@@ -77,14 +78,16 @@ def validate_group_kind(group: CategoryGroup, kind: CategoryKind) -> None:
 
 
 def validate_card_settings(
-    closing_day: int | None, due_day: int | None, credit_limit_cents: int | None
+    closing_days_before_due: int | None, due_day: int | None, credit_limit_cents: int | None
 ) -> None:
-    """A card needs a closing day and a due day (1-31); the limit is optional and not negative."""
-    if closing_day is None or due_day is None:
+    """A card needs a due day (1-31) and how many days before it the card closes (1-27, 9.3);
+    the limit is optional and not negative."""
+    if closing_days_before_due is None or due_day is None:
         raise DomainError("CARD_DAYS_REQUIRED")
-    for day in (closing_day, due_day):
-        if not 1 <= day <= 31:
-            raise DomainError("INVALID_CARD_DAY", day=day)
+    if not 1 <= due_day <= 31:
+        raise DomainError("INVALID_CARD_DAY", day=due_day)
+    if not 1 <= closing_days_before_due <= MAX_DAYS_BEFORE_DUE:
+        raise DomainError("INVALID_DAYS_BEFORE_DUE", days=closing_days_before_due)
     if credit_limit_cents is not None and credit_limit_cents < 0:
         raise DomainError("AMOUNT_NOT_POSITIVE")
 

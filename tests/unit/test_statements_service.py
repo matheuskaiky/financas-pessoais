@@ -94,7 +94,7 @@ def test_a_credit_balance_commits_nothing() -> None:
 
 @pytest.mark.parametrize(
     ("closing", "due", "limit"),
-    [(25, 5, None), (1, 31, 0), (31, 1, 1_200_000)],
+    [(11, 5, None), (1, 31, 0), (27, 1, 1_200_000)],
 )
 def test_valid_card_settings(closing: int, due: int, limit: int | None) -> None:
     validate_card_settings(closing, due, limit)
@@ -104,10 +104,12 @@ def test_valid_card_settings(closing: int, due: int, limit: int | None) -> None:
     ("closing", "due", "limit", "code"),
     [
         (None, 5, None, "CARD_DAYS_REQUIRED"),
-        (25, None, None, "CARD_DAYS_REQUIRED"),
-        (0, 5, None, "INVALID_CARD_DAY"),
-        (25, 32, None, "INVALID_CARD_DAY"),
-        (25, 5, -1, "AMOUNT_NOT_POSITIVE"),
+        (7, None, None, "CARD_DAYS_REQUIRED"),
+        (0, 5, None, "INVALID_DAYS_BEFORE_DUE"),
+        (28, 5, None, "INVALID_DAYS_BEFORE_DUE"),
+        (7, 32, None, "INVALID_CARD_DAY"),
+        (7, 0, None, "INVALID_CARD_DAY"),
+        (7, 5, -1, "AMOUNT_NOT_POSITIVE"),
     ],
 )
 def test_invalid_card_settings(

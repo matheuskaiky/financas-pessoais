@@ -59,7 +59,7 @@ def card(uow: MemoryUnitOfWork, institution: Institution) -> Account:
             AccountKind.CREDIT_CARD,
             institution.id,
             "Cartão",
-            closing_day=25,
+            closing_days_before_due=11,
             due_day=5,
             credit_limit_cents=1_200_000,
         )

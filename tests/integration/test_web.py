@@ -317,14 +317,14 @@ def test_design_shell_and_font_are_served_locally(client: TestClient) -> None:
 
 
 def make_card(client: TestClient, container: Container, **extra: str) -> tuple[str, str]:
-    """A checking account and a card (closing day 25, due day 5, limit R$ 12.000,00)."""
+    """A checking account and a card (due day 5, closes 11 days before, limit R$ 12.000,00)."""
     checking, _ = setup_accounts(client, container)
     with container.uow as work:
         inst = work.institutions.list_all()[0]
     data = {
         "nickname": "Nubank",
         "institution_id": inst.id,
-        "closing_day": "25",
+        "closing_days_before_due": "11",
         "due_day": "5",
         "limit": "12.000,00",
         **extra,
@@ -349,9 +349,14 @@ def test_new_card_with_invalid_days_shows_a_portuguese_error(
         inst = work.institutions.list_all()[0]
     bad = client.post(
         "/cards",
-        data={"nickname": "X", "institution_id": inst.id, "closing_day": "40", "due_day": "5"},
+        data={
+            "nickname": "X",
+            "institution_id": inst.id,
+            "closing_days_before_due": "40",
+            "due_day": "5",
+        },
     )
-    assert bad.status_code == 400 and "Dia inválido" in bad.text
+    assert bad.status_code == 400 and "de 1 a 27 dias" in bad.text
 
 
 def test_purchase_preview_explains_the_statement_and_shows_the_schedule(
@@ -370,10 +375,10 @@ def test_purchase_preview_explains_the_statement_and_shows_the_schedule(
         },
     )
     text = response.text
-    assert "Compra em 26/07/2026, depois do fechamento do dia 25" in text
+    assert "Compra em 26/07/2026, depois do fechamento em 25/07" in text
     assert "fatura de ago/2026 (fecha 25/08 · vence 05/09)" in text
     assert "R$ 100,34" in text and "R$ 100,33" in text and "R$ 301,00" in text
-    assert "Melhor dia de compra neste cartão: dia 26" in text
+    assert "Melhor dia de compra neste cartão: 26/08/2026" in text
     with container.uow as work:
         assert work.transactions.list_by_account(card) == []  # a preview writes nothing
 
@@ -551,7 +556,10 @@ def test_cards_overview_limit_and_dashboard(client: TestClient, container: Conta
     assert "Compras do mês" in home.text and "Notebook" in home.text
     assert "do limite comprometido" in home.text  # the attention panel
     assert "R$ 850,00" in home.text  # card expense counts in its statement month
-    client.post(f"/cards/{card}/settings", data={"closing_day": "10", "due_day": "17", "limit": ""})
+    client.post(
+        f"/cards/{card}/settings",
+        data={"closing_days_before_due": "7", "due_day": "17", "limit": ""},
+    )
     assert "Limite não informado" in client.get(f"/cards?card={card}").text
 
 
@@ -948,9 +956,14 @@ def test_framework_errors_are_pt_br_pages(client: TestClient, container: Contain
         inst = work.institutions.list_all()[0]
     bad_day = client.post(
         "/cards",
-        data={"nickname": "X", "institution_id": inst.id, "closing_day": "abc", "due_day": "5"},
+        data={
+            "nickname": "X",
+            "institution_id": inst.id,
+            "closing_days_before_due": "abc",
+            "due_day": "5",
+        },
     )
-    assert bad_day.status_code == 400 and "Dia inválido" in bad_day.text
+    assert bad_day.status_code == 400 and "de 1 a 27 dias" in bad_day.text
     missing_field = client.post("/institutions", data={})
     assert missing_field.status_code == 400 and "Confira os campos" in missing_field.text
     no_account = client.post(

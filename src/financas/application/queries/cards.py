@@ -129,8 +129,8 @@ def _previous_closing(
     previous = statement.month.add_months(-1)
     if previous in by_month:
         return by_month[previous].closing_date
-    assert card.closing_day is not None
-    return closing_date(previous, card.closing_day)
+    assert card.closing_days_before_due is not None and card.due_day is not None
+    return closing_date(previous, card.due_day, card.closing_days_before_due)
 
 
 def statement_views(uow: UnitOfWork, card: Account, today: dt.date) -> list[StatementView]:
