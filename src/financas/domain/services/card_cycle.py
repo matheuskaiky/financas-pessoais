@@ -1,7 +1,10 @@
 """Credit card closing, statement assignment and due dates (CLAUDE.md 9.3). Pure functions.
 
-The card closes ``days_before_due`` days before it is due. A statement is identified by its
-closing month; its dates are derived from the due date and stored once, when it is created.
+The card closes ``days_before_due`` days before it is due. The closing date is the first day of
+the next cycle: a purchase made *on* it already goes to the next statement. A statement is
+identified by its closing month; its dates are derived from the due date and kept on it. They
+follow the card's settings while the statement is not closed yet and are frozen from the closing
+date on (``is_frozen``).
 """
 
 import datetime as dt
@@ -31,7 +34,7 @@ class StatementAssignment:
     closing_date: dt.date
     due_date: dt.date
     purchase_date: dt.date | None
-    best_purchase_date: dt.date  # the day after the closing date
+    best_purchase_date: dt.date  # the closing date of the statement: from then on, the next one
     own_closing_date: dt.date | None = None  # closing of the purchase's own month (to explain)
 
 
@@ -87,8 +90,9 @@ def _dates(
 def assign_statement(
     purchase: dt.date, due_day: int, days_before_due: int, known: KnownDates | None = None
 ) -> StatementAssignment:
-    """A purchase on or before the closing date of its own month's statement goes in it.
+    """A purchase before the closing date of its own month's statement goes in it.
 
+    On the closing date and after it, the purchase goes to the next month's statement.
     ``known`` holds the stored dates of the card's existing statements.
     """
     own = YearMonth.from_date(purchase)
@@ -96,13 +100,11 @@ def assign_statement(
     if purchase < closes:
         month, reason = own, AssignmentReason.BEFORE_CLOSING
     elif purchase == closes:
-        month, reason = own, AssignmentReason.ON_CLOSING_DAY
+        month, reason = own.add_months(1), AssignmentReason.ON_CLOSING_DAY
     else:
         month, reason = own.add_months(1), AssignmentReason.AFTER_CLOSING
     closing, due = _dates(month, due_day, days_before_due, known)
-    return StatementAssignment(
-        month, reason, closing, due, purchase, closing + dt.timedelta(days=1), closes
-    )
+    return StatementAssignment(month, reason, closing, due, purchase, closing, closes)
 
 
 def explicit_assignment(
@@ -114,6 +116,17 @@ def explicit_assignment(
 ) -> StatementAssignment:
     """The user chose the statement: same data, reason ``EXPLICIT``."""
     closing, due = _dates(month, due_day, days_before_due, known)
-    return StatementAssignment(
-        month, AssignmentReason.EXPLICIT, closing, due, purchase, closing + dt.timedelta(days=1)
-    )
+    return StatementAssignment(month, AssignmentReason.EXPLICIT, closing, due, purchase, closing)
+
+
+def last_day_in_statement(closing: dt.date) -> dt.date:
+    """The last day whose purchases are still on the statement: the day before its closing date.
+
+    Never earlier than the first day of the closing month, so an entry dated this way stays in it.
+    """
+    return max(closing - dt.timedelta(days=1), closing.replace(day=1))
+
+
+def is_frozen(closing: dt.date, today: dt.date) -> bool:
+    """A statement is frozen from its closing date on: its dates never follow the card again."""
+    return today >= closing

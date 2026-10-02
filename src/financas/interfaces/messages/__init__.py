@@ -318,6 +318,16 @@ def render_error(error: DomainError) -> str:
     return template.format(**params)
 
 
+FAILURE_KIND_LABELS = {
+    "server_error": "Erro no servidor",
+    "http_error": "Página ou ação não encontrada",
+    "js_error": "Erro na tela (JavaScript)",
+    "unhandled_rejection": "Falha numa ação da tela",
+    "htmx_error": "A tela não conseguiu falar com o servidor",
+    "cli_error": "Erro num comando",
+}
+
+
 def statement_label(statement: Statement) -> str:
     """``Fatura jul/2026 · fecha 25/07 · vence 05/08``: closing and due dates always together."""
     closing = format_date_short(statement.closing_date)
@@ -334,18 +344,23 @@ def explain_assignment(a: StatementAssignment) -> str:
     if a.reason is AssignmentReason.EXPLICIT or a.purchase_date is None:
         return f"Fatura escolhida por você: {where}."
     when = format_date(a.purchase_date)
-    closing = format_date_short(a.closing_date)
+    own_closing = format_date_short(a.own_closing_date or a.closing_date)
     if a.reason is AssignmentReason.BEFORE_CLOSING:
-        return f"Compra em {when}, antes do fechamento em {closing} → {where}."
+        return f"Compra em {when}, antes do fechamento em {own_closing} → {where}."
     if a.reason is AssignmentReason.ON_CLOSING_DAY:
-        return f"Compra em {when}, no dia do fechamento ({closing}), ainda entra → {where}."
-    missed = format_date_short(a.own_closing_date or a.closing_date)
-    return f"Compra em {when}, depois do fechamento em {missed} → {where}."
+        return (
+            f"Compra em {when}, no dia do fechamento ({own_closing}), "
+            f"já vai para a próxima → {where}."
+        )
+    return f"Compra em {when}, depois do fechamento em {own_closing} → {where}."
 
 
 def best_day_hint(a: StatementAssignment) -> str:
     best = format_date(a.best_purchase_date)
-    return f"Melhor dia de compra neste cartão: {best} (logo depois do fechamento)."
+    return (
+        f"Melhor dia de compra neste cartão: {best} "
+        "(no dia do fechamento a compra já vai para a próxima fatura)."
+    )
 
 
 def format_rate(mode: RateMode | None, indexer: Indexer | None, bps: int | None) -> str:

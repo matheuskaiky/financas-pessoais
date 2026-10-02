@@ -12,6 +12,8 @@ from financas.domain.services.card_cycle import (
     closing_date,
     due_date,
     explicit_assignment,
+    is_frozen,
+    last_day_in_statement,
     statement_dates,
 )
 
@@ -31,11 +33,19 @@ DUE, N = 5, 11  # the spec example: due on day 5, closing 11 days before (BB clo
             D(2026, 8, 5),
         ),
         (
-            D(2026, 7, 25),
+            D(2026, 7, 24),
             YM(2026, 7),
-            AssignmentReason.ON_CLOSING_DAY,
+            AssignmentReason.BEFORE_CLOSING,
             D(2026, 7, 25),
             D(2026, 8, 5),
+        ),
+        # on the closing date the purchase already goes to the next statement
+        (
+            D(2026, 7, 25),
+            YM(2026, 8),
+            AssignmentReason.ON_CLOSING_DAY,
+            D(2026, 8, 25),
+            D(2026, 9, 5),
         ),
         (
             D(2026, 7, 26),
@@ -43,6 +53,35 @@ DUE, N = 5, 11  # the spec example: due on day 5, closing 11 days before (BB clo
             AssignmentReason.AFTER_CLOSING,
             D(2026, 8, 25),
             D(2026, 9, 5),
+        ),
+        # September has 30 days, so the closing date is the 24th, not the 25th
+        (
+            D(2026, 9, 23),
+            YM(2026, 9),
+            AssignmentReason.BEFORE_CLOSING,
+            D(2026, 9, 24),
+            D(2026, 10, 5),
+        ),
+        (
+            D(2026, 9, 24),
+            YM(2026, 10),
+            AssignmentReason.ON_CLOSING_DAY,
+            D(2026, 10, 25),
+            D(2026, 11, 5),
+        ),
+        (
+            D(2026, 12, 24),
+            YM(2026, 12),
+            AssignmentReason.BEFORE_CLOSING,
+            D(2026, 12, 25),
+            D(2027, 1, 5),
+        ),
+        (
+            D(2026, 12, 25),
+            YM(2027, 1),
+            AssignmentReason.ON_CLOSING_DAY,
+            D(2027, 1, 25),
+            D(2027, 2, 5),
         ),
         (
             D(2026, 12, 26),
@@ -53,16 +92,16 @@ DUE, N = 5, 11  # the spec example: due on day 5, closing 11 days before (BB clo
         ),
         # in February the closing date follows the due date: the 22nd, not the 25th
         (
-            D(2027, 2, 22),
+            D(2027, 2, 21),
             YM(2027, 2),
-            AssignmentReason.ON_CLOSING_DAY,
+            AssignmentReason.BEFORE_CLOSING,
             D(2027, 2, 22),
             D(2027, 3, 5),
         ),
         (
-            D(2027, 2, 23),
+            D(2027, 2, 22),
             YM(2027, 3),
-            AssignmentReason.AFTER_CLOSING,
+            AssignmentReason.ON_CLOSING_DAY,
             D(2027, 3, 25),
             D(2027, 4, 5),
         ),
@@ -75,7 +114,27 @@ def test_statement_assignment_table(
     assert result.month == month and result.reason is reason
     assert (result.closing_date, result.due_date) == (closes, due)
     assert result.purchase_date == purchase
-    assert result.best_purchase_date == closes + dt.timedelta(days=1)
+    assert result.best_purchase_date == closes
+
+
+@pytest.mark.parametrize(
+    ("card", "due", "days", "closing_day", "month"),
+    [
+        ("BB", 5, 11, 24, YM(2026, 9)),  # due 05/10; closes on the 24th in a 30-day month
+        ("BB", 5, 11, 25, YM(2026, 8)),  # due 05/09; closes on the 25th in a 31-day month
+        ("Nubank", 26, 7, 19, YM(2026, 8)),  # due 26/08... closes 19/08
+        ("Inter", 20, 6, 14, YM(2026, 8)),  # due 20/08... closes 14/08
+    ],
+)
+def test_the_real_cards_of_the_owner(
+    card: str, due: int, days: int, closing_day: int, month: YearMonth
+) -> None:
+    closes, _ = statement_dates(month, due, days)
+    assert closes == dt.date(month.year, month.month, closing_day), card
+    day_before = assign_statement(closes - dt.timedelta(days=1), due, days)
+    on_the_day = assign_statement(closes, due, days)
+    assert day_before.month == month  # still on this statement
+    assert on_the_day.month == month.add_months(1)  # from the closing day on: the next one
 
 
 @pytest.mark.parametrize(
@@ -146,11 +205,24 @@ def test_the_settings_are_a_recipe_for_new_statements_only() -> None:
     )  # a stored statement is not touched
 
 
-def test_best_purchase_date_is_the_day_after_the_closing_date() -> None:
+def test_best_purchase_date_is_the_closing_date_itself() -> None:
     result = assign_statement(D(2026, 7, 1), DUE, N)
-    assert result.closing_date == D(2026, 7, 25) and result.best_purchase_date == D(2026, 7, 26)
+    assert result.closing_date == D(2026, 7, 25) and result.best_purchase_date == D(2026, 7, 25)
     after = assign_statement(D(2026, 7, 26), DUE, N)
-    assert after.best_purchase_date == D(2026, 8, 26)
+    assert after.best_purchase_date == D(2026, 8, 25)
+
+
+def test_last_day_in_a_statement_and_freezing() -> None:
+    assert last_day_in_statement(D(2026, 9, 24)) == D(2026, 9, 23)
+    assert last_day_in_statement(D(2026, 10, 1)) == D(2026, 10, 1)  # never leaves the month
+    assert not is_frozen(D(2026, 9, 24), D(2026, 9, 23))
+    assert is_frozen(D(2026, 9, 24), D(2026, 9, 24))  # frozen on the closing date itself
+
+
+def test_stored_dates_decide_where_a_purchase_goes() -> None:
+    known = {YM(2026, 9): (D(2026, 9, 28), D(2026, 10, 9))}  # edited by hand
+    assert assign_statement(D(2026, 9, 27), DUE, N, known).month == YM(2026, 9)
+    assert assign_statement(D(2026, 9, 28), DUE, N, known).month == YM(2026, 10)
 
 
 def test_explicit_assignment_keeps_the_dates_of_the_chosen_month() -> None:

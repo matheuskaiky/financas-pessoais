@@ -19,11 +19,11 @@ S = StatementStatus
 @pytest.mark.parametrize(
     ("today", "paid", "expected"),
     [
-        (D(2026, 7, 25), 0, S.FUTURE),
-        (D(2026, 7, 26), 0, S.OPEN),
+        (D(2026, 7, 24), 0, S.FUTURE),  # the July statement is still taking purchases
+        (D(2026, 7, 25), 0, S.OPEN),  # it opens on the previous closing date
         (D(2026, 8, 20), 0, S.OPEN),
-        (D(2026, 8, 25), 0, S.OPEN),
-        (D(2026, 8, 26), 0, S.CLOSED),
+        (D(2026, 8, 24), 0, S.OPEN),
+        (D(2026, 8, 25), 0, S.CLOSED),  # and closes on its own closing date
         (D(2026, 9, 6), 500, S.CLOSED),  # partial payment
         (D(2026, 9, 6), 1_000, S.PAID),
         (D(2026, 9, 6), 1_200, S.PAID),

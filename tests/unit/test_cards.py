@@ -33,11 +33,12 @@ from financas.application.use_cases.transactions import (
 from financas.domain.errors import DomainError
 from financas.domain.models import Account, StatementStatus, TransactionKind
 from financas.domain.money import YearMonth
-from financas.domain.services.card_cycle import AssignmentReason
+from financas.domain.services.card_cycle import AssignmentReason, last_day_in_statement
 from financas.domain.services.statements import LimitAlert
 
 D = dt.date
 YM = YearMonth
+CLOCK = FixedClock(D(2026, 7, 1))
 
 
 def buy(uow: MemoryUnitOfWork, card: Account, **kw: object):
@@ -57,7 +58,8 @@ def codes(exc: pytest.ExceptionInfo[DomainError]) -> str:
     ("purchase", "month", "closes", "due"),
     [
         (D(2026, 7, 20), YM(2026, 7), D(2026, 7, 25), D(2026, 8, 5)),
-        (D(2026, 7, 25), YM(2026, 7), D(2026, 7, 25), D(2026, 8, 5)),
+        (D(2026, 7, 24), YM(2026, 7), D(2026, 7, 25), D(2026, 8, 5)),
+        (D(2026, 7, 25), YM(2026, 8), D(2026, 8, 25), D(2026, 9, 5)),  # the closing day: next one
         (D(2026, 7, 26), YM(2026, 8), D(2026, 8, 25), D(2026, 9, 5)),
         (D(2026, 12, 26), YM(2027, 1), D(2027, 1, 25), D(2027, 2, 5)),
     ],
@@ -125,8 +127,8 @@ def test_three_installments_example_from_the_spec(uow: MemoryUnitOfWork, card: A
     entries = result.transactions
     assert [e.installment_number for e in entries] == [1, 2, 3]
     assert {e.plan_id for e in entries} == {result.plan.id}
-    # installment 1 is dated on the purchase, the others on the closing date of their statement
-    assert [e.posted_on for e in entries] == [D(2026, 7, 26), D(2026, 9, 24), D(2026, 10, 25)]
+    # installment 1 is dated on the purchase, the others on the last day of their statement
+    assert [e.posted_on for e in entries] == [D(2026, 7, 26), D(2026, 9, 23), D(2026, 10, 24)]
     assert -sum(e.amount_cents for e in entries) == 30_100
 
 
@@ -143,9 +145,11 @@ def test_running_purchase_creates_only_the_remaining_installments(
     months = [uow.statements.get(e.statement_id or "").month for e in entries]  # type: ignore[union-attr]
     assert (str(months[0]), str(months[-1])) == ("2026-09", "2027-04")
     assert result.plan and result.plan.installment_total == 10 and result.plan.purchased_on is None
+    stored = [uow.statements.get(e.statement_id or "") for e in entries]
     assert all(
-        e.posted_on == uow.statements.get(e.statement_id or "").closing_date for e in entries
-    )  # type: ignore[union-attr]
+        s is not None and e.posted_on == last_day_in_statement(s.closing_date)
+        for s, e in zip(stored, entries, strict=True)
+    )
 
 
 def test_purchase_validation(uow: MemoryUnitOfWork, card: Account, checking: Account) -> None:
@@ -199,67 +203,82 @@ def test_preview_writes_nothing_and_flags_existing_statements(
     assert [line.statement_exists for line in again.lines] == [True, False, False]
 
 
-def test_changing_the_settings_freezes_what_already_exists(
+def dates_by_month(uow: MemoryUnitOfWork) -> dict[str, tuple[dt.date, dt.date]]:
+    return {str(s.month): (s.closing_date, s.due_date) for s in uow.statements.items.values()}
+
+
+def test_statements_follow_the_settings_until_they_close(
     uow: MemoryUnitOfWork, card: Account
 ) -> None:
-    # card: due on day 5, closing 11 days before. July's statement closes 07-25, due 08-05.
-    buy(uow, card, purchased_on=D(2026, 7, 20), total_cents=100)
-    SetCardSettings(uow).execute(
+    # card: due on day 5, closing 11 days before. Five installments from 07-26: Aug to Dec.
+    buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=30_100, installments=5)
+    SetCardSettings(uow, FixedClock(D(2026, 9, 1))).execute(
         card.id, closing_days_before_due=7, due_day=17, credit_limit_cents=None
     )
-    july = uow.statements.get_by_card_month(card.id, YM(2026, 7))
-    assert july and (july.closing_date, july.due_date) == (
-        D(2026, 7, 25),
-        D(2026, 8, 5),
-    )  # both frozen
-    # new purchases into the existing statement follow its stored closing date, not the new recipe
-    # (with 7 days before a due on the 17th, July would close on the 10th and 07-20 would be late)
-    again = buy(uow, card, purchased_on=D(2026, 7, 25), total_cents=100)
-    assert again.preview.assignment.reason is AssignmentReason.ON_CLOSING_DAY
-    assert again.transactions[0].statement_id == july.id
-    late = buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=100)
-    assert late.preview.assignment.month == YM(2026, 8)  # August's statement does not exist yet
-    assert late.preview.assignment.closing_date == D(2026, 8, 10)  # ...so the new recipe applies
-    august = uow.statements.get(late.transactions[0].statement_id or "")
-    assert august and (august.closing_date, august.due_date) == (D(2026, 8, 10), D(2026, 8, 17))
-    # changing the settings again does not move August either
-    SetCardSettings(uow).execute(
-        card.id, closing_days_before_due=3, due_day=28, credit_limit_cents=None
-    )
-    assert uow.statements.get(august.id) == august
-    sept = buy(uow, card, purchased_on=D(2026, 9, 1), total_cents=100).transactions[0]
-    september = uow.statements.get(sept.statement_id or "")
-    assert september and (september.closing_date, september.due_date) == (
-        D(2026, 9, 25),
-        D(2026, 9, 28),
-    )
+    dates = dates_by_month(uow)
+    assert dates["2026-08"] == (D(2026, 8, 25), D(2026, 9, 5))  # closed on 08-25: frozen
+    assert dates["2026-09"] == (D(2026, 9, 10), D(2026, 9, 17))  # still open: follows the card
+    assert dates["2026-10"] == (D(2026, 10, 10), D(2026, 10, 17))  # created in advance: follows
+    assert dates["2026-12"] == (D(2026, 12, 10), D(2026, 12, 17))
 
 
-def test_installment_statements_created_in_advance_keep_their_dates(
+def test_a_statement_is_frozen_from_its_closing_date_on(
     uow: MemoryUnitOfWork, card: Account
 ) -> None:
-    result = buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=30_100, installments=3)
-    before = {s.id: (s.closing_date, s.due_date) for s in uow.statements.items.values()}
-    SetCardSettings(uow).execute(
-        card.id, closing_days_before_due=5, due_day=20, credit_limit_cents=None
-    )
-    after = {s.id: (s.closing_date, s.due_date) for s in uow.statements.items.values()}
-    assert before == after and len(after) == 3
-    # a later purchase goes to the October statement created in advance, with its frozen dates
-    late = buy(uow, card, purchased_on=D(2026, 10, 25), total_cents=100)
-    assert late.preview.assignment.closing_date == D(2026, 10, 25)
-    assert late.transactions[0].statement_id == result.transactions[2].statement_id
+    buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=30_100, installments=3)
+    # on 09-24 the September statement closes: frozen even though today is its closing date
+    SetCardSettings(uow, FixedClock(D(2026, 9, 24))).execute(card.id, 7, 17, None)
+    dates = dates_by_month(uow)
+    assert dates["2026-09"] == (D(2026, 9, 24), D(2026, 10, 5))
+    assert dates["2026-10"] == (D(2026, 10, 10), D(2026, 10, 17))
+
+
+def test_hand_edited_dates_survive_a_settings_change(uow: MemoryUnitOfWork, card: Account) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=30_100, installments=3)
+    october = uow.statements.get_by_card_month(card.id, YM(2026, 10))
+    assert october
+    SetStatementDates(uow).execute(october.id, D(2026, 10, 28), D(2026, 11, 9))
+    SetCardSettings(uow, FixedClock(D(2026, 9, 1))).execute(card.id, 7, 17, None)
+    dates = dates_by_month(uow)
+    assert dates["2026-10"] == (D(2026, 10, 28), D(2026, 11, 9))  # the user's dates stay
+    assert dates["2026-09"] == (D(2026, 9, 10), D(2026, 9, 17))  # the others follow
+
+
+def test_a_new_closing_date_already_in_the_past_is_not_applied(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=30_100, installments=3)
+    # on 09-15 September is open (closes 09-24); the new recipe would close it on 09-10
+    SetCardSettings(uow, FixedClock(D(2026, 9, 15))).execute(card.id, 7, 17, None)
+    dates = dates_by_month(uow)
+    assert dates["2026-09"] == (D(2026, 9, 24), D(2026, 10, 5))  # what was in force stays
+    assert dates["2026-10"] == (D(2026, 10, 10), D(2026, 10, 17))
+
+
+def test_purchases_use_the_stored_dates_of_existing_statements(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 20), total_cents=100)  # July: closes 07-25
+    SetCardSettings(uow, FixedClock(D(2026, 9, 1))).execute(card.id, 7, 17, None)
+    # July is closed and frozen: with the new recipe July would close on 07-10 and 07-24 would be
+    # late, but the stored dates decide
+    inside = buy(uow, card, purchased_on=D(2026, 7, 24), total_cents=100)
+    assert inside.preview.assignment.month == YM(2026, 7)
+    on_the_day = buy(uow, card, purchased_on=D(2026, 7, 25), total_cents=100)
+    assert on_the_day.preview.assignment.reason is AssignmentReason.ON_CLOSING_DAY
+    assert on_the_day.preview.assignment.month == YM(2026, 8)  # August does not exist yet: recipe
+    assert on_the_day.preview.assignment.closing_date == D(2026, 8, 10)
 
 
 def test_card_settings_validation(uow: MemoryUnitOfWork, card: Account, checking: Account) -> None:
     with pytest.raises(DomainError) as exc:
-        SetCardSettings(uow).execute(card.id, 40, 5, None)
+        SetCardSettings(uow, CLOCK).execute(card.id, 40, 5, None)
     assert codes(exc) == "INVALID_DAYS_BEFORE_DUE"
     with pytest.raises(DomainError) as exc:
-        SetCardSettings(uow).execute(card.id, 7, 40, None)
+        SetCardSettings(uow, CLOCK).execute(card.id, 7, 40, None)
     assert codes(exc) == "INVALID_CARD_DAY"
     with pytest.raises(DomainError) as exc:
-        SetCardSettings(uow).execute(checking.id, 25, 5, None)
+        SetCardSettings(uow, CLOCK).execute(checking.id, 25, 5, None)
     assert codes(exc) == "CARD_REQUIRED"
 
 
@@ -267,7 +286,7 @@ def test_card_settings_validation(uow: MemoryUnitOfWork, card: Account, checking
 
 
 def september_statement(uow: MemoryUnitOfWork, card: Account) -> str:
-    """A statement closing 2026-09-25 with R$ 100,00 + R$ 50,00 (due 2026-10-05)."""
+    """A statement closing 2026-09-24 with R$ 100,00 + R$ 50,00 (due 2026-10-05)."""
     buy(uow, card, purchased_on=D(2026, 9, 1), total_cents=10_000)
     (entry,) = buy(uow, card, purchased_on=D(2026, 9, 10), total_cents=5_000).transactions
     return entry.statement_id or ""
@@ -293,10 +312,10 @@ def test_statement_total_status_and_due_date(uow: MemoryUnitOfWork, card: Accoun
         )
     )
     for today, status in [
-        (D(2026, 8, 25), StatementStatus.FUTURE),  # August closed on the 25th
-        (D(2026, 8, 26), StatementStatus.OPEN),
-        (D(2026, 9, 24), StatementStatus.OPEN),  # September closes on the 24th (due 10-05, 11 days)
-        (D(2026, 9, 25), StatementStatus.CLOSED),
+        (D(2026, 8, 24), StatementStatus.FUTURE),  # August is still taking purchases
+        (D(2026, 8, 25), StatementStatus.OPEN),  # September opens when August closes
+        (D(2026, 9, 23), StatementStatus.OPEN),
+        (D(2026, 9, 24), StatementStatus.CLOSED),  # closing day (due 10-05, 11 days after)
     ]:
         (view,) = [
             s for s in cards_at(uow, today).cards[0].statements if s.statement.id == september
@@ -381,7 +400,7 @@ def test_reconciliation_and_posting_the_difference(uow: MemoryUnitOfWork, card: 
     assert (rec.entered_cents, rec.informed_cents, rec.difference_cents) == (15_000, 15_380, 380)
     entry = PostStatementDifference(uow).execute(september, "Diferença")
     assert entry.amount_cents == -380 and entry.statement_id == september
-    assert entry.posted_on == D(2026, 9, 24) and entry.description == "Diferença"
+    assert entry.posted_on == D(2026, 9, 23) and entry.description == "Diferença"
     category = uow.categories.get(entry.category_id)
     assert category and category.slug == "uncategorized"
     view = cards_at(uow, D(2026, 10, 1)).cards[0].statements[0]
@@ -428,12 +447,12 @@ def test_committed_limit_counts_everything_unpaid_including_future_installments(
 
 
 def test_limit_alert_and_not_informed(uow: MemoryUnitOfWork, card: Account) -> None:
-    SetCardSettings(uow).execute(card.id, 25, 5, 10_000)
+    SetCardSettings(uow, CLOCK).execute(card.id, 11, 5, 10_000)
     buy(uow, card, purchased_on=D(2026, 7, 1), total_cents=8_500)
     assert cards_at(uow, D(2026, 7, 2)).cards[0].usage.alert is LimitAlert.WARNING
     buy(uow, card, purchased_on=D(2026, 7, 2), total_cents=1_500)
     assert cards_at(uow, D(2026, 7, 2)).cards[0].usage.alert is LimitAlert.EXCEEDED
-    SetCardSettings(uow).execute(card.id, 25, 5, None)
+    SetCardSettings(uow, CLOCK).execute(card.id, 11, 5, None)
     usage = cards_at(uow, D(2026, 7, 2)).cards[0].usage
     assert usage.alert is LimitAlert.NOT_INFORMED and usage.percent is None
     assert cards_at(uow, D(2026, 7, 2)).available_cents is None

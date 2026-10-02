@@ -21,9 +21,14 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.money import YearMonth
-from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.rules import validate_card_settings
-from financas.domain.services.card_cycle import StatementAssignment, statement_dates
+from financas.domain.services.card_cycle import (
+    StatementAssignment,
+    is_frozen,
+    last_day_in_statement,
+    statement_dates,
+)
 from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedule
 from financas.domain.services.text import clean_text, normalize_search
 
@@ -31,11 +36,13 @@ from financas.domain.services.text import clean_text, normalize_search
 class SetCardSettings:
     """The full desired settings of a card (``credit_limit_cents=None`` clears the limit).
 
-    A new closing day affects only new entries: stored statements keep their dates (9.3).
+    Statements that are not closed yet follow the new settings (unless the user edited their dates
+    by hand, or the new closing date would already be in the past); closed ones are frozen (9.3).
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
+        self._clock = clock
 
     def execute(
         self,
@@ -49,6 +56,7 @@ class SetCardSettings:
             card = found(uow.accounts.get(account_id), "account")
             if card.kind is not AccountKind.CREDIT_CARD:
                 raise DomainError("CARD_REQUIRED")
+            before = card
             card = replace(
                 card,
                 closing_days_before_due=closing_days_before_due,
@@ -56,8 +64,28 @@ class SetCardSettings:
                 credit_limit_cents=credit_limit_cents,
             )
             uow.accounts.update(card)
+            self._refresh_open_statements(uow, before, card)
             uow.commit()
         return card
+
+    def _refresh_open_statements(self, uow: Work, before: Account, after: Account) -> None:
+        assert before.closing_days_before_due is not None and before.due_day is not None
+        assert after.closing_days_before_due is not None and after.due_day is not None
+        today = self._clock.today()
+        for statement in uow.statements.list_for_card(after.id):
+            if is_frozen(statement.closing_date, today):
+                continue
+            recipe = statement_dates(
+                statement.month, before.due_day, before.closing_days_before_due
+            )
+            if (statement.closing_date, statement.due_date) != recipe:
+                continue  # edited by hand: the user's dates stay
+            closing, due = statement_dates(
+                statement.month, after.due_day, after.closing_days_before_due
+            )
+            if is_frozen(closing, today):
+                continue  # it would already be closed: keep what was in force
+            uow.statements.update(replace(statement, closing_date=closing, due_date=due))
 
 
 # --- purchases --------------------------------------------------------------------------------
@@ -110,7 +138,7 @@ class PurchaseResult:
     plan: InstallmentPlan | None
 
 
-def _default_category_id(uow: UnitOfWork, category_id: str | None) -> str:
+def _default_category_id(uow: Work, category_id: str | None) -> str:
     if category_id is None:
         return found(uow.categories.get_by_slug("uncategorized"), "category").id
     category = found(uow.categories.get(category_id), "category")
@@ -121,7 +149,7 @@ def _default_category_id(uow: UnitOfWork, category_id: str | None) -> str:
     return category.id
 
 
-def _build_preview(uow: UnitOfWork, cmd: CardPurchaseCommand) -> tuple[Account, PurchasePreview]:
+def _build_preview(uow: Work, cmd: CardPurchaseCommand) -> tuple[Account, PurchasePreview]:
     card = require_card(uow, cmd.account_id)
     if not 1 <= cmd.installments <= MAX_INSTALLMENTS:
         raise DomainError("INVALID_INSTALLMENT_COUNT", count=cmd.installments)
@@ -148,8 +176,12 @@ def _build_preview(uow: UnitOfWork, cmd: CardPurchaseCommand) -> tuple[Account, 
             if stored
             else statement_dates(line.statement_month, card.due_day, card.closing_days_before_due)
         )
-        # installment 1 is dated on the purchase; the others on their statement's closing date
-        posted_on = cmd.purchased_on if line.number == 1 and cmd.purchased_on else closing
+        # installment 1 is dated on the purchase; the others on the last day of their statement
+        posted_on = (
+            cmd.purchased_on
+            if line.number == 1 and cmd.purchased_on
+            else last_day_in_statement(closing)
+        )
         lines.append(
             PreviewLine(
                 line.number, cmd.installments, line.statement_month, closing, due,
@@ -365,7 +397,7 @@ class PostStatementDifference:
             entry = Transaction(
                 id=new_id(),
                 account_id=statement.account_id,
-                posted_on=statement.closing_date,
+                posted_on=last_day_in_statement(statement.closing_date),
                 kind=TransactionKind.EXPENSE,
                 category_id=category.id,
                 amount_cents=-difference,

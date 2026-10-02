@@ -33,18 +33,19 @@ Este projeto troca isso por código testado:
 
 Cada cartão tem **dia de vencimento**, **quantos dias antes do vencimento a fatura fecha** (de 1 a 27) e **limite**. O fechamento é calculado a partir do vencimento: vence dia 5 e fecha 11 dias antes significa fechar no dia 25 ou 24, conforme o mês.
 
-**Datas congeladas.** Quando uma fatura é criada, o fechamento e o vencimento são calculados uma única vez e **gravados**. Mudar o vencimento ou os dias de fechamento do cartão vale só para faturas que ainda não existem; as já criadas (inclusive parcelas futuras geradas antes) mantêm suas datas. Você ainda pode editar as datas de uma fatura específica.
+**Datas congeladas no fechamento.** Enquanto uma fatura ainda não fechou, o fechamento e o vencimento dela acompanham as configurações do cartão: se você mudar o vencimento ou os dias de fechamento, as faturas abertas e as futuras (inclusive as criadas antecipadamente por parcelas) são recalculadas. A partir do dia do fechamento as datas ficam **congeladas**: nada as altera, só você editando as datas daquela fatura. Faturas cujas datas você editou à mão também não são recalculadas, e uma fatura não é alterada se o novo fechamento já tivesse passado.
 
-**Qual fatura recebe a compra.** Compra até o dia do fechamento (inclusive) entra na fatura que fecha naquele mês; depois disso, na do mês seguinte. A fatura é identificada pelo mês de **fechamento**. Para faturas que já existem vale a data gravada. Exemplo, cartão que vence dia 5 e fecha 11 dias antes do vencimento:
+**Qual fatura recebe a compra.** O dia do fechamento já é o primeiro dia do próximo ciclo: compra **antes** do fechamento entra na fatura que fecha naquele mês; **no dia do fechamento** ou depois, vai para a do mês seguinte (e o melhor dia de compra é o próprio dia do fechamento). A fatura é identificada pelo mês de **fechamento**. Para faturas que já existem vale a data gravada. Exemplo, cartão que vence dia 5 e fecha 11 dias antes do vencimento (o do BB):
 
 | Compra em | Fatura | Fecha | Vence |
 |---|---|---|---|
 | 20/07/2026 | jul/2026 | 25/07 | 05/08 |
-| 25/07/2026 | jul/2026 | 25/07 | 05/08 |
-| 26/07/2026 | ago/2026 | 25/08 | 05/09 |
-| 26/12/2026 | jan/2027 | 25/01 | 05/02 |
+| 25/07/2026 | ago/2026 | 25/08 | 05/09 |
+| 23/09/2026 | set/2026 | 24/09 | 05/10 |
+| 24/09/2026 | out/2026 | 25/10 | 05/11 |
+| 25/12/2026 | jan/2027 | 25/01 | 05/02 |
 
-O melhor dia de compra é o dia seguinte ao fechamento. Se algum cartão agir diferente, você sobrescreve a fatura na própria compra.
+Setembro tem 30 dias, por isso a fatura de setembro fecha dia 24; em fevereiro, dia 22.
 
 **Parcelas.** Cada parcela vai para a fatura seguinte à anterior: a parcela *k* cai na fatura da parcela 1 mais *k − 1* meses. Informar a fatura de qualquer parcela define todas. Todas as parcelas, inclusive as futuras, são geradas na hora do lançamento.
 
@@ -157,6 +158,7 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 | `financas balance set \| list` | Saldo informado; mostra a diferença para o saldo calculado |
 | `financas summary -m 2026-07 \| -y 2026` | Totais do mês ou do ano |
 | `financas style institution \| account \| category` | Cor e imagem escolhidas por você |
+| `financas log show` | Últimas falhas registradas neste computador (também em Mais → Diagnóstico) |
 | `financas card add \| edit \| list` | Cartões: vencimento, dias de fechamento antes do vencimento (`--closes-before-due`), limite, comprometido e disponível |
 | `financas card buy` | Compra no cartão: à vista, parcelada ou em andamento; mostra o cronograma e a explicação da fatura antes de salvar |
 | `financas card installments` | Parcelas ativas: pagas, restantes e quanto falta pagar |

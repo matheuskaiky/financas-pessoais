@@ -15,10 +15,14 @@ def statement_status(
     total_cents: int,
     paid_cents: int,
 ) -> StatementStatus:
-    """future: not open yet; open: takes purchases; closed: unpaid; paid: payments >= total."""
-    if today <= previous_closing_date:
+    """future: not open yet; open: takes purchases; closed: unpaid; paid: payments >= total.
+
+    A statement opens on the closing date of the previous one and closes on its own closing date
+    (a purchase on that day already goes to the next statement).
+    """
+    if today < previous_closing_date:
         return StatementStatus.FUTURE
-    if today <= closing_date:
+    if today < closing_date:
         return StatementStatus.OPEN
     return StatementStatus.PAID if paid_cents >= total_cents else StatementStatus.CLOSED
 

@@ -49,14 +49,15 @@ def test_assignment_explanations() -> None:
     assert "antes do fechamento em 25/07" in explain_assignment(
         assign_statement(D(2026, 7, 20), 5, 11)
     )
-    assert "no dia do fechamento (25/07), ainda entra" in explain_assignment(
+    assert "no dia do fechamento (25/07), já vai para a próxima" in explain_assignment(
         assign_statement(D(2026, 7, 25), 5, 11)
     )
     assert explain_assignment(explicit_assignment(YearMonth(2026, 9), 5, 11)).startswith(
         "Fatura escolhida por você: fatura de set/2026 (fecha 24/09 · vence 05/10)"
     )
     assert best_day_hint(assign_statement(D(2026, 7, 1), 5, 11)) == (
-        "Melhor dia de compra neste cartão: 26/07/2026 (logo depois do fechamento)."
+        "Melhor dia de compra neste cartão: 25/07/2026 "
+        "(no dia do fechamento a compra já vai para a próxima fatura)."
     )
 
 
