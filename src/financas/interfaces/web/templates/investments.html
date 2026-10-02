@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% from "_macros.html" import avatar, dot %}
+{% block title %}Investimentos
+{% set holding_accounts = investment_accounts|selectattr('tracking.value', 'equalto', 'holdings')|list %}
+<section class="panel" id="holdings" aria-labelledby="h-hold">
+  <h2 id="h-hold">Aplicações</h2>
+  {% if holding_accounts %}
+  <p class="soft" style="margin: -6px 0 0">Conta controlada por aplicação · valor líquido de resgate. O contrato é só para exibição: o sistema não calcula imposto nem projeta o valor no vencimento.</p>
+  {% for a in holding_accounts %}
+  <h3>{{ a.nickname }} <small class="soft">· {{ institutions[a.institution_id].name }}</small></h3>
+  {% set mine = holdings|selectattr('holding.account_id', 'equalto', a.id)|list %}
+  {% if mine %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Aplicação</th><th>Taxa</th><th>Vence</th><th>Liquidez</th><th>FGC</th><th class="num">Valor líquido</th><th>Avaliação</th></tr></thead>
+    <tbody>
+    {% for v in mine %}{% set h = v.holding %}
+      <tr class="{{ 'inactive' if h.status.value == 'redeemed' }}">
+        <td><strong>{{ h.name }}</strong><br><small>{{ instrument_labels[h.instrument_type] }} · {{ v.issuer.name }}{% if h.is_emergency_fund %} · reserva{% endif %}</small></td>
+        <td>{{ rate(h.rate_mode, h.indexer, h.rate_bps) }}</td>
+        <td>{{ h.maturity_on|date if h.maturity_on else '—' }}</td>
+        <td>{{ liquidity_labels[h.liquidity] }}{% if h.liquid_from %}<br><small>carência até {{ h.liquid_from|date }}</small>{% endif %}</td>
+        <td>{{ 'sim' if h.fgc_covered else 'não' }}</td>
+        <td class="num">{% if h.status.value == 'redeemed' %}<span class="pill grey">Resgatada</span>
+          {% elif v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>
+          {% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|signed }}</small>{% endif %}{% endif %}</td>
+        <td>{% if h.status.value == 'active' %}
+          {% if v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>{% elif v.age_days is not none %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
+          <details><summary>Avaliar</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/valuation" class="row-form">
+              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+              <label class="field"><span>Líquido</span><input type="text" name="net" inputmode="decimal" required></label>
+              <label class="field"><span>Bruto (opcional)</span><input type="text" name="gross" inputmode="decimal"></label>
+              <button type="submit" class="secondary">Salvar</button></form></details>
+          <details><summary>Marcas</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/flags" class="row-form">
+              <label class="check"><input type="checkbox" name="fgc" value="1" {{ 'checked' if h.fgc_covered }}> Coberta pelo FGC</label>
+              <label class="check"><input type="checkbox" name="emergency" value="1" {{ 'checked' if h.is_emergency_fund }}> Reserva de emergência</label>
+              <button type="submit" class="secondary">Salvar</button></form></details>
+          <details><summary>Resgatar tudo</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/redeem" class="row-form" data-confirm="Resgatar esta aplicação? Ela deixa de contar nos totais.">
+              <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+              <label class="field"><span>Valor líquido recebido</span><input type="text" name="amount" inputmode="decimal" required></label>
+              <label class="field"><span>Conta que recebeu</span>
+                <select name="to_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
+              <button type="submit" class="secondary">Resgatar</button></form></details>
+          {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nenhuma aplicação nesta conta ainda.</p>{% endif %}
+  {% endfor %}
+  <details {{ 'open' if not holdings }}>
+    <summary>Nova aplicação</summary>
+    <form method="post" action="/investments/holdings" class="grid-form">
+      <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="160" placeholder="CDB Banco X 110% CDI"></label>
+      <label class="field"><span>Conta</span>
+        <select name="account_id">{% for a in holding_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Tipo</span>
+        <select name="instrument_type">{% for t in instrument_types %}<option value="{{ t.value }}">{{ instrument_labels[t] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Emissor</span>
+        <select name="issuer_id">{% for i in issuers %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Data da aplicação</span><input type="date" name="applied_on" value="{{ today }}" required></label>
+      <label class="field"><span>Valor aplicado</span><input type="text" name="principal" inputmode="decimal" placeholder="0,00" required></label>
+      <label class="field"><span>Liquidez</span>
+        <select name="liquidity">{% for l in liquidities %}<option value="{{ l.value }}">{{ liquidity_labels[l] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Vencimento</span><input type="date" name="maturity_on"><small>Obrigatório com liquidez no vencimento</small></label>
+      <label class="field"><span>Fim da carência</span><input type="date" name="liquid_from"><small>Só liquidez diária</small></label>
+      <label class="field"><span>Índice</span>
+        <select name="indexer"><option value="">—</option>{% for i in indexers %}<option value="{{ i.value }}">{{ indexer_labels[i] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Tipo de taxa</span>
+        <select name="rate_mode"><option value="">—</option>{% for m in rate_modes %}<option value="{{ m.value }}">{{ rate_mode_labels[m] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Taxa (%)</span><input type="text" name="rate" inputmode="decimal" placeholder="110 ou 6,5"><small>110 = 110% do CDI · 6,5 = índice + 6,5%</small></label>
+      <label class="field"><span>FGC</span>
+        <select name="fgc"><option value="">Sugestão do tipo</option><option value="yes">Coberta</option><option value="no">Não coberta</option></select></label>
+      <label class="check"><input type="checkbox" name="emergency" value="1"> Reserva de emergência</label>
+      <label class="check"><input type="checkbox" name="contribute" value="1"> Registrar também o aporte do valor aplicado</label>
+      <label class="field"><span>Conta corrente que pagou</span>
+        <select name="from_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
+      <button type="submit">Salvar aplicação</button>
+    </form>
+    <p class="hint">O sistema sugere a cobertura do FGC pelo tipo, mas a decisão é sua. Confirme as regras do produto com a instituição.</p>
+  </details>
+  {% else %}
+  <p class="empty">Para controlar CDB, LCI, LCA e Tesouro um a um, mude uma conta de investimento para “Por aplicação” em <em>Ajustes</em>, na tabela acima.</p>
+  {% endif %}
+</section>
+
+{% if holdings or holding_accounts %}
+<div class="cols">
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-ladder">
+      <h2 id="h-ladder">Escada de vencimentos</h2>
+      {% if fixed.ladder %}
+      <ul class="plain">{% for r in fixed.ladder %}<li><span>{{ r.month|month_short }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
+      {% else %}<p class="empty">Nenhuma aplicação avaliada com vencimento.</p>{% endif %}
+      <small>Títulos marcados a mercado podem valer menos que a curva contratada; o sistema não projeta valor no vencimento.</small>
+    </section>
+    <section class="panel" aria-labelledby="h-liq">
+      <h2 id="h-liq">Liquidez</h2>
+      <ul class="plain">{% for r in fixed.liquidity %}<li><span>{{ bucket_labels[r.bucket] }}</span><strong>{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
+      <small>Só aplicações com avaliação. Faixas: hoje, até 30, 90, 180 e 365 dias, e mais tarde.</small>
+    </section>
+  </div>
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-fgc">
+      <h2 id="h-fgc">Exposição ao FGC por grupo</h2>
+      {% if fixed.fgc %}
+      <ul class="plain">
+        {% for r in fixed.fgc %}<li><span><strong>{{ r.group }}</strong><br><small>aplicações cobertas {{ r.covered_holdings_cents|brl }} + conta corrente {{ r.checking_cents|brl }}</small></span>
+          <span class="num"><strong>{{ r.exposure_cents|brl }}</strong><br><small>{{ (r.percent_of_limit / 100)|percent }} de {{ r.limit_cents|brl }}</small>{% if r.exceeded %}<br><span class="pill warn">Acima do limite</span>{% endif %}</span></li>{% endfor %}
+      </ul>
+      {% else %}<p class="empty">Nenhuma aplicação coberta com avaliação.</p>{% endif %}
+      <small>Confirme o limite vigente em fgc.org.br; o valor fica em configuração (FINANCAS_FGC_LIMIT_CENTS). O teto global de vários anos não é modelado.</small>
+    </section>
+    <section class="panel" aria-labelledby="h-emg">
+      <h2 id="h-emg">Reserva de emergência</h2>
+      {% if fixed.emergency.items %}
+      {% if fixed.emergency.months is none %}<strong style="font-size: 28px">—</strong><span class="soft">Sem gasto essencial nos últimos 3 meses fechados para comparar.</span>
+      {% else %}<strong style="font-size: 28px; color: var(--navy)">{{ '%.1f'|format(fixed.emergency.months)|replace('.', ',') }} meses</strong>{% endif %}
+      <span class="soft">{{ fixed.emergency.value_cents|brl }} marcados como reserva ÷ gasto essencial médio dos últimos 3 meses fechados ({{ fixed.emergency.average_essential_cents|brl }}).</span>
+      <small>{{ fixed.emergency.items|join(', ') }}</small>
+      {% else %}<p class="empty">Marque aplicações ou contas como reserva de emergência para ver a cobertura.</p>{% endif %}
+    </section>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Investimentos</h1><p>Valores líquidos informados pelas instituições · o sistema não calcula imposto</p></div>
+  <div class="head-tools">
+    <a class="btn secondary" href="#flow">Registrar aporte ou resgate</a>
+    <a class="btn secondary" href="#holdings">Aplicações</a>
+    <a class="btn" href="#valuation">Informar saldo</a>
+  </div>
+</header>
+
+<section class="cards" aria-label="Totais de investimentos">
+  <div class="card"><span class="label">Total investido</span><strong>{{ overview.total_cents|brl }}</strong>
+    {% if overview.pending or overview.pending_holdings %}<span class="pill warn" style="align-self: flex-start">Parcial · {{ overview.pending|length + overview.pending_holdings|length }} pendente(s)</span>
+    {% else %}<small>Soma dos valores líquidos</small>{% endif %}</div>
+  <div class="card"><span class="label">Aportes líquidos em {{ year }}</span><strong>{{ year_totals.net_contributions_cents|brl }}</strong><small>aportes − resgates</small></div>
+  <div class="card"><span class="label">Rendimento capitalizado em {{ year }}</span>
+    {% if year_totals.capitalized_yield_cents is none %}<strong>—</strong><small>Sem duas avaliações para comparar</small>
+    {% else %}<strong class="{{ 'pos' if year_totals.capitalized_yield_cents >= 0 else 'neg' }}">{{ year_totals.capitalized_yield_cents|signed }}</strong>
+      <small>retorno simples {{ year_totals.simple_return|percent }} · não é renda</small>{% endif %}</div>
+  <div class="card"><span class="label">Distribuições pagas na conta ({{ month_name }})</span><strong>{{ month_totals.distributions_cents|brl }}</strong><small>entram como renda em “Rendimentos”</small></div>
+</section>
+
+<section class="panel" aria-labelledby="h-acc">
+  <h2 id="h-acc">Contas de investimento</h2>
+  {% if overview.accounts %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Conta</th><th class="num">Valor atual</th><th class="num">Aportes líq.</th><th class="num">Rendimento</th><th class="num">Retorno</th><th class="num">%</th><th>Avaliação</th></tr></thead>
+    <tbody>
+    {% for v in overview.accounts %}
+      <tr>
+        <td><span class="with-avatar">{{ avatar(account_looks[v.account.id], 36) }}<span><strong>{{ v.account.nickname }}</strong><br>
+          <small>{{ institutions[v.account.institution_id].name }} · {{ asset_labels[v.account.asset_class] }} · {{ tracking_labels[v.account.tracking] }}{% if v.account.is_emergency_fund %} · reserva{% endif %}</small></span></span></td>
+        <td class="num">{% if v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% endif %}</td>
+        <td class="num">{{ v.net_contributions_cents|brl if v.last_valuation else '—' }}</td>
+        <td class="num {{ 'pos' if v.yield_cents and v.yield_cents > 0 else ('neg' if v.yield_cents and v.yield_cents < 0 else '') }}">{{ v.yield_cents|signed if v.yield_cents is not none else '—' }}</td>
+        <td class="num">{{ v.simple_return|percent }}</td>
+        <td class="num">{{ v.share|percent }}</td>
+        <td>{% if v.age_days is none %}<span class="pill grey">Sem avaliação</span>
+          {% elif v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>
+          {% else %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
+          <details><summary>Ajustes</summary>
+            <form method="post" action="/investments/{{ v.account.id }}/settings" class="row-form">
+              <label class="field"><span>Classe</span>
+                <select name="asset_class">{% for k in asset_classes %}<option value="{{ k.value }}" {{ 'selected' if v.account.asset_class == k }}>{{ asset_labels[k] }}</option>{% endfor %}</select></label>
+              <label class="field"><span>Controle</span>
+                <select name="tracking">{% for t in trackings %}<option value="{{ t.value }}" {{ 'selected' if v.account.tracking == t }}>{{ tracking_labels[t] }}</option>{% endfor %}</select></label>
+              <label class="check"><input type="checkbox" name="emergency" value="1" {{ 'checked' if v.account.is_emergency_fund }}> Reserva de emergência</label>
+              <button type="submit" class="secondary">Salvar</button>
+            </form></details></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <small>Valor atual = última avaliação + aportes e resgates depois dela. Contas sem avaliação ficam fora do total.</small>
+  {% else %}<p class="empty">Nenhuma conta de investimento. Cadastre uma em <a href="/accounts">Contas</a> (tipo “Investimento”).</p>{% endif %}
+</section>
+
+<div class="cols">
+  <div class="stack">
+    <section class="panel" id="valuation" aria-labelledby="h-val">
+      <h2 id="h-val">Informar saldo (avaliação)</h2>
+      {% set account_level = investment_accounts|selectattr('tracking.value', 'equalto', 'account')|list %}
+      {% if account_level %}
+      <form method="post" class="grid-form" id="valuation-form" data-valuation-form>
+        <label class="field"><span>Conta</span>
+          <select name="account_id" data-valuation-account>{% for a in account_level %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+        <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+        <label class="field"><span>Valor líquido</span><input type="text" name="net" inputmode="decimal" placeholder="0,00" required></label>
+        <label class="field"><span>Valor bruto (opcional)</span><input type="text" name="gross" inputmode="decimal" placeholder="0,00"></label>
+        <label class="field wide"><span>Observação</span><input type="text" name="note"></label>
+        <button type="submit">Salvar avaliação</button>
+      </form>
+      <p class="hint">Use o valor líquido de resgate que a instituição mostra (já com imposto estimado). O sistema mostra o rendimento desde a avaliação anterior; ele não é renda.</p>
+      {% else %}<p class="empty">Não há conta controlada por conta. Contas controladas por aplicação são avaliadas em cada aplicação, mais abaixo.</p>{% endif %}
+    </section>
+
+    <section class="panel" id="flow" aria-labelledby="h-flow">
+      <h2 id="h-flow">Registrar aporte ou resgate</h2>
+      {% if investment_accounts %}
+      <form method="post" action="/investments/flow" class="grid-form">
+        <div class="segmented two wide" role="radiogroup" aria-label="Tipo de movimentação">
+          <label><input type="radio" name="direction" value="contribution" checked><span>Aporte</span></label>
+          <label><input type="radio" name="direction" value="withdrawal"><span>Resgate</span></label>
+        </div>
+        <label class="field"><span>Onde</span>
+          <select name="target">
+            {% for a in investment_accounts %}
+              {% if a.tracking.value == 'account' %}<option value="a:{{ a.id }}">{{ a.nickname }}</option>
+              {% else %}<optgroup label="{{ a.nickname }}">
+                {% for v in holdings if v.holding.account_id == a.id and v.holding.status.value == 'active' %}<option value="h:{{ v.holding.id }}">{{ v.holding.name }}</option>{% endfor %}
+              </optgroup>{% endif %}
+            {% endfor %}
+          </select></label>
+        <label class="field"><span>Conta corrente do outro lado</span>
+          <select name="other_account_id"><option value="">Conta não controlada</option>
+            {% for a in checking_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+        <label class="field"><span>Valor</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required></label>
+        <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+        <button type="submit">Registrar</button>
+      </form>
+      <p class="hint">É uma transferência: não conta como receita nem despesa.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="stack">
+    <section class="panel" aria-labelledby="h-alloc">
+      <h2 id="h-alloc">Alocação por classe</h2>
+      {% if overview.allocation.rows %}
+      <div class="stackbar" role="img" aria-label="{% for r in overview.allocation.rows %}{{ asset_labels[r.asset_class] }} {{ r.share|percent }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for r in overview.allocation.rows %}<span style="flex: {{ r.share * 100 }} 1 0; background: {{ ['#1E395F', '#6FA3C7', '#0E6151', '#B7791F', '#6B7684'][loop.index0 % 5] }}"></span>{% endfor %}
+      </div>
+      <ul class="plain">
+        {% for r in overview.allocation.rows %}<li><span class="with-dot"><span class="dot" style="background: {{ ['#1E395F', '#6FA3C7', '#0E6151', '#B7791F', '#6B7684'][loop.index0 % 5] }}"></span>{{ asset_labels[r.asset_class] }}</span>
+          <span><strong>{{ r.value_cents|brl }}</strong> <small>· {{ r.share|percent }}</small></span></li>{% endfor %}
+      </ul>
+      {% if overview.allocation.pending_count %}<small>{{ overview.allocation.pending_count }} conta(s) sem avaliação ficam de fora.</small>{% endif %}
+      {% else %}<p class="empty">Sem avaliações ainda.</p>{% endif %}
+    </section>
+
+    <section class="panel" aria-labelledby="h-year">
+      <header>
+        <h2 id="h-year">Posição em {{ position.date|date }}</h2>
+        <form method="get" action="/investments" class="row-form">
+          <label class="sr-only" for="year">Ano</label>
+          <select id="year" name="year" data-autosubmit>{% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}</select>
+          <noscript><button type="submit" class="secondary">Ver</button></noscript>
+        </form>
+      </header>
+      <small>Apoio ao IRPF (“Bens e Direitos”). O sistema não calcula imposto.</small>
+      <ul class="plain">
+        {% for r in position.rows %}<li><span>{{ r.account.nickname }}</span>
+          <span>{% if r.value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ r.value_cents|brl }}</strong>{% if r.yield_cents is not none %} <small>· rendimento {{ r.yield_cents|signed }}</small>{% endif %}{% endif %}</span></li>{% endfor %}
+        <li><strong>Total</strong><strong>{{ position.total_cents|brl }}</strong></li>
+      </ul>
+      {% if position.pending %}<span class="pill warn" style="align-self: flex-start">Parcial · {{ position.pending|length }} sem avaliação</span>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

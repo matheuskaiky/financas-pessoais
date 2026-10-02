@@ -18,6 +18,14 @@ from financas.application.queries.cards import (
     ListCards,
     ListMonthPurchases,
 )
+from financas.application.queries.investments import (
+    GetFixedIncomeOverview,
+    GetInvestmentPeriodTotals,
+    GetNetWorth,
+    GetYearEndPosition,
+    ListHoldings,
+    ListInvestments,
+)
 from financas.application.queries.summary import GetSummary, Period, summarize
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.cards import (
@@ -44,6 +52,21 @@ from financas.application.use_cases.catalog import (
     SetAccountActive,
     SetAppearance,
     SetAppearanceCommand,
+    SetInvestmentSettings,
+)
+from financas.application.use_cases.holdings import (
+    RecordHoldingValuation,
+    RecordHoldingValuationCommand,
+    RedeemHolding,
+    RedeemHoldingCommand,
+    RegisterHolding,
+    RegisterHoldingCommand,
+    SetHoldingFlags,
+)
+from financas.application.use_cases.investments import (
+    FlowDirection,
+    RegisterInvestmentFlow,
+    RegisterInvestmentFlowCommand,
 )
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
@@ -57,8 +80,14 @@ from financas.container import Container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
+    AssetClass,
     CategoryGroup,
     CategoryKind,
+    Indexer,
+    InstrumentType,
+    InvestmentTracking,
+    Liquidity,
+    RateMode,
     StatementStatus,
     TransactionKind,
 )
@@ -75,6 +104,7 @@ from financas.interfaces.formatting import (
     format_percent,
     format_signed,
     parse_date,
+    parse_percent_bps,
 )
 
 HERE = Path(__file__).parent
@@ -129,6 +159,15 @@ def create_app(c: Container) -> FastAPI:
         explain=messages.explain_assignment,
         best_day=messages.best_day_hint,
         statement_label=messages.statement_label,
+        asset_labels=messages.ASSET_CLASS_LABELS,
+        instrument_labels=messages.INSTRUMENT_TYPE_LABELS,
+        indexer_labels=messages.INDEXER_LABELS,
+        rate_mode_labels=messages.RATE_MODE_LABELS,
+        liquidity_labels=messages.LIQUIDITY_LABELS,
+        bucket_labels=messages.LIQUIDITY_BUCKET_LABELS,
+        tracking_labels=messages.TRACKING_LABELS,
+        holding_status_labels=messages.HOLDING_STATUS_LABELS,
+        rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
     )
@@ -189,6 +228,8 @@ def create_app(c: Container) -> FastAPI:
         notice = messages.FLASH_MESSAGES.get(ok) if ok else None
         if ok == "balance":
             notice = _balance_notice(request) or notice
+        if ok == "valuation_yield":
+            notice = _valuation_notice(request) or messages.FLASH_MESSAGES["valuation"]
         context = {
             **context,
             "error": messages.render_error(error) if error else None,
@@ -201,6 +242,16 @@ def create_app(c: Container) -> FastAPI:
         }
         return templates.TemplateResponse(
             request, template, context, status_code=400 if error else status
+        )
+
+    def _valuation_notice(request: Request) -> str | None:
+        try:
+            diff = int(request.query_params.get("diff", ""))
+        except ValueError:
+            return None
+        return (
+            "Avaliação registrada. Rendimento desde a avaliação anterior, descontadas as "
+            f"movimentações: {format_signed(diff)} (não é renda)."
         )
 
     def _balance_notice(request: Request) -> str | None:
@@ -330,6 +381,7 @@ def create_app(c: Container) -> FastAPI:
                 for r in summary.by_category
             },
             "purchases": ListMonthPurchases(c.uow).execute(period.start, period.end),
+            "net_worth": GetNetWorth(c.uow, c.clock).execute(),
             "recurring": recurring[:5],
             "recurring_count": len(recurring),
             "attention": attention_items(data),
@@ -979,6 +1031,244 @@ def create_app(c: Container) -> FastAPI:
             statement = work.statements.get(first.statement_id or "")
         assert statement is not None
         return back("/cards", "purchase", card=statement.account_id, month=str(statement.month))
+
+    # --- investments and net worth -------------------------------------------------------------
+
+    def investments_context(year: int | None) -> dict[str, object]:
+        chosen = year if year and 1900 <= year <= 9999 else today().year
+        data = lookups()
+        overview = ListInvestments(c.uow, c.clock, c.settings.valuation_stale_days).execute()
+        this_month = Period.month(YearMonth.from_date(today()))
+        accounts = data["accounts"]
+        return {
+            **data,
+            "overview": overview,
+            "year": chosen,
+            "years": sorted({today().year - 5 + n for n in range(7)} | {chosen}),
+            "year_totals": GetInvestmentPeriodTotals(c.uow).execute(Period.year(chosen)),
+            "month_totals": GetInvestmentPeriodTotals(c.uow).execute(this_month),
+            "month_name": _MONTH_NAMES[today().month - 1].lower(),
+            "position": GetYearEndPosition(c.uow).execute(chosen),
+            "investment_accounts": [a for a in accounts if a.kind is AccountKind.INVESTMENT],  # type: ignore[attr-defined]
+            "checking_accounts": [
+                a
+                for a in accounts  # type: ignore[attr-defined]
+                if a.kind is AccountKind.CHECKING and a.is_active
+            ],
+            "asset_classes": list(AssetClass),
+            "trackings": list(InvestmentTracking),
+            "holdings": ListHoldings(c.uow, c.clock, c.settings.valuation_stale_days).execute(
+                include_redeemed=True
+            ),
+            "fixed": GetFixedIncomeOverview(
+                c.uow, c.clock, c.settings.valuation_stale_days, c.settings.fgc_limit_cents
+            ).execute(),
+            "instrument_types": list(InstrumentType),
+            "indexers": list(Indexer),
+            "rate_modes": list(RateMode),
+            "liquidities": list(Liquidity),
+            "issuers": list(data["institutions"].values()),  # type: ignore[attr-defined]
+            "today": today().isoformat(),
+        }
+
+    @app.get("/investments", response_class=HTMLResponse)
+    def investments(request: Request, year: int | None = None):
+        return render(request, "investments.html", investments_context(year))
+
+    @app.post("/investments/flow")
+    def investment_flow(
+        request: Request,
+        direction: Annotated[str, Form()],
+        amount: Annotated[str, Form()],
+        date: Annotated[str, Form()],
+        investment_account_id: Annotated[str, Form()] = "",
+        holding_id: Annotated[str, Form()] = "",
+        target: Annotated[str, Form()] = "",
+        other_account_id: Annotated[str, Form()] = "",
+    ):
+        """``target`` is ``a:<account id>`` (account level) or ``h:<holding id>`` (one holding)."""
+        try:
+            if target.startswith("h:"):
+                with c.uow as work:
+                    held = work.holdings.get(target[2:])
+                if held is None:
+                    raise DomainError("NOT_FOUND", entity="holding")
+                investment_account_id, holding_id = held.account_id, held.id
+            elif target.startswith("a:"):
+                investment_account_id = target[2:]
+            RegisterInvestmentFlow(c.uow).execute(
+                RegisterInvestmentFlowCommand(
+                    investment_account_id,
+                    FlowDirection(direction),
+                    parse_date(date, today()),
+                    parse_brl(amount),
+                    other_account_id or None,
+                    holding_id=holding_id or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "flow")
+
+    @app.post("/investments/{account_id}/valuation")
+    def investment_valuation(
+        request: Request,
+        account_id: str,
+        date: Annotated[str, Form()],
+        net: Annotated[str, Form()],
+        gross: Annotated[str, Form()] = "",
+        note: Annotated[str, Form()] = "",
+    ):
+        try:
+            result = RecordBalance(c.uow).execute(
+                RecordBalanceCommand(
+                    account_id,
+                    parse_date(date, today()),
+                    parse_brl(net),
+                    note or None,
+                    gross_balance_cents=parse_brl(gross) if gross.strip() else None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        if result.difference_cents is not None:
+            return back("/investments", "valuation_yield", diff=result.difference_cents)
+        return back("/investments", "valuation")
+
+    @app.post("/investments/{account_id}/settings")
+    def investment_settings(
+        request: Request,
+        account_id: str,
+        asset_class: Annotated[str, Form()],
+        emergency: Annotated[str, Form()] = "",
+        tracking: Annotated[str, Form()] = "",
+    ):
+        try:
+            SetInvestmentSettings(c.uow).execute(
+                account_id,
+                AssetClass(asset_class),
+                bool(emergency),
+                InvestmentTracking(tracking) if tracking else None,
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "investment_settings")
+
+    def _optional_date(text: str) -> dt.date | None:
+        return parse_date(text, today()) if text.strip() else None
+
+    @app.post("/investments/holdings")
+    def add_holding(
+        request: Request,
+        account_id: Annotated[str, Form()],
+        name: Annotated[str, Form()],
+        instrument_type: Annotated[str, Form()],
+        issuer_id: Annotated[str, Form()],
+        applied_on: Annotated[str, Form()],
+        principal: Annotated[str, Form()],
+        liquidity: Annotated[str, Form()],
+        maturity_on: Annotated[str, Form()] = "",
+        liquid_from: Annotated[str, Form()] = "",
+        indexer: Annotated[str, Form()] = "",
+        rate_mode: Annotated[str, Form()] = "",
+        rate: Annotated[str, Form()] = "",
+        fgc: Annotated[str, Form()] = "",
+        emergency: Annotated[str, Form()] = "",
+        contribute: Annotated[str, Form()] = "",
+        from_account_id: Annotated[str, Form()] = "",
+    ):
+        try:
+            RegisterHolding(c.uow).execute(
+                RegisterHoldingCommand(
+                    account_id=account_id,
+                    name=name,
+                    instrument_type=InstrumentType(instrument_type),
+                    issuer_id=issuer_id,
+                    applied_on=parse_date(applied_on, today()),
+                    principal_cents=parse_brl(principal),
+                    liquidity=Liquidity(liquidity),
+                    indexer=Indexer(indexer) if indexer else None,
+                    rate_mode=RateMode(rate_mode) if rate_mode else None,
+                    rate_bps=parse_percent_bps(rate) if rate.strip() else None,
+                    maturity_on=_optional_date(maturity_on),
+                    liquid_from=_optional_date(liquid_from),
+                    fgc_covered={"yes": True, "no": False}.get(fgc),
+                    is_emergency_fund=bool(emergency),
+                    contribute=bool(contribute),
+                    from_account_id=from_account_id or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "holding")
+
+    @app.post("/investments/holdings/{holding_id}/valuation")
+    def holding_valuation(
+        request: Request,
+        holding_id: str,
+        date: Annotated[str, Form()],
+        net: Annotated[str, Form()],
+        gross: Annotated[str, Form()] = "",
+        note: Annotated[str, Form()] = "",
+    ):
+        try:
+            result = RecordHoldingValuation(c.uow).execute(
+                RecordHoldingValuationCommand(
+                    holding_id,
+                    parse_date(date, today()),
+                    parse_brl(net),
+                    parse_brl(gross) if gross.strip() else None,
+                    note or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        if result.difference_cents is not None:
+            return back("/investments", "valuation_yield", diff=result.difference_cents)
+        return back("/investments", "valuation")
+
+    @app.post("/investments/holdings/{holding_id}/flags")
+    def holding_flags(
+        request: Request,
+        holding_id: str,
+        fgc: Annotated[str, Form()] = "",
+        emergency: Annotated[str, Form()] = "",
+    ):
+        try:
+            SetHoldingFlags(c.uow).execute(holding_id, bool(fgc), bool(emergency))
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "holding_flags")
+
+    @app.post("/investments/holdings/{holding_id}/redeem")
+    def redeem_holding(
+        request: Request,
+        holding_id: str,
+        date: Annotated[str, Form()],
+        amount: Annotated[str, Form()],
+        to_account_id: Annotated[str, Form()] = "",
+    ):
+        try:
+            RedeemHolding(c.uow).execute(
+                RedeemHoldingCommand(
+                    holding_id,
+                    parse_date(date, today()),
+                    parse_brl(amount),
+                    to_account_id or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "redeemed")
+
+    @app.get("/networth", response_class=HTMLResponse)
+    def networth(request: Request):
+        context = {**lookups(), "net_worth": GetNetWorth(c.uow, c.clock).execute()}
+        return render(request, "networth.html", context)
+
+    @app.get("/more", response_class=HTMLResponse)
+    def more(request: Request):
+        return render(request, "more.html", {})
 
     # --- categories ----------------------------------------------------------------------------
 

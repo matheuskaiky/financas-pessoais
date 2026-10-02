@@ -17,6 +17,8 @@
       <li><a href="/" {% if nav == 'dashboard' %}aria-current="page"{% endif %}>Painel</a></li>
       <li><a href="/entries" {% if nav == 'entries' %}aria-current="page"{% endif %}>Lançamentos</a></li>
       <li><a href="/cards" {% if nav == 'cards' %}aria-current="page"{% endif %}>Cartões</a></li>
+      <li><a href="/investments" {% if nav == 'investments' %}aria-current="page"{% endif %}>Investimentos</a></li>
+      <li><a href="/networth" {% if nav == 'networth' %}aria-current="page"{% endif %}>Patrimônio</a></li>
       <li><a href="/accounts" {% if nav == 'accounts' %}aria-current="page"{% endif %}>Contas</a></li>
       <li><a href="/categories" {% if nav == 'categories' %}aria-current="page"{% endif %}>Categorias</a></li>
     </ul>
@@ -47,7 +49,7 @@
   <a href="/cards" {% if nav == 'cards' %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h4"/></svg>
     <span>Cartões</span></a>
-  <a href="/accounts" {% if nav in ('accounts', 'categories') %}aria-current="page"{% endif %}>
+  <a href="/more" {% if nav in ('accounts', 'categories', 'investments', 'networth', 'more') %}aria-current="page"{% endif %}>
     <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
     <span>Mais</span></a>
 </nav>

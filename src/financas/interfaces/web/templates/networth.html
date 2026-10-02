@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Patrimônio{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>Patrimônio</h1><p>Caixa + investimentos − faturas a pagar · tudo calculado a partir dos seus saldos e lançamentos</p></div></header>
+{% set nw = net_worth %}
+<section class="panel dark" aria-labelledby="h-nw">
+  <header>
+    <h2 id="h-nw">Patrimônio líquido</h2>
+    {% if nw.is_partial %}<span class="pill warn">Parcial · {{ nw.pending|length + nw.pending_holdings|length }} pendente(s)</span>{% endif %}
+  </header>
+  <span class="big">{{ nw.net_worth_cents|brl }}</span>
+  <div class="nw-lines">
+    <span><span>Caixa</span><span>{{ nw.cash_cents|brl }}</span></span>
+    <span><span>Investimentos</span><span>{{ nw.investments_cents|brl }}</span></span>
+    <span><span>Faturas fechadas a pagar</span><span>− {{ nw.closed_statements_cents|brl }}</span></span>
+    <span><span>Faturas abertas (compras já feitas)</span><span>− {{ nw.open_statements_cents|brl }}</span></span>
+    <span class="apart"><span>Parcelas futuras (compromisso, fora do total)</span><span>{{ nw.future_installments_cents|brl }}</span></span>
+  </div>
+</section>
+{% if nw.is_partial %}
+<section class="panel">
+  <h2>O que falta para o total ficar completo</h2>
+  <ul class="plain">
+    {% for a in nw.pending %}<li><span>{{ a.nickname }}</span>
+      <a href="{{ '/investments' if a.kind.value == 'investment' else '/accounts' }}">{{ 'Informar avaliação' if a.kind.value == 'investment' else 'Informar saldo' }}</a></li>{% endfor %}
+    {% for h in nw.pending_holdings %}<li><span>{{ h.name }}</span><a href="/investments#holdings">Informar avaliação</a></li>{% endfor %}
+  </ul>
+  <p class="hint">Contas sem saldo ou avaliação ficam fora do total, nunca entram como zero.</p>
+</section>
+{% endif %}
+{% endblock %}

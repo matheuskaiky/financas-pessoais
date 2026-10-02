@@ -601,3 +601,293 @@ def test_cards_pass_the_csp_and_have_no_inline_handlers(
         assert "onchange=" not in text and "onclick=" not in text and "onsubmit=" not in text, path
         assert "<script>" not in text, path
     assert client.get("/static/app.js").status_code == 200
+
+
+# --- investments and net worth (Phase 3a) --------------------------------------------------------
+
+
+def make_investment(client: TestClient, container: Container) -> tuple[str, str]:
+    checking, savings = setup_accounts(client, container)  # savings is an investment account
+    return checking, savings
+
+
+def test_investments_page_empty_and_navigation(client: TestClient) -> None:
+    page = client.get("/investments")
+    assert page.status_code == 200 and "Nenhuma conta de investimento" in page.text
+    assert "o sistema não calcula imposto" in page.text
+    home = client.get("/")
+    assert 'href="/investments"' in home.text and 'href="/networth"' in home.text
+    assert 'href="/more"' in home.text and client.get("/more").status_code == 200
+
+
+def test_valuation_flow_yield_and_year_position(client: TestClient, container: Container) -> None:
+    checking, savings = make_investment(client, container)
+    first = client.post(
+        f"/investments/{savings}/valuation",
+        data={"date": "2025-12-31", "net": "10.000,00", "gross": "10.200,00"},
+    )
+    assert first.status_code == 303 and first.headers["location"] == "/investments?ok=valuation"
+    flow = client.post(
+        "/investments/flow",
+        data={
+            "investment_account_id": savings,
+            "direction": "contribution",
+            "other_account_id": checking,
+            "amount": "500,00",
+            "date": "2026-03-15",
+        },
+    )
+    assert flow.status_code == 303 and "ok=flow" in flow.headers["location"]
+    second = client.post(
+        f"/investments/{savings}/valuation", data={"date": "2026-06-30", "net": "10.700,00"}
+    )
+    assert "ok=valuation_yield" in second.headers["location"]
+    notice = client.get(second.headers["location"])
+    assert "Rendimento desde a avaliação anterior" in notice.text and "+ R$ 200,00" in notice.text
+    assert "não é renda" in notice.text
+    page = client.get("/investments?year=2026")
+    assert "R$ 10.700,00" in page.text  # current value
+    assert "Aportes líquidos em 2026" in page.text and "R$ 500,00" in page.text
+    assert "Rendimento capitalizado em 2026" in page.text and "retorno simples" in page.text
+    assert "Posição em 31/12/2026" in page.text
+    assert 'value="other" selected' in page.text  # default class of a new investment account
+    with container.uow as work:
+        anchors = work.anchors.list_for_account(savings)
+    assert [a.gross_balance_cents for a in anchors] == [1_020_000, None]
+
+
+def test_investment_errors_in_portuguese(client: TestClient, container: Container) -> None:
+    checking, savings = make_investment(client, container)
+    bad_gross = client.post(
+        f"/investments/{savings}/valuation",
+        data={"date": "2026-07-01", "net": "100", "gross": "90"},
+    )
+    assert bad_gross.status_code == 400 and "valor bruto não pode ser menor" in bad_gross.text
+    wrong = client.post(
+        "/investments/flow",
+        data={
+            "investment_account_id": checking,
+            "direction": "contribution",
+            "amount": "10",
+            "date": "2026-07-01",
+        },
+    )
+    assert wrong.status_code == 400 and "exige uma conta de investimento" in wrong.text
+
+
+def test_investment_settings_and_stale_flag(client: TestClient, container: Container) -> None:
+    _, savings = make_investment(client, container)
+    old = (dt.date.today() - dt.timedelta(days=60)).isoformat()
+    client.post(f"/investments/{savings}/valuation", data={"date": old, "net": "1.000,00"})
+    client.post(
+        f"/investments/{savings}/settings", data={"asset_class": "fixed_income", "emergency": "1"}
+    )
+    page = client.get("/investments")
+    assert "Desatualizada · 60 dias" in page.text
+    assert 'value="fixed_income" selected' in page.text and "· reserva" in page.text
+    with container.uow as work:
+        account = work.accounts.get(savings)
+    assert account and account.is_emergency_fund and account.asset_class.value == "fixed_income"  # type: ignore[union-attr]
+
+
+def test_net_worth_page_is_partial_until_everything_is_informed(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings = make_investment(client, container)
+    page = client.get("/networth")
+    assert (
+        "Parcial · 2 pendente(s)" in page.text
+        and "O que falta para o total ficar completo" in page.text
+    )
+    client.post(f"/accounts/{checking}/balance", data={"date": "2026-01-01", "amount": "1.000,00"})
+    client.post(f"/investments/{savings}/valuation", data={"date": "2026-01-01", "net": "9.000,00"})
+    page = client.get("/networth")
+    assert "R$ 10.000,00" in page.text and "Parcial" not in page.text
+    home = client.get("/")
+    assert "Patrimônio líquido" in home.text and "R$ 10.000,00" in home.text
+    assert "Aportes líquidos" in home.text
+
+
+def test_net_worth_subtracts_card_statements(client: TestClient, container: Container) -> None:
+    checking, card = make_card(client, container)
+    client.post(f"/accounts/{checking}/balance", data={"date": "2026-01-01", "amount": "5.000,00"})
+    client.post(
+        "/cards/purchase",
+        data={"account_id": card, "date": "2026-02-10", "description": "TV", "amount": "1.200,00"},
+    )
+    page = client.get("/networth")
+    assert "R$ 3.800,00" in page.text  # 5.000 - 1.200 (closed statement, long past)
+    assert "Faturas fechadas a pagar" in page.text and "− R$ 1.200,00" in page.text
+
+
+# --- fixed-income holdings (Phase 3b) ------------------------------------------------------------
+
+
+def make_broker(client: TestClient, container: Container) -> tuple[str, str, str]:
+    """A checking account, a holdings-level investment account and the issuer institution."""
+    checking, savings = setup_accounts(client, container)
+    with container.uow as work:
+        inst = work.institutions.list_all()[0]
+    switched = client.post(
+        f"/investments/{savings}/settings",
+        data={"asset_class": "fixed_income", "tracking": "holdings"},
+    )
+    assert switched.status_code == 303
+    return checking, savings, inst.id
+
+
+def new_holding(client: TestClient, account: str, issuer: str, **extra: str) -> object:
+    data = {
+        "account_id": account,
+        "name": "CDB Banco X 110% CDI",
+        "instrument_type": "cdb",
+        "issuer_id": issuer,
+        "applied_on": "2026-03-01",
+        "principal": "10.000,00",
+        "liquidity": "at_maturity",
+        "maturity_on": "2028-03-01",
+        "indexer": "cdi",
+        "rate_mode": "percent_of_index",
+        "rate": "110",
+        **extra,
+    }
+    return client.post("/investments/holdings", data=data)
+
+
+def test_holdings_page_guides_the_switch_and_creates_a_holding(
+    client: TestClient, container: Container
+) -> None:
+    _, savings = setup_accounts(client, container)
+    assert "Por aplicação" in client.get("/investments").text  # the switch is in the settings
+    with container.uow as work:
+        issuer = work.institutions.list_all()[0].id
+        checking = next(a.id for a in work.accounts.list_all() if a.nickname == "Conta Corrente")
+    client.post(
+        f"/investments/{savings}/settings",
+        data={"asset_class": "fixed_income", "tracking": "holdings"},
+    )
+    response = new_holding(client, savings, issuer, contribute="1", from_account_id=checking)
+    assert response.status_code == 303 and "ok=holding" in response.headers["location"]  # type: ignore[attr-defined]
+    page = client.get("/investments")
+    assert "CDB Banco X 110% CDI" in page.text and "110% do CDI" in page.text
+    assert "01/03/2028" in page.text and "No vencimento" in page.text
+    assert "Sem avaliação" in page.text  # nothing valued yet
+    with container.uow as work:
+        (holding,) = work.holdings.list_all()
+        legs = work.transactions.list_by_account(savings)
+    assert holding.fgc_covered is True and [leg.holding_id for leg in legs] == [holding.id]
+
+
+def test_holding_errors_in_portuguese(client: TestClient, container: Container) -> None:
+    _, savings, issuer = make_broker(client, container)
+    for extra, text in [
+        ({"maturity_on": ""}, "Informe o vencimento"),
+        ({"rate": ""}, "Taxa inválida"),
+        ({"maturity_on": "2026-01-01"}, "depois da data de aplicação"),
+        ({"principal": "0"}, "maior que zero"),
+    ]:
+        bad = new_holding(client, savings, issuer, **extra)
+        assert bad.status_code == 400 and text in bad.text, text  # type: ignore[attr-defined]
+
+
+def test_holding_valuation_flow_flags_and_redemption(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer)
+    with container.uow as work:
+        (holding,) = work.holdings.list_all()
+    first = client.post(
+        f"/investments/holdings/{holding.id}/valuation",
+        data={"date": "2026-09-30", "net": "10.500,00", "gross": "10.700,00"},
+    )
+    assert "ok=valuation" in first.headers["location"]
+    flow = client.post(
+        "/investments/flow",
+        data={
+            "target": f"h:{holding.id}",
+            "direction": "contribution",
+            "other_account_id": checking,
+            "amount": "500,00",
+            "date": "2026-10-01",
+        },
+    )
+    assert flow.status_code == 303
+    second = client.post(
+        f"/investments/holdings/{holding.id}/valuation",
+        data={"date": "2026-10-31", "net": "11.100,00"},
+    )
+    assert "ok=valuation_yield" in second.headers["location"]
+    assert "+ R$ 100,00" in client.get(second.headers["location"]).text
+    page = client.get("/investments")
+    assert "R$ 11.100,00" in page.text  # holdings-level account value = sum of holdings
+    blocked = client.post(
+        f"/investments/{savings}/valuation", data={"date": "2026-10-31", "net": "1,00"}
+    )
+    assert blocked.status_code == 400 and "controlada por aplicação" in blocked.text
+    assert (
+        client.post(
+            f"/investments/holdings/{holding.id}/flags", data={"emergency": "1"}
+        ).status_code
+        == 303
+    )
+    with container.uow as work:
+        got = work.holdings.get(holding.id)
+    assert got and got.fgc_covered is False and got.is_emergency_fund is True
+    redeemed = client.post(
+        f"/investments/holdings/{holding.id}/redeem",
+        data={"date": "2027-03-01", "amount": "11.800,00", "to_account_id": checking},
+    )
+    assert redeemed.status_code == 303 and "ok=redeemed" in redeemed.headers["location"]
+    page = client.get("/investments")
+    assert "Resgatada" in page.text
+    again = client.post(
+        f"/investments/holdings/{holding.id}/redeem", data={"date": "2027-03-02", "amount": "1"}
+    )
+    assert again.status_code == 400 and "já foi resgatada" in again.text
+
+
+def test_brazilian_views_on_the_page(client: TestClient, container: Container) -> None:
+    checking, savings, issuer = make_broker(client, container)
+    client.post(f"/accounts/{checking}/balance", data={"date": "2026-09-01", "amount": "1.320,00"})
+    new_holding(client, savings, issuer, name="CDB reserva", emergency="1")
+    new_holding(
+        client,
+        savings,
+        issuer,
+        name="Tesouro IPCA",
+        instrument_type="treasury_ipca",
+        liquidity="daily",
+        maturity_on="2035-03-01",
+        indexer="ipca",
+        rate_mode="spread_over_index",
+        rate="6,5",
+    )
+    with container.uow as work:
+        holdings = {h.name: h for h in work.holdings.list_all()}
+    for name, net in (("CDB reserva", "20.000,00"), ("Tesouro IPCA", "5.000,00")):
+        client.post(
+            f"/investments/holdings/{holdings[name].id}/valuation",
+            data={"date": "2026-09-30", "net": net},
+        )
+    page = client.get("/investments")
+    assert (
+        "Escada de vencimentos" in page.text and "mar/2028" in page.text and "mar/2035" in page.text
+    )
+    assert "não projeta valor no vencimento" in page.text
+    assert "Disponível hoje" in page.text and "Mais tarde" in page.text
+    assert "Exposição ao FGC por grupo" in page.text and "fgc.org.br" in page.text
+    assert "R$ 21.320,00" in page.text  # the covered CDB (the Treasury is not covered) + checking
+    assert "IPCA + 6,50%" in page.text
+    assert "R$ 20.000,00 marcados como reserva" in page.text
+    assert "Sem gasto essencial nos últimos 3 meses fechados" in page.text
+
+
+def test_net_worth_lists_holdings_without_valuation(
+    client: TestClient, container: Container
+) -> None:
+    _, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer)
+    page = client.get("/networth")
+    assert "CDB Banco X 110% CDI" in page.text and "Informar avaliação" in page.text
+    assert "Parcial" in page.text

@@ -200,3 +200,13 @@ tr.inactive { opacity: .6; }
 .explain strong { color: var(--navy); }
 .sched-row { grid-template-columns: 64px minmax(0, 1fr) 56px 56px 110px; padding: 10px 12px; }
 .segmented.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* investments and net worth */
+.big { font-size: 32px; font-weight: 600; line-height: 1.2; }
+.nw-lines { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: #D5DDE8; }
+.nw-lines > span { display: flex; justify-content: space-between; gap: 12px; }
+.nw-lines .apart { margin-top: 6px; }
+.light-link { color: #fff; font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; }
+.light-link:hover { color: #fff; text-decoration: underline; }
+.more-links li { align-items: center; min-height: 52px; }
+.more-links a { font-weight: 600; font-size: 17px; text-decoration: none; }
