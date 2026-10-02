@@ -114,6 +114,7 @@ class RegisterTransferCommand:
     """Money moved from ``from_account_id`` to ``to_account_id``.
 
     Either side may be ``None`` when that account is not tracked: one leg is created.
+    ``holding_id`` tags the leg that lands on (or leaves) an investment account (9.6).
     """
 
     from_account_id: str | None
@@ -122,6 +123,41 @@ class RegisterTransferCommand:
     amount_cents: int
     description: str = ""
     notes: str | None = None
+    holding_id: str | None = None
+
+
+def build_transfer_legs(uow: UnitOfWork, cmd: RegisterTransferCommand) -> list[Transaction]:
+    """Validate and build the legs inside an open unit of work (the caller adds and commits)."""
+    magnitude = _magnitude(cmd.amount_cents)
+    validate_transfer_accounts(cmd.from_account_id, cmd.to_account_id)
+    description = clean_text(cmd.description)
+    transfer_id = new_id()
+    category = found(uow.categories.get_by_slug("transfer"), "category")
+    legs: list[Transaction] = []
+    for account_id, amount in (
+        (cmd.from_account_id, -magnitude),
+        (cmd.to_account_id, magnitude),
+    ):
+        if account_id is None:
+            continue
+        account = found(uow.accounts.get(account_id), "account")
+        _check_account(account, _TRANSFER_ACCOUNT_KINDS)
+        legs.append(
+            Transaction(
+                id=new_id(),
+                account_id=account_id,
+                posted_on=cmd.posted_on,
+                kind=TransactionKind.TRANSFER,
+                category_id=category.id,
+                amount_cents=amount,
+                description=description,
+                description_search=normalize_search(description),
+                transfer_id=transfer_id,
+                notes=clean_text(cmd.notes) if cmd.notes else None,
+                holding_id=cmd.holding_id if account.kind is AccountKind.INVESTMENT else None,
+            )
+        )
+    return legs
 
 
 class RegisterTransfer:
@@ -129,36 +165,8 @@ class RegisterTransfer:
         self._uow = uow
 
     def execute(self, cmd: RegisterTransferCommand) -> list[Transaction]:
-        magnitude = _magnitude(cmd.amount_cents)
-        validate_transfer_accounts(cmd.from_account_id, cmd.to_account_id)
-        description = clean_text(cmd.description)
-        transfer_id = new_id()
         with self._uow as uow:
-            category = found(uow.categories.get_by_slug("transfer"), "category")
-            legs: list[Transaction] = []
-            for account_id, amount in (
-                (cmd.from_account_id, -magnitude),
-                (cmd.to_account_id, magnitude),
-            ):
-                if account_id is None:
-                    continue
-                _check_account(
-                    found(uow.accounts.get(account_id), "account"), _TRANSFER_ACCOUNT_KINDS
-                )
-                legs.append(
-                    Transaction(
-                        id=new_id(),
-                        account_id=account_id,
-                        posted_on=cmd.posted_on,
-                        kind=TransactionKind.TRANSFER,
-                        category_id=category.id,
-                        amount_cents=amount,
-                        description=description,
-                        description_search=normalize_search(description),
-                        transfer_id=transfer_id,
-                        notes=clean_text(cmd.notes) if cmd.notes else None,
-                    )
-                )
+            legs = build_transfer_legs(uow, cmd)
             uow.transactions.add_many(legs)
             uow.commit()
         return legs

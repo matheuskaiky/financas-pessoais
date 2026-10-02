@@ -1,0 +1,228 @@
+"""Fixed-income holdings (Brazil): contract data, valuations, flows, redemption (9.6, 3b).
+
+Contract data is display only. Taxes are never computed; the institution's net value is the
+source. A holdings-level account has valuations per holding, never for the whole account.
+"""
+
+import datetime as dt
+from dataclasses import dataclass, replace
+
+from financas.application.use_cases._common import found, new_id
+from financas.application.use_cases.transactions import (
+    RegisterTransferCommand,
+    build_transfer_legs,
+)
+from financas.domain.errors import DomainError
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    AssetClass,
+    BalanceAnchor,
+    HoldingStatus,
+    Indexer,
+    InstrumentType,
+    InvestmentHolding,
+    InvestmentTracking,
+    Liquidity,
+    RateMode,
+    Transaction,
+)
+from financas.domain.ports import UnitOfWork
+from financas.domain.rules import validate_gross_balance, validate_holding
+from financas.domain.services.holdings import suggest_fgc_covered
+from financas.domain.services.text import clean_text
+
+
+def _holdings_account(uow: UnitOfWork, account_id: str) -> Account:
+    account = found(uow.accounts.get(account_id), "account")
+    if account.kind is not AccountKind.INVESTMENT:
+        raise DomainError("INVESTMENT_REQUIRED")
+    if account.tracking is not InvestmentTracking.HOLDINGS:
+        raise DomainError("ACCOUNT_NOT_HOLDINGS_LEVEL")
+    return account
+
+
+@dataclass(frozen=True)
+class RegisterHoldingCommand:
+    account_id: str
+    name: str
+    instrument_type: InstrumentType
+    issuer_id: str
+    applied_on: dt.date
+    principal_cents: int
+    liquidity: Liquidity
+    indexer: Indexer | None = None
+    rate_mode: RateMode | None = None
+    rate_bps: int | None = None
+    maturity_on: dt.date | None = None
+    liquid_from: dt.date | None = None
+    fgc_covered: bool | None = None  # None: the suggestion for the instrument type
+    is_emergency_fund: bool = False
+    asset_class: AssetClass | None = None  # None: the account's class
+    contribute: bool = False  # also register the principal as a contribution on ``applied_on``
+    from_account_id: str | None = None  # checking account that paid it (None: not tracked)
+
+
+class RegisterHolding:
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: RegisterHoldingCommand) -> InvestmentHolding:
+        with self._uow as uow:
+            account = _holdings_account(uow, cmd.account_id)
+            found(uow.institutions.get(cmd.issuer_id), "institution")
+            holding = InvestmentHolding(
+                id=new_id(),
+                account_id=account.id,
+                name=clean_text(cmd.name),
+                instrument_type=cmd.instrument_type,
+                issuer_id=cmd.issuer_id,
+                indexer=cmd.indexer,
+                rate_mode=cmd.rate_mode,
+                rate_bps=cmd.rate_bps,
+                applied_on=cmd.applied_on,
+                principal_cents=cmd.principal_cents,
+                maturity_on=cmd.maturity_on,
+                liquidity=cmd.liquidity,
+                liquid_from=cmd.liquid_from,
+                fgc_covered=(
+                    suggest_fgc_covered(cmd.instrument_type)
+                    if cmd.fgc_covered is None
+                    else cmd.fgc_covered
+                ),
+                is_emergency_fund=cmd.is_emergency_fund,
+                asset_class=cmd.asset_class or account.asset_class or AssetClass.FIXED_INCOME,
+            )
+            validate_holding(holding)
+            uow.holdings.add(holding)
+            if cmd.contribute:
+                legs = build_transfer_legs(
+                    uow,
+                    RegisterTransferCommand(
+                        from_account_id=cmd.from_account_id,
+                        to_account_id=account.id,
+                        posted_on=cmd.applied_on,
+                        amount_cents=cmd.principal_cents,
+                        holding_id=holding.id,
+                    ),
+                )
+                uow.transactions.add_many(legs)
+            uow.commit()
+        return holding
+
+
+class SetHoldingFlags:
+    """``fgc_covered`` is suggested by type and editable; so is the emergency-fund mark."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(
+        self, holding_id: str, fgc_covered: bool, is_emergency_fund: bool
+    ) -> InvestmentHolding:
+        with self._uow as uow:
+            holding = replace(
+                found(uow.holdings.get(holding_id), "holding"),
+                fgc_covered=fgc_covered,
+                is_emergency_fund=is_emergency_fund,
+            )
+            uow.holdings.update(holding)
+            uow.commit()
+        return holding
+
+
+@dataclass(frozen=True)
+class RecordHoldingValuationCommand:
+    holding_id: str
+    on_date: dt.date
+    balance_cents: int  # net redemption value, as the institution shows it
+    gross_balance_cents: int | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class RecordHoldingValuationResult:
+    anchor: BalanceAnchor
+    computed_cents: int | None
+    difference_cents: int | None  # informed - computed: the yield since the last valuation
+
+
+class RecordHoldingValuation:
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: RecordHoldingValuationCommand) -> RecordHoldingValuationResult:
+        from financas.domain.services.balances import AnchorPoint, balance_on
+
+        validate_gross_balance(cmd.balance_cents, cmd.gross_balance_cents)
+        with self._uow as uow:
+            holding = found(uow.holdings.get(cmd.holding_id), "holding")
+            _holdings_account(uow, holding.account_id)
+            if holding.status is HoldingStatus.REDEEMED:
+                raise DomainError("HOLDING_REDEEMED")
+            others = [
+                AnchorPoint(a.on_date, a.balance_cents)
+                for a in uow.anchors.list_for_holding(holding.id)
+                if a.on_date != cmd.on_date
+            ]
+            computed = balance_on(
+                others, uow.transactions.movements_for_holding(holding.id), cmd.on_date
+            )
+            anchor = BalanceAnchor(
+                id=new_id(),
+                account_id=holding.account_id,
+                on_date=cmd.on_date,
+                balance_cents=cmd.balance_cents,
+                note=clean_text(cmd.note) if cmd.note else None,
+                gross_balance_cents=cmd.gross_balance_cents,
+                holding_id=holding.id,
+            )
+            uow.anchors.upsert(anchor)
+            uow.commit()
+        difference = None if computed is None else cmd.balance_cents - computed
+        return RecordHoldingValuationResult(anchor, computed, difference)
+
+
+@dataclass(frozen=True)
+class RedeemHoldingCommand:
+    holding_id: str
+    redeemed_on: dt.date
+    amount_cents: int  # what the institution paid out (net)
+    to_account_id: str | None = None  # checking account that received it (None: not tracked)
+
+
+class RedeemHolding:
+    """A withdrawal plus ``status=redeemed`` and a zero valuation, atomically (9.6).
+
+    The zero valuation makes the yield of the whole holding come out right: payout minus what
+    was put in, with no tax computed.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: RedeemHoldingCommand) -> list[Transaction]:
+        with self._uow as uow:
+            holding = found(uow.holdings.get(cmd.holding_id), "holding")
+            _holdings_account(uow, holding.account_id)
+            if holding.status is HoldingStatus.REDEEMED:
+                raise DomainError("HOLDING_REDEEMED")
+            legs = build_transfer_legs(
+                uow,
+                RegisterTransferCommand(
+                    from_account_id=holding.account_id,
+                    to_account_id=cmd.to_account_id,
+                    posted_on=cmd.redeemed_on,
+                    amount_cents=cmd.amount_cents,
+                    holding_id=holding.id,
+                ),
+            )
+            uow.transactions.add_many(legs)
+            uow.anchors.upsert(
+                BalanceAnchor(
+                    new_id(), holding.account_id, cmd.redeemed_on, 0, None, None, holding.id
+                )
+            )
+            uow.holdings.update(replace(holding, status=HoldingStatus.REDEEMED))
+            uow.commit()
+        return legs

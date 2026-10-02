@@ -5,7 +5,9 @@ Definitions (each one has a test):
 - ``refunds``: sum of ``refund`` entries, shown apart; ``net_expenses = expenses - refunds``.
   (Open decision 3: refunds kept apart, as in the spreadsheet.)
 - ``balance = income - net_expenses``; ``savings_rate = balance / income`` (``None`` if no income).
-- Transfers are neither income nor expense and never appear here.
+- Transfers are neither income nor expense and never appear in them. The legs on investment
+  accounts give ``net_contributions`` (contributions - withdrawals) and
+  ``investment_rate = net_contributions / income`` (``None`` if income = 0).
 - ``recurring`` = expenses flagged ``is_recurring``; ``variable`` = the other expenses.
 - Category and group rows cover gross expenses; ``share`` is the part of total expenses.
 - A card entry counts in its **statement month** (open decision 1); everything else counts in the
@@ -13,10 +15,16 @@ Definitions (each one has a test):
 """
 
 import datetime as dt
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
-from financas.domain.models import Category, CategoryGroup, Transaction, TransactionKind
+from financas.domain.models import (
+    AccountKind,
+    Category,
+    CategoryGroup,
+    Transaction,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
 
@@ -66,6 +74,8 @@ class Summary:
     by_category: list[CategoryTotal]
     by_group: list[GroupTotal]
     entry_count: int
+    net_contributions_cents: int = 0
+    investment_rate: float | None = None
 
 
 def summarize(
@@ -73,8 +83,9 @@ def summarize(
     categories: Mapping[str, Category],
     period: Period,
     statement_months: Mapping[str, YearMonth] | None = None,
+    investment_account_ids: Collection[str] = (),
 ) -> Summary:
-    income = expenses = refunds = recurring = 0
+    income = expenses = refunds = recurring = contributions = 0
     per_category: dict[str, list[int]] = {}
     count = 0
     months = statement_months or {}
@@ -87,6 +98,8 @@ def summarize(
             continue
         match t.kind:
             case TransactionKind.TRANSFER:
+                if t.account_id in investment_account_ids:
+                    contributions += t.amount_cents
                 continue
             case TransactionKind.INCOME:
                 income += t.amount_cents
@@ -136,6 +149,8 @@ def summarize(
         by_category=by_category,
         by_group=by_group,
         entry_count=count,
+        net_contributions_cents=contributions,
+        investment_rate=contributions / income if income else None,
     )
 
 
@@ -148,7 +163,10 @@ class GetSummary:
             categories = {c.id: c for c in uow.categories.list_all()}
             transactions = uow.transactions.list_for_competence(period.start, period.end)
             months = {s.id: s.month for s in uow.statements.list_all()}
-        return summarize(transactions, categories, period, months)
+            investments = {
+                a.id for a in uow.accounts.list_all() if a.kind is AccountKind.INVESTMENT
+            }
+        return summarize(transactions, categories, period, months, investments)
 
     def months_of_year(self, year: int) -> list[Summary]:
         """Twelve monthly summaries (for the year view and charts)."""
@@ -157,7 +175,12 @@ class GetSummary:
             year_period = Period.year(year)
             transactions = uow.transactions.list_for_competence(year_period.start, year_period.end)
             months = {s.id: s.month for s in uow.statements.list_all()}
+            investments = {
+                a.id for a in uow.accounts.list_all() if a.kind is AccountKind.INVESTMENT
+            }
         return [
-            summarize(transactions, categories, Period.month(YearMonth(year, m)), months)
+            summarize(
+                transactions, categories, Period.month(YearMonth(year, m)), months, investments
+            )
             for m in range(1, 13)
         ]

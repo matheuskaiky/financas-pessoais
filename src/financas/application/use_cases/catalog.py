@@ -8,10 +8,12 @@ from financas.domain.errors import DomainError
 from financas.domain.models import (
     Account,
     AccountKind,
+    AssetClass,
     Category,
     CategoryGroup,
     CategoryKind,
     Institution,
+    InvestmentTracking,
 )
 from financas.domain.ports import ImageStore, UnitOfWork
 from financas.domain.rules import normalize_color, validate_card_settings, validate_group_kind
@@ -70,6 +72,8 @@ class CreateAccountCommand:
     closing_day: int | None = None  # credit cards only
     due_day: int | None = None
     credit_limit_cents: int | None = None
+    asset_class: AssetClass | None = None  # investment accounts only (default: other)
+    is_emergency_fund: bool = False
 
 
 class CreateAccount:
@@ -81,6 +85,9 @@ class CreateAccount:
             validate_card_settings(cmd.closing_day, cmd.due_day, cmd.credit_limit_cents)
         elif (cmd.closing_day, cmd.due_day, cmd.credit_limit_cents) != (None, None, None):
             raise DomainError("CARD_FIELDS_ONLY_FOR_CARDS")
+        investment = cmd.kind is AccountKind.INVESTMENT
+        if not investment and (cmd.asset_class is not None or cmd.is_emergency_fund):
+            raise DomainError("INVESTMENT_FIELDS_ONLY_FOR_INVESTMENTS")
         account = Account(
             id=new_id(),
             kind=cmd.kind,
@@ -90,10 +97,51 @@ class CreateAccount:
             closing_day=cmd.closing_day,
             due_day=cmd.due_day,
             credit_limit_cents=cmd.credit_limit_cents,
+            tracking=InvestmentTracking.ACCOUNT if investment else None,
+            asset_class=(cmd.asset_class or AssetClass.OTHER) if investment else None,
+            is_emergency_fund=cmd.is_emergency_fund,
         )
         with self._uow as uow:
             found(uow.institutions.get(cmd.institution_id), "institution")
             uow.accounts.add(account)
+            uow.commit()
+        return account
+
+
+class SetInvestmentSettings:
+    """Asset class and emergency-fund flag of an investment account (9.6)."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(
+        self,
+        account_id: str,
+        asset_class: AssetClass,
+        is_emergency_fund: bool,
+        tracking: InvestmentTracking | None = None,
+    ) -> Account:
+        """``tracking`` switches the level; refused while the level in use holds data (9.6)."""
+        with self._uow as uow:
+            account = found(uow.accounts.get(account_id), "account")
+            if account.kind is not AccountKind.INVESTMENT:
+                raise DomainError("INVESTMENT_REQUIRED")
+            new_tracking = tracking or account.tracking
+            if new_tracking is not account.tracking:
+                in_use = (
+                    uow.anchors.list_for_account(account.id)
+                    if account.tracking is InvestmentTracking.ACCOUNT
+                    else uow.holdings.list_for_account(account.id)
+                )
+                if in_use:
+                    raise DomainError("TRACKING_IN_USE")
+            account = replace(
+                account,
+                asset_class=asset_class,
+                is_emergency_fund=is_emergency_fund,
+                tracking=new_tracking,
+            )
+            uow.accounts.update(account)
             uow.commit()
         return account
 

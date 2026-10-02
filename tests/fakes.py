@@ -14,6 +14,7 @@ from financas.domain.models import (
     Category,
     InstallmentPlan,
     Institution,
+    InvestmentHolding,
     Statement,
     Transaction,
     TransactionKind,
@@ -157,6 +158,11 @@ class MemoryTransactions:
             (t.posted_on, t.amount_cents) for t in self.items.values() if t.account_id == account_id
         ]
 
+    def movements_for_holding(self, holding_id: str) -> list[tuple[dt.date, int]]:
+        return [
+            (t.posted_on, t.amount_cents) for t in self.items.values() if t.holding_id == holding_id
+        ]
+
     def last_category_id(self, description_search: str, kind: TransactionKind) -> str | None:
         matches = [
             t
@@ -216,16 +222,47 @@ class MemoryPlans:
 
 class MemoryAnchors:
     def __init__(self) -> None:
+        # the target is the holding when there is one, else the account
         self.items: dict[tuple[str, dt.date], BalanceAnchor] = {}
 
+    @staticmethod
+    def _key(anchor: BalanceAnchor) -> tuple[str, dt.date]:
+        return (anchor.holding_id or anchor.account_id, anchor.on_date)
+
     def upsert(self, anchor: BalanceAnchor) -> None:
-        self.items[(anchor.account_id, anchor.on_date)] = anchor
+        self.items[self._key(anchor)] = anchor
 
     def list_for_account(self, account_id: str) -> list[BalanceAnchor]:
         return sorted(
-            (a for a in self.items.values() if a.account_id == account_id),
+            (a for a in self.items.values() if a.account_id == account_id and a.holding_id is None),
             key=lambda a: a.on_date,
         )
+
+    def list_for_holding(self, holding_id: str) -> list[BalanceAnchor]:
+        return sorted(
+            (a for a in self.items.values() if a.holding_id == holding_id),
+            key=lambda a: a.on_date,
+        )
+
+
+class MemoryHoldings:
+    def __init__(self) -> None:
+        self.items: dict[str, InvestmentHolding] = {}
+
+    def add(self, holding: InvestmentHolding) -> None:
+        self.items[holding.id] = holding
+
+    def update(self, holding: InvestmentHolding) -> None:
+        self.items[holding.id] = holding
+
+    def get(self, holding_id: str) -> InvestmentHolding | None:
+        return self.items.get(holding_id)
+
+    def list_all(self) -> list[InvestmentHolding]:
+        return list(self.items.values())
+
+    def list_for_account(self, account_id: str) -> list[InvestmentHolding]:
+        return [h for h in self.items.values() if h.account_id == account_id]
 
 
 class MemoryImageStore:
@@ -254,6 +291,7 @@ class MemoryUnitOfWork:
         self.categories = MemoryCategories()
         self.statements = MemoryStatements()
         self.plans = MemoryPlans()
+        self.holdings = MemoryHoldings()
         self.transactions = MemoryTransactions(self.statements)
         self.anchors = MemoryAnchors()
         self._snapshot: dict[str, object] | None = None
@@ -268,6 +306,7 @@ class MemoryUnitOfWork:
             "anchors": self.anchors,
             "statements": self.statements,
             "plans": self.plans,
+            "holdings": self.holdings,
         }
 
     def __enter__(self) -> Self:
