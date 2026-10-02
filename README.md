@@ -2,7 +2,7 @@
 
 Gestão financeira pessoal **local, privada e sob medida**. Você lança contas, compras no cartão (com parcelas e fatura), transferências e investimentos; o sistema calcula faturas, saldos, parcelamentos, patrimônio e totais, sem enviar nada a terceiros.
 
-> **Status:** em desenvolvimento. As Fases 0, 1 e 2 estão prontas (núcleo manual e cartões: compras à vista, parceladas e em andamento, faturas, pagamento, conferência e limite). Os comandos de investimentos descrevem o uso-alvo e passam a funcionar conforme as fases avançam (veja o [roadmap](#roadmap)).
+> **Status:** em desenvolvimento. As Fases 0 a 3 estão prontas (núcleo manual, cartões e investimentos: avaliações líquidas, aportes e resgates, rendimento, alocação, aplicações de renda fixa, escada de vencimentos, liquidez, exposição ao FGC, reserva de emergência e patrimônio líquido). Os comandos abaixo funcionam como descritos; as fases seguintes são orçamento e recorrentes (veja o [roadmap](#roadmap)).
 >
 > **Escopo atual: entrada manual.** Por enquanto **não há importação** de extratos, faturas ou planilhas. Os dados entram pelo painel web ou pela CLI.
 
@@ -159,9 +159,14 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 | `financas card buy` | Compra no cartão: à vista, parcelada ou em andamento; mostra o cronograma e a explicação da fatura antes de salvar |
 | `financas card installments` | Parcelas ativas: pagas, restantes e quanto falta pagar |
 | `financas statement list \| show \| pay \| inform \| difference \| dates` | Faturas: situação, pagamento (parcial ou total), conferência com o total do banco, diferença e correção de datas |
-| `financas invest value` | Registra uma avaliação de conta ou aplicação |
-| `financas invest holding add \| list` | Aplicações de renda fixa (CDB, LCI, Tesouro...) |
-| `financas report monthly 2026-08 \| net-worth \| maturities \| fgc \| year-end 2026` | Relatórios no terminal |
+| `financas invest list` | Contas de investimento: valor atual (líquido), aportes, rendimento, retorno e idade da avaliação |
+| `financas invest value CONTA 10.000,00 --gross 10.200,00` | Registra a avaliação de uma conta (líquido e, opcional, bruto) e mostra o rendimento desde a anterior |
+| `financas invest flow CONTA 500,00 --from "Conta corrente"` | Aporte (ou `--withdraw` para resgate): é transferência, não receita nem despesa |
+| `financas invest settings CONTA --class fixed_income --emergency --tracking holdings` | Classe, reserva de emergência e nível de controle (por conta ou por aplicação) |
+| `financas invest holding add \| list \| value \| flow \| redeem \| flags` | Aplicações de renda fixa (CDB, LCI, Tesouro...) numa conta controlada por aplicação |
+| `financas invest ladder \| liquidity \| fgc \| emergency` | Escada de vencimentos, faixas de liquidez, exposição ao FGC por grupo e cobertura da reserva de emergência |
+| `financas invest year 2026` | Aportes, rendimento capitalizado (não é renda), distribuições e posição em 31/12 |
+| `financas networth` | Patrimônio líquido: caixa + investimentos − faturas; parcelas futuras à parte |
 | `financas backup` | Cópia consistente do banco e das imagens em `data/backups/` |
 | `financas serve` | Painel web local |
 
@@ -216,9 +221,9 @@ uv run lint-imports        # confere as regras de camadas
 - [x] **Fase 0, bootstrap:** estrutura do projeto, ferramentas de qualidade, funções de dinheiro e invariantes com testes.
 - [x] **Fase 1, núcleo manual:** instituições, contas, categorias, receitas e despesas, transferências, saldos informados, backup, painel mensal.
 - [x] **Fase 2, cartões:** compras e parcelas, faturas, pagamento, conferência, limite.
-- [ ] **Fase 3, investimentos e patrimônio:**
-  - [ ] **3a, nível da conta:** avaliações (líquido e bruto), aportes e resgates, rendimento, alocação, patrimônio líquido, totais anuais.
-  - [ ] **3b, aplicações de renda fixa:** dados do contrato, vencimentos, liquidez, exposição ao FGC, reserva de emergência, posição em 31/12.
+- [x] **Fase 3, investimentos e patrimônio:**
+  - [x] **3a, nível da conta:** avaliações (líquido e bruto), aportes e resgates, rendimento, alocação, patrimônio líquido, totais anuais.
+  - [x] **3b, aplicações de renda fixa:** dados do contrato, vencimentos, liquidez, exposição ao FGC, reserva de emergência, posição em 31/12.
 - [ ] **Fase 4, acompanhamento:** orçamento, recorrentes com alertas, fluxo diário.
 - [ ] **Fase 5, opcional:** servidor fechado, autenticação e backup criptografado.
 
