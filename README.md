@@ -2,7 +2,7 @@
 
 Gestão financeira pessoal **local, privada e sob medida**. Você lança contas, compras no cartão (com parcelas e fatura), transferências e investimentos; o sistema calcula faturas, saldos, parcelamentos, patrimônio e totais, sem enviar nada a terceiros.
 
-> **Status:** em desenvolvimento. As Fases 0 e 1 estão prontas (núcleo manual: instituições, contas, categorias, lançamentos, transferências, saldos, backup e painel mensal). Os comandos de cartões e investimentos descrevem o uso-alvo e passam a funcionar conforme as fases avançam (veja o [roadmap](#roadmap)).
+> **Status:** em desenvolvimento. As Fases 0, 1 e 2 estão prontas (núcleo manual e cartões: compras à vista, parceladas e em andamento, faturas, pagamento, conferência e limite). Os comandos de investimentos descrevem o uso-alvo e passam a funcionar conforme as fases avançam (veja o [roadmap](#roadmap)).
 >
 > **Escopo atual: entrada manual.** Por enquanto **não há importação** de extratos, faturas ou planilhas. Os dados entram pelo painel web ou pela CLI.
 
@@ -147,7 +147,7 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 |---|---|
 | `financas init` | Prepara o ambiente local |
 | `financas institution add \| list` | Instituições, com `--color` e `--image` opcionais |
-| `financas account add \| list \| deactivate` | Contas correntes e de investimento (cartões: Fase 2), com saldo de hoje |
+| `financas account add \| list \| deactivate` | Contas correntes e de investimento (cartões: `card add`), com saldo de hoje |
 | `financas category add \| list` | Categorias (as iniciais são criadas pelo `init`) |
 | `financas add 45,90 "Padaria"` | Receita, despesa ou estorno (`-k income`, `-c food`, `-d 10/07/2026`, `-r`) |
 | `financas transfer 500,00 --from "Conta corrente" --to Caixinha` | Transferência entre contas (aporte, resgate, ...) |
@@ -155,8 +155,10 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 | `financas balance set \| list` | Saldo informado; mostra a diferença para o saldo calculado |
 | `financas summary -m 2026-07 \| -y 2026` | Totais do mês ou do ano |
 | `financas style institution \| account \| category` | Cor e imagem escolhidas por você |
-| `financas card buy` | Compra no cartão: à vista, parcelada ou em andamento |
-| `financas statement list \| show \| pay \| inform` | Faturas: status, pagamento, conferência com o total do banco |
+| `financas card add \| edit \| list` | Cartões: fechamento, vencimento, limite, comprometido e disponível |
+| `financas card buy` | Compra no cartão: à vista, parcelada ou em andamento; mostra o cronograma e a explicação da fatura antes de salvar |
+| `financas card installments` | Parcelas ativas: pagas, restantes e quanto falta pagar |
+| `financas statement list \| show \| pay \| inform \| difference \| dates` | Faturas: situação, pagamento (parcial ou total), conferência com o total do banco, diferença e correção de datas |
 | `financas invest value` | Registra uma avaliação de conta ou aplicação |
 | `financas invest holding add \| list` | Aplicações de renda fixa (CDB, LCI, Tesouro...) |
 | `financas report monthly 2026-08 \| net-worth \| maturities \| fgc \| year-end 2026` | Relatórios no terminal |
@@ -213,7 +215,7 @@ uv run lint-imports        # confere as regras de camadas
 
 - [x] **Fase 0, bootstrap:** estrutura do projeto, ferramentas de qualidade, funções de dinheiro e invariantes com testes.
 - [x] **Fase 1, núcleo manual:** instituições, contas, categorias, receitas e despesas, transferências, saldos informados, backup, painel mensal.
-- [ ] **Fase 2, cartões:** compras e parcelas, faturas, pagamento, conferência, limite.
+- [x] **Fase 2, cartões:** compras e parcelas, faturas, pagamento, conferência, limite.
 - [ ] **Fase 3, investimentos e patrimônio:**
   - [ ] **3a, nível da conta:** avaliações (líquido e bruto), aportes e resgates, rendimento, alocação, patrimônio líquido, totais anuais.
   - [ ] **3b, aplicações de renda fixa:** dados do contrato, vencimentos, liquidez, exposição ao FGC, reserva de emergência, posição em 31/12.
