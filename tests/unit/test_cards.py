@@ -685,3 +685,16 @@ def test_card_account_creation_rules(uow: MemoryUnitOfWork, institution: object)
         23,
         None,
     )
+
+
+def test_a_payment_from_an_untracked_account_creates_only_the_card_leg(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    september = september_statement(uow, card)
+    legs = PayStatement(uow, FixedClock(D(2026, 10, 1))).execute(
+        PayStatementCommand(september, None, D(2026, 10, 1), 4_000, "Pagamento")
+    )
+    (leg,) = legs
+    assert (leg.account_id, leg.amount_cents, leg.statement_id) == (card.id, 4_000, september)
+    view = cards_at(uow, D(2026, 10, 1)).cards[0].statements[0]
+    assert (view.paid_cents, view.outstanding_cents) == (4_000, 11_000)

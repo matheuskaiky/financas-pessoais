@@ -10,6 +10,8 @@ click==8.5.0
     # via import-linter
 colorama==0.4.6 ; sys_platform == 'win32'
     # via pytest
+et-xmlfile==2.0.0
+    # via openpyxl
 grimp==3.17
     # via import-linter
 h11==0.16.0
@@ -30,6 +32,7 @@ mdurl==0.1.2
     # via markdown-it-py
 nodeenv==1.11.0
     # via pyright
+openpyxl==3.1.5
 packaging==26.3
     # via pytest
 pluggy==1.6.0

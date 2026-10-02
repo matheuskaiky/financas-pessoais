@@ -296,7 +296,7 @@ class DeletePurchase:
 @dataclass(frozen=True)
 class PayStatementCommand:
     statement_id: str
-    from_account_id: str
+    from_account_id: str | None  # ``None``: paid from an account the system does not track
     paid_on: dt.date
     amount_cents: int | None = None  # default: what is still outstanding
     description: str = ""  # supplied by the adapter (a pt-BR text), stored as data
@@ -316,11 +316,16 @@ class PayStatement:
         with self._uow as uow:
             statement = found(uow.statements.get(cmd.statement_id), "statement")
             card = require_card(uow, statement.account_id)
-            origin = found(uow.accounts.get(cmd.from_account_id), "account")
-            if origin.kind is not AccountKind.CHECKING:
-                raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=origin.kind.value)
-            if not origin.is_active:
-                raise DomainError("ACCOUNT_INACTIVE")
+            origin = (
+                found(uow.accounts.get(cmd.from_account_id), "account")
+                if cmd.from_account_id is not None
+                else None
+            )
+            if origin is not None:
+                if origin.kind is not AccountKind.CHECKING:
+                    raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=origin.kind.value)
+                if not origin.is_active:
+                    raise DomainError("ACCOUNT_INACTIVE")
             outstanding = statement_view(uow, statement, self._clock.today()).outstanding_cents
             amount = cmd.amount_cents if cmd.amount_cents is not None else outstanding
             if amount <= 0:
@@ -344,9 +349,10 @@ class PayStatement:
                     statement_id=statement_id,
                 )
                 for account_id, signed, statement_id in (
-                    (origin.id, -amount, None),
+                    (origin.id if origin else None, -amount, None),
                     (card.id, amount, statement.id),
                 )
+                if account_id is not None
             ]
             uow.transactions.add_many(legs)
             uow.commit()
