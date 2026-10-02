@@ -8,12 +8,18 @@ statement payments, Pix, the investment sweep) is a data dialect recognised here
 
 import datetime as dt
 import re
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from financas.application.imports.model import LegacyRow, Origin, RowKind, TransferHint
+from financas.application.imports.model import (
+    LegacyAccountRow,
+    LegacyRow,
+    LegacyWorkbook,
+    Origin,
+    RowKind,
+    TransferHint,
+)
 from financas.domain.errors import DomainError
 from financas.domain.money import YearMonth
 from financas.domain.services.text import clean_text, normalize_search
@@ -45,24 +51,6 @@ _PIX_PREFIXES = (
 _TIMESTAMP_NAME = re.compile(r"\d{2}/\d{2} \d{2}:\d{2}\s+(.+)$")
 _LONG_NUMBER = re.compile(r"^\d{6,}$")
 _MAX_NOISE = Decimal("0.0000001")
-
-
-@dataclass(frozen=True)
-class LegacyAccountRow:
-    """One line of ``dim_contas``, raw: the planner never relies on it being filled in."""
-
-    institution: str
-    origin: str
-    nickname: str
-    credit_limit_cents: int | None  # ``PREENCHER`` and empty cells become ``None``
-    opening_balance_cents: int | None
-
-
-@dataclass(frozen=True)
-class LegacyWorkbook:
-    rows: list[LegacyRow]
-    accounts: list[LegacyAccountRow]
-    categories: list[str]
 
 
 def read_legacy_workbook(path: Path) -> LegacyWorkbook:

@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from financas.application.imports.planner import build_plan
 from financas.application.queries.balances import ListAccountBalances
 from financas.application.queries.cards import (
     GetStatementDetail,
@@ -99,7 +100,7 @@ from financas.domain.models import (
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
 from financas.domain.services.images import detect_image_type
-from financas.interfaces import messages
+from financas.interfaces import importing, messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
@@ -151,6 +152,10 @@ holding_app = typer.Typer(
 invest_app.add_typer(holding_app, name="holding")
 log_app = typer.Typer(help="Registro de falhas deste computador.", no_args_is_help=True)
 app.add_typer(log_app, name="log")
+import_app = typer.Typer(
+    help="Importação única da planilha antiga (apenas os dados de um ano).", no_args_is_help=True
+)
+app.add_typer(import_app, name="import")
 
 # markup is off: descriptions and names typed by the user may contain "[...]" (Rich would eat or
 # reject it); colors are applied with styles instead
@@ -683,6 +688,69 @@ def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) ->
     c.seed()
     # no access log: URLs can carry search text (descriptions never go to logs, rule 4)
     uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
+
+
+# --- spreadsheet import (CLAUDE.md 13.1) --------------------------------------------------------
+
+
+@import_app.command("plan")
+@handle_errors
+def import_plan(
+    xlsx: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="Planilha antiga (.xlsx).")
+    ],
+    year: Annotated[int, typer.Option("--year", help="Ano a importar (por competência).")] = 2026,
+    holder: Annotated[
+        str | None,
+        typer.Option(
+            "--holder",
+            help="Seus nomes, separados por vírgula (ou FINANCAS_HOLDER_ALIASES): Pix para si.",
+        ),
+    ] = None,
+) -> None:
+    """Simula a importação: grava só arquivos de revisão em data/import/, nada no banco."""
+    c = container()
+    directory = c.import_dir
+    workbook = c.read_workbook(xlsx)
+    accounts_file = directory / importing.ACCOUNTS_FILE
+    categories_file = directory / importing.CATEGORIES_FILE
+    counterparties_file = directory / importing.COUNTERPARTIES_FILE
+    entries_file = directory / importing.ENTRIES_FILE
+    if accounts_file.exists():
+        accounts = importing.read_accounts(accounts_file, c.clock.today())
+    else:
+        accounts = importing.template_accounts(workbook)
+        importing.write_accounts(accounts_file, accounts)
+        console.print(f"Modelo de contas criado: {accounts_file.name} (preencha os cartões).")
+    if categories_file.exists():
+        category_map = importing.read_categories(categories_file)
+    else:
+        category_map = importing.template_category_map(workbook)
+        importing.write_categories(categories_file, category_map)
+    decisions = (
+        importing.read_counterparty_decisions(counterparties_file)
+        if counterparties_file.exists()
+        else {}
+    )
+    edits = importing.read_entry_edits(entries_file) if entries_file.exists() else {}
+    names = holder if holder is not None else c.settings.holder_aliases
+    config = importing.build_config(
+        year=year,
+        accounts=accounts,
+        category_map={k: v for k, v in category_map.items() if v},
+        category_kinds=c.initial_category_kinds(),
+        aliases=[n for n in names.split(",") if n.strip()],
+        decisions=decisions,
+        edits=edits,
+    )
+    plan = importing.with_account_issues(build_plan(workbook.rows, config))
+    importing.write_counterparties(counterparties_file, plan.counterparties, decisions)
+    importing.write_entries(entries_file, plan, edits)
+    report = importing.render_report(plan, year, directory)
+    (directory / importing.REPORT_FILE).write_text(report, encoding="utf-8")
+    console.print(report)
+    if plan.errors:
+        raise typer.Exit(1)
 
 
 # --- failures ---------------------------------------------------------------------------------

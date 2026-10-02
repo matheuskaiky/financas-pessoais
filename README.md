@@ -223,6 +223,17 @@ uv run lint-imports        # confere as regras de camadas
 - O servidor web escuta em `127.0.0.1` por padrão.
 - Para o futuro servidor fechado: Docker, acesso só por VPN (Tailscale ou WireGuard) e autenticação antes de qualquer exposição.
 
+## Importação única da planilha antiga (2026)
+
+Só os dados de 2026 da planilha antiga entram, uma única vez, e **nada é gravado no banco na etapa de plano**:
+
+```bash
+uv sync --extra import                                   # openpyxl, só para isto
+uv run financas import plan "docs/Gestão Financeira.xlsx" --year 2026 --holder "seu nome"
+```
+
+O comando grava em `data/import/` (ignorado pelo git) cinco arquivos para você revisar: `contas.csv` (contas, cartões com vencimento e dias de fechamento, saldos iniciais), `categorias.csv`, `contrapartes.csv` (decisão para cada pessoa que recebeu ou enviou Pix: própria, terceiro ou categoria), `lancamentos.csv` (cada lançamento planejado, com avisos e as colunas `keep` e `category_override`) e `relatorio.txt` (só contagens e totais). Depois de editar, rode o plano de novo: as decisões são lembradas. A aplicação (`import apply`) só roda com o banco sem lançamentos, faz backup antes e troca o banco só se todas as conferências passarem.
+
 ## Roadmap
 
 - [x] **Fase 0, bootstrap:** estrutura do projeto, ferramentas de qualidade, funções de dinheiro e invariantes com testes.

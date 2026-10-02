@@ -476,33 +476,33 @@ def payment_checking(when: dt.date, amount: int, institution: str = "Banco Inter
     )
 
 
-def test_a_payment_is_matched_to_the_oldest_closed_statement_with_balance() -> None:
+def test_a_payment_goes_to_the_statement_due_closest_to_it() -> None:
     rows = [
-        card_row(D(2026, 1, 10), -10_000, YM(2026, 1)),
-        card_row(D(2026, 2, 10), -5_000, YM(2026, 2)),
-        payment_card(D(2026, 2, 26), 10_000, YM(2026, 3)),
-        payment_checking(D(2026, 2, 26), 10_000),
+        card_row(D(2026, 1, 10), -10_000, YM(2026, 1)),  # Nubank: closes 01-19, due 01-26
+        card_row(D(2026, 2, 10), -5_000, YM(2026, 2)),  # closes 02-19, due 02-26
+        payment_card(D(2026, 2, 26), 5_000, YM(2026, 3)),
+        payment_checking(D(2026, 2, 26), 5_000),
     ]
-    plan = build_plan(rows, config())
-    (pay,) = actions_of(plan, PaymentAction)
-    assert (pay.card_key, pay.from_key, pay.amount_cents) == ("nu_card", "inter_cc", 10_000)
-    assert pay.statement == YM(2026, 1) and pay.flags == ()
+    (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
+    assert (pay.card_key, pay.from_key, pay.amount_cents) == ("nu_card", "inter_cc", 5_000)
+    assert pay.statement == YM(2026, 2) and pay.flags == ()
     assert len(pay.sheet_ids) == 2
 
 
-def test_a_payment_before_the_closing_does_not_pay_that_statement() -> None:
+def test_a_partial_payment_is_not_flagged() -> None:
     rows = [
-        card_row(D(2026, 2, 10), -5_000, YM(2026, 2)),  # Nubank closes on 2026-02-19
-        payment_checking(D(2026, 2, 12), 5_000, "Nubank"),  # before the closing
+        card_row(D(2026, 1, 10), -10_000, YM(2026, 1)),
+        payment_card(D(2026, 1, 27), 4_000, YM(2026, 2)),
+        payment_checking(D(2026, 1, 27), 4_000),
     ]
-    plan = build_plan(rows, config())
-    assert actions_of(plan, PaymentAction) == []
+    (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
+    assert pay.statement == YM(2026, 1) and pay.flags == ()
 
 
-def test_a_payment_of_a_statement_outside_the_scope_is_a_single_leg() -> None:
+def test_a_payment_far_from_every_due_date_is_a_single_leg() -> None:
     rows = [
-        payment_card(D(2026, 1, 26), 7_000, YM(2026, 2)),
-        payment_checking(D(2026, 1, 26), 7_000),
+        card_row(D(2026, 1, 10), -5_000, YM(2026, 1), "Banco Inter"),  # closes 01-14, due 01-20
+        payment_checking(D(2026, 3, 2), 7_000),  # nothing is due near 03-02
     ]
     plan = build_plan(rows, config())
     (transfer,) = actions_of(plan, TransferAction)
@@ -510,20 +510,28 @@ def test_a_payment_of_a_statement_outside_the_scope_is_a_single_leg() -> None:
     assert Flag.UNMATCHED_PAYMENT in transfer.flags and actions_of(plan, PaymentAction) == []
 
 
+def test_a_card_side_payment_of_an_earlier_statement_is_dropped_with_a_warning() -> None:
+    rows = [payment_card(D(2025, 12, 26), 6_000, YM(2026, 1))]  # pays December's statement
+    plan = build_plan(rows, config())
+    assert plan.actions == ()
+    assert [(i.level, i.code) for i in plan.issues] == [
+        (IssueLevel.WARNING, "PAYMENT_OUT_OF_SCOPE")
+    ]
+
+
 def test_an_unmatched_checking_payment_goes_to_the_card_of_the_same_bank() -> None:
     rows = [
-        card_row(D(2026, 2, 10), -3_000, YM(2026, 2), "Banco do Brasil"),
+        card_row(D(2026, 2, 10), -3_000, YM(2026, 2), "Banco do Brasil"),  # closes 02-22, due 03-05
         payment_checking(D(2026, 3, 5), 3_000, "Banco do Brasil"),
     ]
-    plan = build_plan(rows, config())
-    (pay,) = actions_of(plan, PaymentAction)
+    (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
     assert (pay.card_key, pay.from_key, pay.statement) == ("bb_card", "bb_cc", YM(2026, 2))
 
 
 def test_a_card_side_payment_alone_keeps_only_the_card_leg() -> None:
     rows = [
         card_row(D(2026, 1, 10), -6_000, YM(2026, 1)),
-        payment_card(D(2026, 2, 26), 6_000, YM(2026, 3)),
+        payment_card(D(2026, 1, 26), 6_000, YM(2026, 2)),
     ]
     (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
     assert pay.from_key is None and pay.statement == YM(2026, 1)
@@ -532,8 +540,8 @@ def test_a_card_side_payment_alone_keeps_only_the_card_leg() -> None:
 def test_a_payment_above_the_balance_is_flagged() -> None:
     rows = [
         card_row(D(2026, 1, 10), -6_000, YM(2026, 1)),
-        payment_card(D(2026, 2, 26), 9_000, YM(2026, 3)),
-        payment_checking(D(2026, 2, 26), 9_000),
+        payment_card(D(2026, 1, 26), 9_000, YM(2026, 2)),
+        payment_checking(D(2026, 1, 26), 9_000),
     ]
     (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
     assert Flag.PAYMENT_ABOVE_OUTSTANDING in pay.flags
@@ -542,12 +550,11 @@ def test_a_payment_above_the_balance_is_flagged() -> None:
 def test_generated_installments_count_in_the_statement_balances() -> None:
     rows = [
         inst(1, 3, YM(2026, 1), 4_000),  # installments 2 and 3 are generated (Feb, Mar)
-        payment_checking(D(2026, 3, 1), 4_000),
-        payment_card(D(2026, 3, 1), 4_000, YM(2026, 3)),
+        payment_checking(D(2026, 2, 26), 4_000),
+        payment_card(D(2026, 2, 26), 4_000, YM(2026, 3)),
     ]
-    plan = build_plan(rows, config())
-    (pay,) = actions_of(plan, PaymentAction)
-    assert pay.statement == YM(2026, 1)
+    (pay,) = actions_of(build_plan(rows, config()), PaymentAction)
+    assert pay.statement == YM(2026, 2) and pay.flags == ()
 
 
 def test_actions_come_out_in_date_order_and_issues_are_empty_for_clean_data() -> None:

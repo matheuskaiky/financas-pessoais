@@ -160,6 +160,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "INVALID_COLOR": "Cor inválida. Use o formato #RRGGBB.",
     "IMPORT_READER_MISSING": ("Falta o leitor de planilhas. Instale com: uv sync --extra import"),
     "IMPORT_UNKNOWN_ORIGIN": "Planilha, linha {row}: origem desconhecida.",
+    "ACCOUNT_FILE_INVALID": "{file}: há uma linha inválida (confira tipo, dias, valores e datas).",
     "IMPORT_UNKNOWN_KIND": "Planilha, linha {row}: tipo desconhecido.",
     "IMPORT_AMOUNT_NOT_CENTS": "Planilha, linha {row}: o valor não tem exatamente dois decimais.",
     "INVALID_SLUG": "Não foi possível gerar um identificador a partir desse nome.",

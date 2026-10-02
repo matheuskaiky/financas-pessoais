@@ -58,6 +58,24 @@ class LegacyRow:
 
 
 @dataclass(frozen=True)
+class LegacyAccountRow:
+    """One line of ``dim_contas``, raw: the planner never relies on it being filled in."""
+
+    institution: str
+    origin: str
+    nickname: str
+    credit_limit_cents: int | None  # ``PREENCHER`` and empty cells become ``None``
+    opening_balance_cents: int | None
+
+
+@dataclass(frozen=True)
+class LegacyWorkbook:
+    rows: list[LegacyRow]
+    accounts: list[LegacyAccountRow]
+    categories: list[str]
+
+
+@dataclass(frozen=True)
 class AccountSpec:
     """An account to create (or reuse, matched by nickname) before the entries go in."""
 
@@ -206,7 +224,8 @@ class CounterpartyLine:
     count: int
     out_cents: int
     in_cents: int
-    decision: str  # "own" | "third_party" | "category:<slug>"
+    decision: str  # the one in force: "own" | "third_party" | "category:<slug>"
+    suggested: str = ""  # what the planner would choose without the user's decision
 
 
 @dataclass(frozen=True)

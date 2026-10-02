@@ -42,6 +42,7 @@ from financas.domain.services.card_cycle import assign_statement, statement_date
 from financas.domain.services.text import normalize_search
 
 PAYMENT_WINDOW_DAYS = 5  # a card payment and the checking debit may be dated a few days apart
+DUE_WINDOW_DAYS = 12  # a payment belongs to the statement due closest to it, within this many days
 OWN_TRANSFER_WINDOW_DAYS = 3
 _INSTALLMENT_SUFFIX = re.compile(r"\s*[-–]?\s*parcela\s+\d+\s*/\s*\d+\s*$", re.IGNORECASE)
 _EXPECTED_CATEGORY_KIND = {
@@ -203,12 +204,13 @@ class _Planner:
 
     # ---- Pix and other transfers on checking accounts ------------------------------------------
 
-    def decision_for(self, key: str) -> str:
-        if key in self.config.counterparty_decisions:
-            return self.config.counterparty_decisions[key]
+    def suggestion_for(self, key: str) -> str:
         if key and any(alias in key for alias in self.aliases):
             return CounterpartyDecision.OWN.value
         return CounterpartyDecision.THIRD_PARTY.value
+
+    def decision_for(self, key: str) -> str:
+        return self.config.counterparty_decisions.get(key) or self.suggestion_for(key)
 
     def classify_pix(
         self, row: LegacyRow, actions: list[PlannedAction], own_rows: list[LegacyRow]
@@ -531,6 +533,8 @@ class _Planner:
                             ids, date, from_spec.key, None, amount, "", (Flag.UNMATCHED_PAYMENT,)
                         )
                     )
+                else:
+                    self.issue(IssueLevel.WARNING, "PAYMENT_OUT_OF_SCOPE", ids[0])
                 continue
             result.append(
                 PaymentAction(
@@ -547,25 +551,42 @@ class _Planner:
         amount: int,
         outstanding: dict[tuple[str, YearMonth], int],
     ) -> tuple[YearMonth | None, list[Flag]]:
-        months = sorted(m for (k, m), v in outstanding.items() if k == card.key and v > 0)
-        for month in months:
-            if card.due_day is not None and card.closes_before_due is not None:
-                closing, _ = statement_dates(month, card.due_day, card.closes_before_due)
-                if closing > date:
-                    continue
-            owed = outstanding[(card.key, month)]
-            flags: list[Flag] = []
-            if amount > owed:
-                flags.append(Flag.PAYMENT_ABOVE_OUTSTANDING)
-            outstanding[(card.key, month)] = owed - amount
-            return month, flags
-        return None, []
+        """The statement whose due date is closest to the payment (at most 12 days away).
+
+        A payment of exactly what is outstanding on a statement wins a tie of distance; partial
+        payments are normal, a payment above the balance is flagged.
+        """
+        if card.due_day is None or card.closes_before_due is None:
+            return None, []
+        candidates: list[tuple[int, int, YearMonth]] = []
+        for (key, month), owed in outstanding.items():
+            if key != card.key:
+                continue
+            _, due = statement_dates(month, card.due_day, card.closes_before_due)
+            distance = abs((due - date).days)
+            if distance <= DUE_WINDOW_DAYS:
+                candidates.append((distance, 0 if owed == amount else 1, month))
+        if not candidates:
+            return None, []
+        best = min(candidates)
+        month = best[2]
+        owed = outstanding[(card.key, month)]
+        flags = [Flag.PAYMENT_ABOVE_OUTSTANDING] if amount > owed else []
+        outstanding[(card.key, month)] = owed - amount
+        return month, flags
 
     # ---- review lines ------------------------------------------------------------------------
 
     def counterparty_lines(self) -> tuple[CounterpartyLine, ...]:
         lines = [
-            CounterpartyLine(key, count, out, inc, self.counterparty_decision.get(key, ""))
+            CounterpartyLine(
+                key,
+                count,
+                out,
+                inc,
+                self.counterparty_decision.get(key, ""),
+                self.suggestion_for(key),
+            )
             for key, (count, out, inc) in self.counterparty_stats.items()
         ]
         lines.sort(key=lambda c: (-c.count, c.key))

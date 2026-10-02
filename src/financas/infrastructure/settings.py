@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     backup_warn_days: int = 7
     valuation_stale_days: int = 35
     fgc_limit_cents: int = 25_000_000  # confirm the current value at fgc.org.br
+    holder_aliases: str = ""  # the user's own names, comma separated (spreadsheet import, 13.1)
 
     @model_validator(mode="after")
     def _resolve_relative_paths(self) -> "Settings":

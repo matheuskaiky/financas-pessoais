@@ -5,16 +5,18 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
+from financas.application.imports.model import LegacyWorkbook
 from financas.domain.ports import Clock, ImageStore, UnitOfWork
 from financas.infrastructure.backup import last_backup_date, make_backup
 from financas.infrastructure.clock import SystemClock
 from financas.infrastructure.db.engine import make_engine, make_session_factory
 from financas.infrastructure.db.migrate import needs_upgrade, upgrade_to_head
 from financas.infrastructure.db.repositories import SqlUnitOfWork
-from financas.infrastructure.db.seed import seed_categories
+from financas.infrastructure.db.seed import INITIAL_CATEGORIES, seed_categories
 from financas.infrastructure.failure_log import FailureLog
 from financas.infrastructure.images import FileImageStore
 from financas.infrastructure.settings import Settings
+from financas.infrastructure.spreadsheet import read_legacy_workbook
 
 
 @dataclass
@@ -46,6 +48,19 @@ class Container:
         backup = self.backup() if needs_upgrade(self.settings.db_url) else None
         upgrade_to_head(self.settings.db_url)
         return backup
+
+    def read_workbook(self, path: Path) -> LegacyWorkbook:
+        """The source sheets of the old workbook (13.1), normalised."""
+        return read_legacy_workbook(path)
+
+    @staticmethod
+    def initial_category_kinds() -> dict[str, str]:
+        """``slug -> expense | income | neutral`` of the initial categories (for the import)."""
+        return {slug: kind.value for slug, _, _, kind in INITIAL_CATEGORIES}
+
+    @property
+    def import_dir(self) -> Path:
+        return self.settings.data_dir / "import"
 
     def seed(self) -> int:
         """Create the initial categories that are missing; return how many were created."""
