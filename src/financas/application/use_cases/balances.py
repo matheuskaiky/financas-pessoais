@@ -4,7 +4,8 @@ import datetime as dt
 from dataclasses import dataclass
 
 from financas.application.use_cases._common import found, new_id
-from financas.domain.models import BalanceAnchor
+from financas.domain.errors import DomainError
+from financas.domain.models import AccountKind, BalanceAnchor
 from financas.domain.ports import UnitOfWork
 from financas.domain.services.balances import AnchorPoint, balance_on
 from financas.domain.services.text import clean_text
@@ -31,7 +32,9 @@ class RecordBalance:
 
     def execute(self, cmd: RecordBalanceCommand) -> RecordBalanceResult:
         with self._uow as uow:
-            found(uow.accounts.get(cmd.account_id), "account")
+            account = found(uow.accounts.get(cmd.account_id), "account")
+            if account.kind is AccountKind.CREDIT_CARD:
+                raise DomainError("BALANCE_NOT_FOR_CARDS")
             others = [
                 AnchorPoint(a.on_date, a.balance_cents)
                 for a in uow.anchors.list_for_account(cmd.account_id)

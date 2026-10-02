@@ -8,8 +8,8 @@ Definitions (each one has a test):
 - Transfers are neither income nor expense and never appear here.
 - ``recurring`` = expenses flagged ``is_recurring``; ``variable`` = the other expenses.
 - Category and group rows cover gross expenses; ``share`` is the part of total expenses.
-- A card expense will count in its statement month (Phase 2); today everything counts in
-  the month of ``posted_on``.
+- A card entry counts in its **statement month** (open decision 1); everything else counts in the
+  month of ``posted_on``. Card payments are transfers and never appear here.
 """
 
 import datetime as dt
@@ -72,12 +72,18 @@ def summarize(
     transactions: Iterable[Transaction],
     categories: Mapping[str, Category],
     period: Period,
+    statement_months: Mapping[str, YearMonth] | None = None,
 ) -> Summary:
     income = expenses = refunds = recurring = 0
     per_category: dict[str, list[int]] = {}
     count = 0
+    months = statement_months or {}
     for t in transactions:
-        if not period.start <= t.posted_on <= period.end:
+        if t.statement_id is not None and t.statement_id in months:
+            counted_on = months[t.statement_id].day(1)  # competence: the statement month
+        else:
+            counted_on = t.posted_on
+        if not period.start <= counted_on <= period.end:
             continue
         match t.kind:
             case TransactionKind.TRANSFER:
@@ -140,16 +146,18 @@ class GetSummary:
     def execute(self, period: Period) -> Summary:
         with self._uow as uow:
             categories = {c.id: c for c in uow.categories.list_all()}
-            transactions = uow.transactions.list_between(period.start, period.end)
-        return summarize(transactions, categories, period)
+            transactions = uow.transactions.list_for_competence(period.start, period.end)
+            months = {s.id: s.month for s in uow.statements.list_all()}
+        return summarize(transactions, categories, period, months)
 
     def months_of_year(self, year: int) -> list[Summary]:
         """Twelve monthly summaries (for the year view and charts)."""
         with self._uow as uow:
             categories = {c.id: c for c in uow.categories.list_all()}
             year_period = Period.year(year)
-            transactions = uow.transactions.list_between(year_period.start, year_period.end)
+            transactions = uow.transactions.list_for_competence(year_period.start, year_period.end)
+            months = {s.id: s.month for s in uow.statements.list_all()}
         return [
-            summarize(transactions, categories, Period.month(YearMonth(year, m)))
+            summarize(transactions, categories, Period.month(YearMonth(year, m)), months)
             for m in range(1, 13)
         ]

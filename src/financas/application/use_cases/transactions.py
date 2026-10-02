@@ -3,9 +3,11 @@
 import datetime as dt
 from dataclasses import dataclass
 
+from financas.application.use_cases._cards import assignment_for, ensure_statement, require_card
 from financas.application.use_cases._common import found, new_id
 from financas.domain.errors import DomainError
 from financas.domain.models import Account, AccountKind, Category, Transaction, TransactionKind
+from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
 from financas.domain.rules import (
     validate_category_kind,
@@ -52,6 +54,7 @@ class RegisterTransactionCommand:
     category_id: str | None = None
     is_recurring: bool = False
     notes: str | None = None
+    statement_month: YearMonth | None = None  # cards only; default comes from the card cycle
 
 
 class RegisterTransaction:
@@ -68,7 +71,19 @@ class RegisterTransaction:
         amount = -magnitude if cmd.kind is TransactionKind.EXPENSE else magnitude
         validate_sign(cmd.kind, amount)
         with self._uow as uow:
-            _check_account(found(uow.accounts.get(cmd.account_id), "account"), _ENTRY_ACCOUNT_KINDS)
+            account = found(uow.accounts.get(cmd.account_id), "account")
+            statement_id: str | None = None
+            if account.kind is AccountKind.CREDIT_CARD:
+                # Purchases, charges and refunds on a card go to a statement (9.3, 9.5).
+                if cmd.kind is TransactionKind.INCOME:
+                    raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=account.kind.value)
+                card = require_card(uow, account.id)
+                month = assignment_for(card, cmd.posted_on, cmd.statement_month).month
+                statement_id = ensure_statement(uow, card, month).id
+            else:
+                if cmd.statement_month is not None:
+                    raise DomainError("STATEMENT_ONLY_FOR_CARDS")
+                _check_account(account, _ENTRY_ACCOUNT_KINDS)
             if cmd.category_id is None:
                 category = found(
                     uow.categories.get_by_slug(_DEFAULT_CATEGORY_SLUG[cmd.kind]), "category"
@@ -87,6 +102,7 @@ class RegisterTransaction:
                 description_search=normalize_search(description),
                 is_recurring=cmd.is_recurring,
                 notes=clean_text(cmd.notes) if cmd.notes else None,
+                statement_id=statement_id,
             )
             uow.transactions.add_many([transaction])
             uow.commit()

@@ -3,6 +3,7 @@
 import datetime as dt
 from dataclasses import dataclass
 
+from financas.domain.models import AccountKind
 from financas.domain.ports import UnitOfWork
 from financas.domain.services.balances import AnchorPoint, balance_on
 
@@ -22,6 +23,8 @@ class ListAccountBalances:
         with self._uow as uow:
             result: list[AccountBalance] = []
             for account in uow.accounts.list_all():
+                if account.kind is AccountKind.CREDIT_CARD:
+                    continue  # cards have statements and a limit, not a balance
                 anchors = uow.anchors.list_for_account(account.id)
                 points = [AnchorPoint(a.on_date, a.balance_cents) for a in anchors]
                 balance = balance_on(points, uow.transactions.movements(account.id), day)

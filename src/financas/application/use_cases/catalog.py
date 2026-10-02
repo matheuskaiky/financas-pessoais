@@ -14,7 +14,7 @@ from financas.domain.models import (
     Institution,
 )
 from financas.domain.ports import ImageStore, UnitOfWork
-from financas.domain.rules import normalize_color, validate_group_kind
+from financas.domain.rules import normalize_color, validate_card_settings, validate_group_kind
 from financas.domain.services.text import clean_text, slugify
 
 
@@ -67,6 +67,9 @@ class CreateAccountCommand:
     institution_id: str
     nickname: str
     color: str | None = None
+    closing_day: int | None = None  # credit cards only
+    due_day: int | None = None
+    credit_limit_cents: int | None = None
 
 
 class CreateAccount:
@@ -74,12 +77,19 @@ class CreateAccount:
         self._uow = uow
 
     def execute(self, cmd: CreateAccountCommand) -> Account:
+        if cmd.kind is AccountKind.CREDIT_CARD:
+            validate_card_settings(cmd.closing_day, cmd.due_day, cmd.credit_limit_cents)
+        elif (cmd.closing_day, cmd.due_day, cmd.credit_limit_cents) != (None, None, None):
+            raise DomainError("CARD_FIELDS_ONLY_FOR_CARDS")
         account = Account(
             id=new_id(),
             kind=cmd.kind,
             institution_id=cmd.institution_id,
             nickname=_name(cmd.nickname),
             color=normalize_color(cmd.color),
+            closing_day=cmd.closing_day,
+            due_day=cmd.due_day,
+            credit_limit_cents=cmd.credit_limit_cents,
         )
         with self._uow as uow:
             found(uow.institutions.get(cmd.institution_id), "institution")

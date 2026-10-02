@@ -55,7 +55,14 @@ def savings(uow: MemoryUnitOfWork, institution: Institution) -> Account:
 @pytest.fixture
 def card(uow: MemoryUnitOfWork, institution: Institution) -> Account:
     return CreateAccount(uow).execute(
-        CreateAccountCommand(AccountKind.CREDIT_CARD, institution.id, "Cartão")
+        CreateAccountCommand(
+            AccountKind.CREDIT_CARD,
+            institution.id,
+            "Cartão",
+            closing_day=25,
+            due_day=5,
+            credit_limit_cents=1_200_000,
+        )
     )
 
 

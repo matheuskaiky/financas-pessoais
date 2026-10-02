@@ -106,7 +106,7 @@ def test_unknown_account_inactive_account_and_card_are_rejected(
         )
     assert exc.value.code == "NOT_FOUND"
     with pytest.raises(DomainError) as exc:
-        register(uow, card)
+        register(uow, card, kind=K.INCOME)  # income never lands on a card
     assert exc.value.code == "ACCOUNT_KIND_NOT_ALLOWED"
     SetAccountActive(uow).execute(checking.id, False)
     with pytest.raises(DomainError) as exc:

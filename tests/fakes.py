@@ -3,7 +3,8 @@
 import copy
 import datetime as dt
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from types import TracebackType
 from typing import Self
 
@@ -11,10 +12,13 @@ from financas.domain.models import (
     Account,
     BalanceAnchor,
     Category,
+    InstallmentPlan,
     Institution,
+    Statement,
     Transaction,
     TransactionKind,
 )
+from financas.domain.money import YearMonth
 from financas.domain.services.images import detect_image_type
 
 
@@ -84,8 +88,9 @@ class MemoryCategories:
 
 
 class MemoryTransactions:
-    def __init__(self) -> None:
+    def __init__(self, statements: "MemoryStatements") -> None:
         self.items: dict[str, Transaction] = {}
+        self.statements = statements
 
     def add_many(self, transactions: Sequence[Transaction]) -> None:
         for transaction in transactions:
@@ -111,6 +116,42 @@ class MemoryTransactions:
         rows.sort(key=lambda r: (r[1].posted_on, r[0]), reverse=True)
         return [t for _, t in rows]
 
+    def list_for_competence(self, start: dt.date, end: dt.date) -> list[Transaction]:
+        months = {s.id: s.month for s in self.statements.items.values()}
+        first, last = YearMonth.from_date(start), YearMonth.from_date(end)
+        rows = []
+        for n, t in enumerate(self.items.values()):
+            if t.statement_id is not None:
+                counts = first <= months[t.statement_id] <= last
+            else:
+                counts = start <= t.posted_on <= end
+            if counts:
+                rows.append((n, t))
+        rows.sort(key=lambda r: (r[1].posted_on, r[0]), reverse=True)
+        return [t for _, t in rows]
+
+    def list_by_account(self, account_id: str) -> list[Transaction]:
+        return self._sorted(t for t in self.items.values() if t.account_id == account_id)
+
+    def list_by_statement(self, statement_id: str) -> list[Transaction]:
+        return self._sorted(t for t in self.items.values() if t.statement_id == statement_id)
+
+    def list_by_plan(self, plan_id: str) -> list[Transaction]:
+        rows = [t for t in self.items.values() if t.plan_id == plan_id]
+        return sorted(rows, key=lambda t: t.installment_number or 0)
+
+    def update_amount(self, transaction_id: str, amount_cents: int) -> None:
+        self.items[transaction_id] = replace(self.items[transaction_id], amount_cents=amount_cents)
+
+    def set_statement(self, transaction_id: str, statement_id: str) -> None:
+        self.items[transaction_id] = replace(self.items[transaction_id], statement_id=statement_id)
+
+    @staticmethod
+    def _sorted(rows: Iterable[Transaction]) -> list[Transaction]:
+        indexed = list(enumerate(rows))
+        indexed.sort(key=lambda r: (r[1].posted_on, r[0]), reverse=True)
+        return [t for _, t in indexed]
+
     def movements(self, account_id: str) -> list[tuple[dt.date, int]]:
         return [
             (t.posted_on, t.amount_cents) for t in self.items.values() if t.account_id == account_id
@@ -125,6 +166,52 @@ class MemoryTransactions:
         if not matches:
             return None
         return max(enumerate(matches), key=lambda r: (r[1].posted_on, r[0]))[1].category_id
+
+
+class MemoryStatements:
+    def __init__(self) -> None:
+        self.items: dict[str, Statement] = {}
+
+    def add(self, statement: Statement) -> None:
+        if self.get_by_card_month(statement.account_id, statement.month) is not None:
+            raise ValueError("duplicate statement")
+        self.items[statement.id] = statement
+
+    def update(self, statement: Statement) -> None:
+        self.items[statement.id] = statement
+
+    def get(self, statement_id: str) -> Statement | None:
+        return self.items.get(statement_id)
+
+    def get_by_card_month(self, account_id: str, month: YearMonth) -> Statement | None:
+        return next(
+            (s for s in self.items.values() if s.account_id == account_id and s.month == month),
+            None,
+        )
+
+    def list_for_card(self, account_id: str) -> list[Statement]:
+        rows = (s for s in self.items.values() if s.account_id == account_id)
+        return sorted(rows, key=lambda s: s.month)
+
+    def list_all(self) -> list[Statement]:
+        return list(self.items.values())
+
+
+class MemoryPlans:
+    def __init__(self) -> None:
+        self.items: dict[str, InstallmentPlan] = {}
+
+    def add(self, plan: InstallmentPlan) -> None:
+        self.items[plan.id] = plan
+
+    def get(self, plan_id: str) -> InstallmentPlan | None:
+        return self.items.get(plan_id)
+
+    def delete(self, plan_id: str) -> None:
+        self.items.pop(plan_id, None)
+
+    def list_all(self) -> list[InstallmentPlan]:
+        return list(self.items.values())
 
 
 class MemoryAnchors:
@@ -165,7 +252,9 @@ class MemoryUnitOfWork:
         self.institutions = MemoryInstitutions()
         self.accounts = MemoryAccounts()
         self.categories = MemoryCategories()
-        self.transactions = MemoryTransactions()
+        self.statements = MemoryStatements()
+        self.plans = MemoryPlans()
+        self.transactions = MemoryTransactions(self.statements)
         self.anchors = MemoryAnchors()
         self._snapshot: dict[str, object] | None = None
         self._committed = False
@@ -177,6 +266,8 @@ class MemoryUnitOfWork:
             "categories": self.categories,
             "transactions": self.transactions,
             "anchors": self.anchors,
+            "statements": self.statements,
+            "plans": self.plans,
         }
 
     def __enter__(self) -> Self:
