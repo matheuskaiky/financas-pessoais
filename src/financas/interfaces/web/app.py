@@ -29,8 +29,15 @@ from financas.application.queries.investments import (
     ListHoldings,
     ListInvestments,
 )
+from financas.application.queries.planning import (
+    BudgetRange,
+    GetBudget,
+    GetDailyFlow,
+    GetRecurring,
+)
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
+from financas.application.use_cases.budget import SetCategoryBudgets
 from financas.application.use_cases.cards import (
     AdjustInstallment,
     CardPurchaseCommand,
@@ -184,6 +191,8 @@ def create_app(c: Container) -> FastAPI:
         explain=messages.explain_assignment,
         best_day=messages.best_day_hint,
         statement_label=messages.statement_label,
+        alert_labels=messages.ALERT_KIND_LABELS,
+        describe_alert=messages.describe_alert,
         asset_labels=messages.ASSET_CLASS_LABELS,
         instrument_labels=messages.INSTRUMENT_TYPE_LABELS,
         indexer_labels=messages.INDEXER_LABELS,
@@ -338,6 +347,15 @@ def create_app(c: Container) -> FastAPI:
             request, "error.html", {"heading": heading, "detail": detail}, status=exc.status_code
         )
 
+    @app.exception_handler(DomainError)
+    async def unexpected_domain_error(request: Request, exc: DomainError):
+        return render(
+            request,
+            "error.html",
+            {"heading": "Não foi possível", "detail": messages.render_error(exc)},
+            status=400,
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
         return render(
@@ -364,6 +382,15 @@ def create_app(c: Container) -> FastAPI:
                         "href": "/accounts",
                     }
                 )
+        recurring_alerts = GetRecurring(c.uow, c.clock).execute().alerts
+        if recurring_alerts:
+            items.append(
+                {
+                    "tag": "Recorrentes",
+                    "text": f"{len(recurring_alerts)} alerta(s) nas despesas recorrentes.",
+                    "href": "/recurring",
+                }
+            )
         overview = ListCards(c.uow, c.clock).execute()
         for view in overview.cards:
             usage = view.usage
@@ -1349,6 +1376,100 @@ def create_app(c: Container) -> FastAPI:
     @app.get("/more", response_class=HTMLResponse)
     def more(request: Request):
         return render(request, "more.html", {})
+
+    # --- budget, recurring and daily flow ------------------------------------------------------
+
+    def _sane_year(value: str) -> int:
+        number = _opt_int(value)
+        return number if number and 1900 <= number <= 2200 else today().year
+
+    def budget_context(range_name: str, year: str) -> dict[str, object]:
+        chosen_year = _sane_year(year)
+        budget_range = BudgetRange.YEAR if range_name == "year" else BudgetRange.LAST_3_MONTHS
+        view = GetBudget(c.uow, c.clock).execute(budget_range, chosen_year)
+        data = lookups()
+        return {
+            **data,
+            "view": view,
+            "budget": view.budget,
+            "range_name": budget_range.value,
+            "year": chosen_year,
+            "years": sorted({today().year - 3 + n for n in range(5)} | {chosen_year}),
+            "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
+            "expense_categories": [
+                x
+                for x in data["categories"]  # type: ignore[attr-defined]
+                if x.kind is CategoryKind.EXPENSE
+            ],
+            "editing": False,
+        }
+
+    @app.get("/budget", response_class=HTMLResponse)
+    def budget(request: Request, range: str = "", year: str = "", edit: str = ""):
+        context = budget_context(range, year)
+        context["editing"] = bool(edit)
+        return render(request, "budget.html", context)
+
+    @app.post("/budget/goals")
+    async def save_goals(request: Request):
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        range_name, year = form.get("range", ""), form.get("year", "")
+        try:
+            with c.uow as work:
+                known = {x.id for x in work.categories.list_all()}
+            goals: dict[str, int | None] = {}
+            for key, text in form.items():
+                category_id = key.removeprefix("goal_")
+                if key.startswith("goal_") and category_id in known:
+                    goals[category_id] = parse_brl(text) if text.strip() else None
+            SetCategoryBudgets(c.uow).execute(goals)  # all or nothing
+        except DomainError as error:
+            context = budget_context(range_name, year)
+            context["editing"] = True
+            context["submitted"] = {k.removeprefix("goal_"): v for k, v in form.items()}
+            return render(request, "budget.html", context, error=error)
+        query = {k: v for k, v in (("range", range_name), ("year", year)) if v}
+        return back("/budget", "budget", **query)
+
+    @app.get("/recurring", response_class=HTMLResponse)
+    def recurring(request: Request):
+        view = GetRecurring(c.uow, c.clock).execute()
+        data = lookups()
+        return render(
+            request,
+            "recurring.html",
+            {
+                **data,
+                "view": view,
+                "last_closed": view.current_month.add_months(-1),
+                "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
+            },
+        )
+
+    @app.get("/accounts/{account_id}/flow", response_class=HTMLResponse)
+    def account_flow(request: Request, account_id: str, month: str = ""):
+        try:
+            ym = YearMonth.parse(month) if month else YearMonth.from_date(today())
+            if not 1900 <= ym.year <= 2200:
+                raise DomainError("INVALID_YEAR_MONTH")
+        except DomainError:
+            ym = YearMonth.from_date(today())
+        try:
+            flow = GetDailyFlow(c.uow).execute(account_id, Period.month(ym))
+        except DomainError as error:
+            return render(request, "accounts.html", accounts_context(), error=error)
+        return render(
+            request,
+            "flow.html",
+            {
+                **lookups(),
+                "flow": flow,
+                "month_value": str(ym),
+                "month_label": format_month_long(ym),
+                "prev_month": str(ym.add_months(-1)),
+                "next_month": str(ym.add_months(1)),
+            },
+        )
 
     # --- categories ----------------------------------------------------------------------------
 

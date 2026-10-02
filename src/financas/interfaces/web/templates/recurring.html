@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import dot %}
+{% block title %}Recorrentes{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Recorrentes</h1><p>Assinaturas e custos fixos marcados como recorrentes · {{ view.current_month|month_short }} está em andamento e não gera alertas</p></div>
+</header>
+
+<section class="panel" aria-labelledby="h-alerts">
+  <h2 id="h-alerts">Alertas</h2>
+  {% if view.alerts %}
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    {% for a in view.alerts %}
+    <div class="attn"><span class="pill {{ {'disappeared': 'warn', 'changed': 'warn', 'appeared': 'blue'}[a.kind.value] }}">{{ alert_labels[a.kind] }}</span>
+      <span>{{ describe_alert(a, view.labels[a.key], last_closed) }}</span></div>
+    {% endfor %}
+  </div>
+  <small>Comparação do último mês fechado ({{ last_closed|month_short }}) com o anterior.</small>
+  {% else %}<p class="empty">Nenhum alerta: as cobranças recorrentes seguem iguais.</p>{% endif %}
+</section>
+
+<section class="panel" aria-labelledby="h-matrix">
+  <h2 id="h-matrix">Catálogo e matriz mensal</h2>
+  {% if view.items %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Item</th>{% for m in view.months %}<th class="num">{{ m|month_short }}{% if m == view.current_month %}<br><small>em andamento</small>{% endif %}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for i in view.items %}
+      <tr>
+        <td><span class="with-dot">{{ dot(category_colors[i.category_id]) }}<span><strong>{{ i.label }}</strong><br><small>{{ category_by_id[i.category_id].name }}</small></span></span></td>
+        {% for m in view.months %}<td class="num">{{ i.amounts[m]|brl if m in i.amounts else '—' }}</td>{% endfor %}
+      </tr>
+    {% endfor %}
+      <tr class="subtotal"><td><strong>Total</strong></td>{% for m in view.months %}<td class="num"><strong>{{ view.monthly_total_cents[m]|brl }}</strong></td>{% endfor %}</tr>
+    </tbody>
+  </table>
+  </div>
+  <small>Marque “Recorrente” ao lançar uma despesa para ela entrar aqui. Compras no cartão contam no mês da fatura.</small>
+  {% else %}<p class="empty">Nenhuma despesa recorrente nos últimos meses. Marque “Recorrente” ao lançar uma despesa fixa.</p>{% endif %}
+</section>
+{% endblock %}

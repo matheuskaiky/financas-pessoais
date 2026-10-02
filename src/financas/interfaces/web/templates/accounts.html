@@ -56,6 +56,7 @@
           </form>
         </td>
         <td>
+          <a href="/accounts/{{ a.id }}/flow">Fluxo diário</a>
           <form method="post" action="/accounts/{{ a.id }}/active">
             {% if a.is_active %}<button type="submit" class="link">Desativar</button>
             {% else %}<input type="hidden" name="active" value="1"><button type="submit" class="link">Reativar</button>{% endif %}

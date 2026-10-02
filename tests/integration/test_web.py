@@ -313,7 +313,7 @@ def test_design_shell_and_font_are_served_locally(client: TestClient) -> None:
     assert client.get("/static/..%2f..%2fapp.py").status_code in {400, 404}
 
 
-# --- cards (Phase 2) -----------------------------------------------------------------------------
+# --- cards (Phase 2) ---
 
 
 def make_card(client: TestClient, container: Container, **extra: str) -> tuple[str, str]:
@@ -603,7 +603,7 @@ def test_cards_pass_the_csp_and_have_no_inline_handlers(
     assert client.get("/static/app.js").status_code == 200
 
 
-# --- investments and net worth (Phase 3a) --------------------------------------------------------
+# --- investments and net worth (Phase 3a) ---
 
 
 def make_investment(client: TestClient, container: Container) -> tuple[str, str]:
@@ -720,7 +720,7 @@ def test_net_worth_subtracts_card_statements(client: TestClient, container: Cont
     assert "Faturas fechadas a pagar" in page.text and "− R$ 1.200,00" in page.text
 
 
-# --- fixed-income holdings (Phase 3b) ------------------------------------------------------------
+# --- fixed-income holdings (Phase 3b) ---
 
 
 def make_broker(client: TestClient, container: Container) -> tuple[str, str, str]:
@@ -1030,3 +1030,225 @@ def test_deleting_an_installment_is_refused_with_a_message(
     assert htmx.status_code == 200 and "err=USE_DELETE_PURCHASE" in htmx.headers["hx-redirect"]
     with container.uow as work:
         assert len(work.transactions.list_by_account(card)) == 3
+
+
+# --- budget, recurring and daily flow (Phase 4) ---
+
+
+def month_first(back: int) -> dt.date:
+    today = dt.date.today()
+    index = today.year * 12 + today.month - 1 - back
+    return dt.date(index // 12, index % 12 + 1, 1)
+
+
+def add_entry(
+    client: TestClient, account: str, day: dt.date, amount: str, description: str, **extra: str
+) -> None:
+    category = extra.pop("category_id", "")
+    response = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "account_id": account,
+            "date": day.isoformat(),
+            "amount": amount,
+            "description": description,
+            "category_id": category,
+            **extra,
+        },
+    )
+    assert response.status_code == 303, response.text[:300]
+
+
+def category_id(container: Container, slug: str) -> str:
+    with container.uow as work:
+        found = work.categories.get_by_slug(slug)
+    assert found
+    return found.id
+
+
+def test_budget_page_empty_and_navigation(client: TestClient) -> None:
+    page = client.get("/budget")
+    body = body_of(page.text)
+    assert page.status_code == 200 and "<h1>Orçamento</h1>" in body
+    assert "Nenhuma categoria tem meta" in body or "Meta mensal" in body
+    assert "Definir" in body and "Total das despesas" in body
+    home = client.get("/")
+    for path in ("/budget", "/recurring"):
+        assert f'href="{path}"' in home.text
+    assert "Comparar com o orçamento" in home.text
+
+
+def test_budget_goals_matrix_and_editing(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    food, health = category_id(container, "food"), category_id(container, "health")
+    edit = client.get("/budget?edit=1")
+    assert "Salvar metas" in edit.text and f'name="goal_{food}"' in edit.text
+    saved = client.post("/budget/goals", data={f"goal_{food}": "700,00", f"goal_{health}": ""})
+    assert saved.status_code == 303 and "ok=budget" in saved.headers["location"]
+    for back, amount in ((3, "910,00"), (2, "788,20"), (1, "842,30")):
+        day = month_first(back) + dt.timedelta(days=3)
+        add_entry(client, checking, day, amount, "Delivery", category_id=food)
+    add_entry(
+        client,
+        checking,
+        month_first(2) + dt.timedelta(days=4),
+        "200,00",
+        "Consulta",
+        category_id=health,
+    )
+    add_entry(client, checking, month_first(0), "999,00", "Corrente", category_id=food)
+    body = body_of(client.get("/budget").text)
+    assert "Metas atualizadas." in client.get(saved.headers["location"]).text
+    matrix = body.split('id="h-matrix"', 1)[1]
+    row = matrix.split("Alimentação", 1)[1].split("</tr>", 1)[0]  # the Alimentação row only
+    assert "R$ 910,00" in row and "R$ 788,20" in row and "R$ 842,30" in row and "R$ 700,00" in row
+    assert row.count('class="num over"') == 3  # all three months are above the 700 goal
+    assert "acima da meta</small>" in row and "neg" in row
+    sem_meta = body.split("<strong>Sem meta</strong>", 1)[1].split("</tr>", 1)[0]
+    assert "Saúde" in sem_meta and "R$ 200,00" in sem_meta
+    assert "R$ 999,00" not in body  # the month in progress is not part of the average
+    cleared = client.post("/budget/goals", data={f"goal_{food}": ""})
+    assert cleared.status_code == 303
+    with container.uow as work:
+        assert work.categories.get(food).monthly_budget_cents is None  # type: ignore[union-attr]
+
+
+def test_saving_goals_is_all_or_nothing_and_keeps_what_was_typed(
+    client: TestClient, container: Container
+) -> None:
+    food, health = category_id(container, "food"), category_id(container, "health")
+    bad = client.post(
+        "/budget/goals",
+        data={f"goal_{food}": "700,00", f"goal_{health}": "abc", "range": "year", "year": "2025"},
+    )
+    assert bad.status_code == 400 and "Valor inválido" in bad.text
+    with container.uow as work:
+        assert work.categories.get(food).monthly_budget_cents is None  # type: ignore[union-attr]
+    assert 'value="700,00"' in bad.text and 'value="abc"' in bad.text  # the form keeps the input
+    assert 'name="year" value="2025"' in bad.text
+    huge = client.post("/budget/goals", data={f"goal_{food}": "9" * 30})
+    assert huge.status_code == 400 and "grande demais" in huge.text
+    ok = client.post(
+        "/budget/goals", data={f"goal_{food}": "700,00", "range": "year", "year": "2025"}
+    )
+    assert ok.headers["location"].startswith("/budget?") and "year=2025" in ok.headers["location"]
+    with container.uow as work:
+        assert work.categories.get(food).monthly_budget_cents == 70_000  # type: ignore[union-attr]
+
+
+def test_hostile_years_and_months_never_crash(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    for query in ("range=year&year=99999", "range=year&year=-5", "range=year&year=10000", "year=0"):
+        assert client.get(f"/budget?{query}").status_code == 200, query
+    for month in ("0001-01", "9999-12", "2026-13", "abc", "-1"):
+        response = client.get(f"/accounts/{checking}/flow?month={month}")
+        assert response.status_code == 200, month
+
+
+def test_budget_goal_errors_and_year_range(client: TestClient, container: Container) -> None:
+    salary = category_id(container, "salary")
+    bad = client.post("/budget/goals", data={f"goal_{salary}": "100,00"})
+    assert bad.status_code == 400 and "Só categorias de despesa" in bad.text
+    assert "Salvar metas" in bad.text  # the form stays open
+    invalid = client.post("/budget/goals", data={f"goal_{category_id(container, 'food')}": "abc"})
+    assert invalid.status_code == 400 and "Valor inválido" in invalid.text
+    year = client.get(f"/budget?range=year&year={dt.date.today().year}")
+    assert year.status_code == 200 and "inteiro" in year.text
+    future = client.get(f"/budget?range=year&year={dt.date.today().year + 1}")
+    assert "Ainda não há mês fechado" in future.text
+    assert client.get("/budget?range=year&year=abc").status_code == 200
+
+
+def test_recurring_page_matrix_and_alerts(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    telecom, health = category_id(container, "telecom"), category_id(container, "health")
+    subs = category_id(container, "subscriptions")
+    for back, amount in ((3, "119,90"), (2, "119,90"), (1, "129,90")):
+        add_entry(
+            client,
+            checking,
+            month_first(back) + dt.timedelta(days=4),
+            amount,
+            "Internet",
+            category_id=telecom,
+            recurring="1",
+        )
+    for back in (3, 2):
+        add_entry(
+            client,
+            checking,
+            month_first(back) + dt.timedelta(days=5),
+            "90,00",
+            "Academia",
+            category_id=health,
+            recurring="1",
+        )
+    add_entry(
+        client,
+        checking,
+        month_first(1) + dt.timedelta(days=6),
+        "39,90",
+        "Streaming <b>",
+        category_id=subs,
+        recurring="1",
+    )
+    page = client.get("/recurring")
+    body = body_of(page.text)
+    assert "Mudou de valor" in body and "Sumiu" in body and "Apareceu" in body
+    assert "Internet: de R$ 119,90" in body and "para R$ 129,90" in body
+    assert "Academia: cobrado em" in body
+    assert "Streaming &lt;b&gt;" in body and "Streaming <b>" not in body  # user text is escaped
+    assert "em andamento" in body
+    home = client.get("/")
+    assert "3 alerta(s) nas despesas recorrentes" in home.text
+
+
+def test_recurring_page_is_empty_without_data(client: TestClient) -> None:
+    page = client.get("/recurring")
+    assert page.status_code == 200 and "Nenhum alerta" in page.text
+    assert "Nenhuma despesa recorrente" in page.text
+
+
+def test_daily_flow_page(client: TestClient, container: Container) -> None:
+    checking, savings = setup_accounts(client, container)
+    client.post(f"/accounts/{checking}/balance", data={"date": "2026-06-30", "amount": "1.000,00"})
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "account_id": checking,
+            "date": "2026-07-05",
+            "amount": "5.000,00",
+            "description": "Salário",
+        },
+    )
+    add_entry(client, checking, dt.date(2026, 7, 5), "120,00", "Mercado")
+    client.post(
+        "/transfers",
+        data={
+            "from_account": checking,
+            "to_account": savings,
+            "date": "2026-07-09",
+            "amount": "500,00",
+        },
+    )
+    page = client.get(f"/accounts/{checking}/flow?month=2026-07")
+    body = body_of(page.text)
+    assert "Fluxo diário · Conta Corrente" in body and "05/07/2026" in body
+    assert "R$ 5.880,00" in body and "R$ 5.380,00" in body and "R$ 1.000,00" in body
+    other = client.get(f"/accounts/{savings}/flow?month=2026-07")
+    assert "Saldo indisponível" in other.text
+    assert client.get(f"/accounts/{checking}/flow?month=zzz").status_code == 200
+    missing = client.get("/accounts/nope/flow")
+    assert missing.status_code == 400 and "registro não encontrado" in missing.text
+    assert (
+        'href="/accounts/' in client.get("/accounts").text
+        and "Fluxo diário" in client.get("/accounts").text
+    )
+
+
+def test_daily_flow_is_not_available_for_cards(client: TestClient, container: Container) -> None:
+    _, card = make_card(client, container)
+    response = client.get(f"/accounts/{card}/flow")
+    assert response.status_code == 400 and "Cartões não têm fluxo diário" in response.text

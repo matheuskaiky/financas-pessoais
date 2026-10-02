@@ -16,8 +16,10 @@ from financas.domain.models import (
     StatementStatus,
     TransactionKind,
 )
+from financas.domain.money import YearMonth
 from financas.domain.services.card_cycle import AssignmentReason, StatementAssignment
 from financas.domain.services.holdings import LiquidityBucket
+from financas.domain.services.recurring import AlertKind, RecurringAlert
 from financas.domain.services.statements import LimitAlert
 from financas.interfaces.formatting import (
     format_bps,
@@ -119,6 +121,12 @@ TRACKING_LABELS: dict[InvestmentTracking, str] = {
 HOLDING_STATUS_LABELS: dict[HoldingStatus, str] = {
     HoldingStatus.ACTIVE: "Ativa",
     HoldingStatus.REDEEMED: "Resgatada",
+}
+
+ALERT_KIND_LABELS: dict[AlertKind, str] = {
+    AlertKind.DISAPPEARED: "Sumiu",
+    AlertKind.CHANGED: "Mudou de valor",
+    AlertKind.APPEARED: "Apareceu",
 }
 
 STATEMENT_STATUS_LABELS: dict[StatementStatus, str] = {
@@ -226,6 +234,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "INVALID_REDEMPTION_DATE": (
         "A data do resgate não pode ser antes da aplicação nem da última avaliação."
     ),
+    "AMOUNT_TOO_LARGE": "O valor é grande demais.",
     "BUDGET_ONLY_FOR_EXPENSES": "Só categorias de despesa têm meta de orçamento.",
     "CARD_HAS_NO_DAILY_FLOW": "Cartões não têm fluxo diário: veja a fatura.",
     "USE_DELETE_PURCHASE": (
@@ -255,6 +264,7 @@ FLASH_MESSAGES: dict[str, str] = {
     "dates": "Datas da fatura atualizadas.",
     "adjusted": "Valor da parcela ajustado.",
     "plan_deleted": "Compra parcelada apagada.",
+    "budget": "Metas atualizadas.",
     "valuation": "Avaliação registrada.",
     "valuation_yield": "Avaliação registrada.",
     "flow": "Movimentação registrada.",
@@ -345,3 +355,19 @@ def format_rate(mode: RateMode | None, indexer: Indexer | None, bps: int | None)
     if mode is RateMode.SPREAD_OVER_INDEX:
         return f"{name} + {format_bps(bps)}"
     return f"{format_bps(bps)} a.a."
+
+
+def describe_alert(alert: RecurringAlert, label: str, last_closed: YearMonth) -> str:
+    """The sentence of a recurring alert (last closed month against the one before it)."""
+    from financas.domain.money import format_brl
+
+    now, before = format_month(last_closed), format_month(last_closed.add_months(-1))
+    if alert.kind is AlertKind.DISAPPEARED:
+        was = format_brl(alert.previous_cents or 0)
+        return f"{label}: cobrado em {before} ({was}) e não em {now}."
+    if alert.kind is AlertKind.CHANGED:
+        return (
+            f"{label}: de {format_brl(alert.previous_cents or 0)} em {before} para "
+            f"{format_brl(alert.current_cents or 0)} em {now}."
+        )
+    return f"{label}: novo em {now} ({format_brl(alert.current_cents or 0)})."

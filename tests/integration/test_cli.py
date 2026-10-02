@@ -1,5 +1,6 @@
 """The CLI end to end, on a temporary database (synthetic data only)."""
 
+import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -432,3 +433,75 @@ def test_a_bad_image_creates_nothing(tmp_path: Path) -> None:
     bad.write_bytes(b"GIF89a....")
     assert "Formato de imagem" in run("institution", "add", "Banco", "--image", str(bad), ok=False)
     assert "Banco" not in run("institution", "list")
+
+
+# --- budget, recurring and daily flow (Phase 4) ---
+
+
+def month_start(back: int) -> dt.date:
+    """The first day of the month ``back`` months before this one (real clock: the CLI uses it)."""
+    today = dt.date.today()
+    index = today.year * 12 + today.month - 1 - back
+    return dt.date(index // 12, index % 12 + 1, 1)
+
+
+def br(day: dt.date, offset: int = 4) -> str:
+    return (day + dt.timedelta(days=offset)).strftime("%d/%m/%Y")
+
+
+def test_budget_goals_and_matrix() -> None:
+    setup_basic()
+    assert "Meta de Alimentação: R$ 700,00." in run("budget", "set", "food", "700,00")
+    run("budget", "set", "groceries", "1.200,00")
+    for back, cents in ((3, "910,00"), (2, "788,20"), (1, "842,30")):
+        run("add", cents, "Delivery", "-c", "food", "-d", br(month_start(back)))
+    run("add", "999,00", "Mês corrente", "-c", "food", "-d", br(month_start(0)))  # not closed
+    run("add", "200,00", "Sem meta", "-c", "health", "-d", br(month_start(2)))
+    out = run("budget", "show")
+    assert "Alimentação" in out and "R$ 910,00" in out and "R$ 788,20" in out
+    assert "R$ 700,00" in out and "Categorias com meta" in out
+    assert "Sem meta (Saúde)" in out and "Total das despesas" in out
+    assert "R$ 999,00" not in out  # the month in progress is left out
+    assert "acima da meta: 1 de 2" in out
+    run("budget", "set", "food", "--clear")
+    assert "acima da meta: 0 de 1" in run("budget", "show")
+
+
+def test_budget_errors_and_year_view() -> None:
+    setup_basic()
+    assert "Só categorias de despesa" in run("budget", "set", "salary", "100,00", ok=False)
+    assert "maior que zero" in run("budget", "set", "food", "0", ok=False)
+    assert "Informe o valor" in run("budget", "set", "food", ok=False)
+    assert "Nenhuma categoria tem meta" in run("budget", "show")
+    assert "Ainda não há mês fechado" in run(
+        "budget", "show", "--year", str(dt.date.today().year + 1)
+    )
+
+
+def test_recurring_matrix_and_alerts() -> None:
+    setup_basic()
+    for back, cents in ((3, "119,90"), (2, "119,90"), (1, "129,90")):
+        run("add", cents, "Internet", "-c", "telecom", "-r", "-d", br(month_start(back)))
+    for back in (3, 2):
+        run("add", "90,00", "Academia", "-c", "health", "-r", "-d", br(month_start(back)))
+    run("add", "39,90", "Streaming [novo]", "-c", "subscriptions", "-r", "-d", br(month_start(1)))
+    listing = run("recurring", "list")
+    assert "Internet" in listing and "R$ 129,90" in listing and "Academia" in listing
+    assert "em andamento" in listing
+    alerts = run("recurring", "alerts")
+    assert "Mudou de valor: Internet: de R$ 119,90" in alerts and "para R$ 129,90" in alerts
+    assert "Sumiu: Academia" in alerts
+    assert "Apareceu: Streaming [novo]: novo em" in alerts
+
+
+def test_daily_flow_of_an_account() -> None:
+    setup_basic()
+    run("balance", "set", "corrente", "1.000,00", "-d", "30/06/2026")
+    run("add", "5.000,00", "Salário", "-k", "income", "-c", "salary", "-d", "05/07/2026")
+    run("add", "120,00", "Mercado", "-c", "groceries", "-d", "05/07/2026")
+    run("transfer", "500,00", "--from", "corrente", "--to", "caixinha", "-d", "09/07/2026")
+    out = run("account", "flow", "corrente", "-m", "2026-07")
+    assert "05/07/2026" in out and "R$ 5.000,00" in out and "R$ 120,00" in out
+    assert "R$ 5.880,00" in out and "R$ 5.380,00" in out  # running balance
+    assert "Saldo inicial: R$ 1.000,00" in out
+    assert "saldo indisponível" in run("account", "flow", "caixinha", "-m", "2026-07")

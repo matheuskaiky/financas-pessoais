@@ -25,8 +25,15 @@ from financas.application.queries.investments import (
     ListHoldings,
     ListInvestments,
 )
+from financas.application.queries.planning import (
+    BudgetRange,
+    GetBudget,
+    GetDailyFlow,
+    GetRecurring,
+)
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
+from financas.application.use_cases.budget import SetCategoryBudget
 from financas.application.use_cases.cards import (
     CardPurchaseCommand,
     InformStatementTotal,
@@ -124,6 +131,8 @@ balance_app = typer.Typer(help="Saldos informados.", no_args_is_help=True)
 card_app = typer.Typer(help="Cartões de crédito: compras, parcelas e limite.", no_args_is_help=True)
 statement_app = typer.Typer(help="Faturas dos cartões.", no_args_is_help=True)
 invest_app = typer.Typer(help="Contas de investimento e patrimônio.", no_args_is_help=True)
+budget_app = typer.Typer(help="Metas de orçamento por categoria.", no_args_is_help=True)
+recurring_app = typer.Typer(help="Despesas recorrentes e alertas.", no_args_is_help=True)
 app.add_typer(institution_app, name="institution")
 app.add_typer(account_app, name="account")
 app.add_typer(category_app, name="category")
@@ -131,6 +140,8 @@ app.add_typer(balance_app, name="balance")
 app.add_typer(card_app, name="card")
 app.add_typer(statement_app, name="statement")
 app.add_typer(invest_app, name="invest")
+app.add_typer(budget_app, name="budget")
+app.add_typer(recurring_app, name="recurring")
 holding_app = typer.Typer(
     help="Aplicações de renda fixa (CDB, LCI, Tesouro...).", no_args_is_help=True
 )
@@ -1447,3 +1458,165 @@ def invest_emergency() -> None:
         console.print("Cobertura: sem gasto essencial para comparar.")
     else:
         console.print(f"Cobertura: {fund.months:.1f} meses".replace(".", ","))
+
+
+# --- budget, recurring and daily flow ---------------------------------------------------------
+
+
+@budget_app.command("show")
+@handle_errors
+def budget_show(
+    year: Annotated[
+        int | None,
+        typer.Option("--year", "-y", help="Ano (meses fechados); padrão: últimos 3 meses."),
+    ] = None,
+) -> None:
+    """Matriz categoria × mês: média, meta e média − meta (cartão no mês da fatura)."""
+    c = container()
+    view = GetBudget(c.uow, c.clock).execute(
+        BudgetRange.YEAR if year else BudgetRange.LAST_3_MONTHS, year
+    )
+    budget = view.budget
+    if not budget.months:
+        console.print("Ainda não há mês fechado neste período.")
+        return
+    columns = [format_month_short(m) for m in budget.months]
+    table = Table("Categoria", *columns, "Média", "Meta", "Média − meta")
+
+    def name(category_id: str) -> str:
+        return view.categories[category_id].name  # type: ignore[attr-defined]
+
+    for row in budget.with_goal:
+        cells = [
+            Text(format_brl(v), style="red underline" if over else "")
+            for v, over in zip(row.months, row.over_months, strict=True)
+        ]
+        diff = row.diff_cents or 0
+        table.add_row(
+            name(row.category_id),
+            *cells,
+            format_brl(row.average_cents),
+            format_brl(row.goal_cents or 0),
+            Text(format_signed(diff), style="red" if diff > 0 else "green"),
+        )
+    table.add_row(
+        Text("Categorias com meta", style="bold"),
+        *(format_brl(v) for v in budget.month_totals_with_goal),
+        format_brl(budget.average_with_goal_cents),
+        format_brl(budget.goal_total_cents),
+        format_signed(budget.diff_total_cents),
+    )
+    names = ", ".join(name(r.category_id) for r in budget.without_goal)
+    table.add_row(
+        f"Sem meta ({names})" if names else "Sem meta",
+        *(format_brl(v) for v in budget.month_totals_without_goal),
+        "",
+        "—",
+        "",
+    )
+    table.add_row(
+        Text("Total das despesas", style="bold"),
+        *(format_brl(v) for v in budget.month_totals_all),
+        format_brl(budget.average_all_cents),
+        "",
+        "",
+    )
+    console.print(table)
+    if budget.diff_percent is not None:
+        console.print(
+            f"Meta mensal: {format_brl(budget.goal_total_cents)} · média: "
+            f"{format_brl(budget.average_with_goal_cents)} · {format_percent(budget.diff_percent)} "
+            f"em relação à meta · acima da meta: {budget.over_count} de {budget.with_goal_count}"
+        )
+    else:
+        console.print("Nenhuma categoria tem meta ainda: use `financas budget set`.")
+
+
+@budget_app.command("set")
+@handle_errors
+def budget_set(
+    category: Annotated[str, typer.Argument(help="Categoria de despesa.")],
+    amount: Annotated[str | None, typer.Argument(help="Meta mensal, por exemplo 700,00.")] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Remove a meta.")] = False,
+) -> None:
+    """Define (ou remove com --clear) a meta mensal de uma categoria de despesa."""
+    c = container()
+    if not clear and not amount:
+        raise DomainError("AMOUNT_REQUIRED")
+    chosen = find_category(c.uow, category)
+    SetCategoryBudget(c.uow).execute(chosen.id, None if clear else parse_brl(amount or ""))
+    console.print(
+        f"Meta de {chosen.name}: {'removida' if clear else format_brl(parse_brl(amount or ''))}."
+    )
+
+
+@recurring_app.command("list")
+@handle_errors
+def recurring_list() -> None:
+    """Catálogo e matriz mensal das despesas recorrentes."""
+    c = container()
+    view = GetRecurring(c.uow, c.clock).execute()
+    table = Table("Item", *(format_month_short(m) for m in view.months))
+    for item in view.items:
+        table.add_row(
+            item.label,
+            *(format_brl(item.amounts[m]) if m in item.amounts else "—" for m in view.months),
+        )
+    table.add_row(
+        Text("Total", style="bold"),
+        *(format_brl(view.monthly_total_cents[m]) for m in view.months),
+    )
+    console.print(table)
+    console.print(f"{format_month_short(view.current_month)} está em andamento: não gera alertas.")
+
+
+@recurring_app.command("alerts")
+@handle_errors
+def recurring_alerts_command() -> None:
+    """Cobranças que sumiram, mudaram de valor ou apareceram (último mês fechado × anterior)."""
+    c = container()
+    view = GetRecurring(c.uow, c.clock).execute()
+    if not view.alerts:
+        console.print("Nenhum alerta nas despesas recorrentes.")
+        return
+    last_closed = view.current_month.add_months(-1)
+    for alert in view.alerts:
+        console.print(
+            f"{messages.ALERT_KIND_LABELS[alert.kind]}: "
+            + messages.describe_alert(alert, view.labels[alert.key], last_closed)
+        )
+
+
+@account_app.command("flow")
+@handle_errors
+def account_flow(
+    name: Annotated[str, typer.Argument(help="Apelido da conta.")],
+    month: Annotated[
+        str | None, typer.Option("--month", "-m", help="AAAA-MM (padrão: este mês).")
+    ] = None,
+) -> None:
+    """Fluxo diário de uma conta: entradas, saídas, resultado e saldo corrido."""
+    c = container()
+    account = find_account(c.uow, name)
+    ym = YearMonth.parse(month) if month else YearMonth.from_date(c.clock.today())
+    view = GetDailyFlow(c.uow).execute(account.id, Period.month(ym))
+    table = Table("Dia", "Entradas", "Saídas", "Resultado", "Saldo", title=format_month_long(ym))
+    for row in view.rows:
+        table.add_row(
+            format_date(row.day),
+            format_brl(row.inflow_cents),
+            format_brl(row.outflow_cents),
+            format_signed(row.result_cents),
+            format_brl(row.balance_cents)
+            if row.balance_cents is not None
+            else "saldo indisponível",
+        )
+    console.print(table)
+    opening = view.opening_balance_cents
+    console.print(
+        "Saldo inicial: "
+        + (format_brl(opening) if opening is not None else "saldo indisponível (informe um saldo)")
+    )
+    console.print(
+        f"Entradas {format_brl(view.inflow_cents)} · saídas {format_brl(view.outflow_cents)}"
+    )
