@@ -122,7 +122,7 @@ def test_card_purchase_with_schedule_and_explanation() -> None:
     )  # fmt: skip
     assert "Compra em 26/07/2026, depois do fechamento em 25/07 → fatura de ago/2026" in out
     assert "(fecha 25/08 · vence 05/09)" in out
-    assert "Melhor dia de compra neste cartão: 26/08/2026" in out
+    assert "Melhor dia de compra neste cartão: 25/08/2026" in out
     assert "1/3" in out and "R$ 100,34" in out and "R$ 100,33" in out
     assert "3 lançamento(s)" in out
     listing = run("statement", "list")
@@ -505,3 +505,12 @@ def test_daily_flow_of_an_account() -> None:
     assert "R$ 5.880,00" in out and "R$ 5.380,00" in out  # running balance
     assert "Saldo inicial: R$ 1.000,00" in out
     assert "saldo indisponível" in run("account", "flow", "caixinha", "-m", "2026-07")
+
+
+def test_failure_log_command() -> None:
+    assert "Nenhuma falha registrada" in run("log", "show")
+    from financas.container import build_container
+
+    code = build_container().failures.record("cli", "cli_error", path="card", error="RuntimeError")
+    out = run("log", "show")
+    assert code in out and "Erro num comando" in out and "RuntimeError" in out

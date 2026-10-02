@@ -48,5 +48,9 @@ class Settings(BaseSettings):
         return self.data_dir / "images"
 
     @property
+    def logs_dir(self) -> Path:
+        return self.data_dir / "logs"
+
+    @property
     def backups_dir(self) -> Path:
         return self.data_dir / "backups"

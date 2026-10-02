@@ -1,9 +1,10 @@
 """FastAPI + Jinja2 + HTMX adapter. All user-visible text is pt-BR (templates and messages)."""
 
 import datetime as dt
+import json
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypedDict
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -20,6 +21,7 @@ from financas.application.queries.cards import (
     ListActiveInstallments,
     ListCards,
     ListMonthPurchases,
+    StatementView,
 )
 from financas.application.queries.investments import (
     GetFixedIncomeOverview,
@@ -89,11 +91,14 @@ from financas.application.use_cases.transactions import (
 from financas.container import Container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
+    Account,
     AccountKind,
     AssetClass,
+    Category,
     CategoryGroup,
     CategoryKind,
     Indexer,
+    Institution,
     InstrumentType,
     InvestmentTracking,
     Liquidity,
@@ -168,6 +173,17 @@ async def _upload(file: UploadFile | None) -> bytes | None:
     return data or None
 
 
+class Lookups(TypedDict):
+    """The catalogue every page needs: institutions, accounts and categories with their looks."""
+
+    institutions: dict[str, Institution]
+    accounts: list[Account]
+    categories: list[Category]
+    account_looks: dict[str, appearance.Look]
+    institution_looks: dict[str, appearance.Look]
+    category_colors: dict[str, str]
+
+
 def _money_parts(cents: int) -> tuple[str, str, str]:
     """``(sign, whole, cents)`` of an amount, for big serif figures: ``("-", "1.234", "56")``."""
     whole, frac = divmod(abs(cents), 100)
@@ -219,6 +235,7 @@ def create_app(c: Container) -> FastAPI:
 
     @app.middleware("http")
     async def guard(request: Request, call_next):  # type: ignore[no-untyped-def]
+        request.state.request_id = c.failures.new_id()
         host = request.headers.get("host", "")
         hostname = host.rsplit(":", 1)[0] if not host.endswith("]") else host
         if hostname not in allowed_hosts:  # DNS rebinding
@@ -236,6 +253,7 @@ def create_app(c: Container) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Request-ID"] = request.state.request_id
         return response
 
     # --- shared page helpers ---------------------------------------------------------------------
@@ -319,7 +337,7 @@ def create_app(c: Container) -> FastAPI:
         suffix = f"?{urlencode(params)}" if params else ""
         return RedirectResponse(path + suffix, status_code=303)
 
-    def lookups() -> dict[str, object]:
+    def lookups() -> Lookups:
         with c.uow as work:
             institutions = {
                 i.id: i
@@ -329,25 +347,59 @@ def create_app(c: Container) -> FastAPI:
             }
             accounts = sorted(work.accounts.list_all(), key=lambda a: normalize_search(a.nickname))
             categories = sorted(work.categories.list_all(), key=lambda x: normalize_search(x.name))
-        return {
-            "institutions": institutions,
-            "accounts": accounts,
-            "categories": categories,
-            "account_looks": {
+        return Lookups(
+            institutions=institutions,
+            accounts=accounts,
+            categories=categories,
+            account_looks={
                 a.id: appearance.account_look(a, institutions[a.institution_id]) for a in accounts
             },
-            "institution_looks": {
-                i.id: appearance.institution_look(i) for i in institutions.values()
-            },
-            "category_colors": {
-                x.id: x.color or appearance.default_color(x.slug) for x in categories
-            },
-        }
+            institution_looks={i.id: appearance.institution_look(i) for i in institutions.values()},
+            category_colors={x.id: x.color or appearance.default_color(x.slug) for x in categories},
+        )
 
     # pt-BR pages for framework errors (the defaults are English JSON)
 
+    def failure_code(request: Request) -> str:
+        return str(getattr(request.state, "request_id", "")) or c.failures.new_id()
+
+    @app.exception_handler(Exception)
+    async def server_error(request: Request, exc: Exception):
+        code = c.failures.record_exception(
+            "server",
+            "server_error",
+            exc,
+            id=failure_code(request),
+            method=request.method,
+            path=request.url.path,
+            status=500,
+        )
+        response = render(
+            request,
+            "error.html",
+            {
+                "heading": "Algo deu errado",
+                "detail": "O sistema não conseguiu concluir a ação. Nada foi perdido.",
+                "failure_code": code,
+            },
+            status=500,
+        )
+        response.headers["X-Request-ID"] = code  # built outside the guard middleware
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = _CSP
+        return response
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
+        if request.url.path != "/favicon.ico":
+            c.failures.record(
+                "server",
+                "http_error",
+                id=failure_code(request),
+                method=request.method,
+                path=request.url.path,
+                status=exc.status_code,
+            )
         heading, detail = {
             404: ("Página não encontrada", "Esse endereço não existe neste sistema."),
             405: ("Ação não permitida", "Esse endereço não aceita esta ação."),
@@ -376,14 +428,14 @@ def create_app(c: Container) -> FastAPI:
 
     # --- dashboard -----------------------------------------------------------------------------
 
-    def attention_items(data: dict[str, object]) -> list[dict[str, str]]:
+    def attention_items(data: Lookups) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         notice = backup_notice()
         if notice:
             items.append({"tag": "Backup", "text": notice, "href": "/#backup"})
         for b in ListAccountBalances(c.uow).execute(today()):
             if b.balance_cents is None:
-                name = next(a.nickname for a in data["accounts"] if a.id == b.account_id)  # type: ignore[attr-defined]
+                name = next(a.nickname for a in data["accounts"] if a.id == b.account_id)
                 items.append(
                     {
                         "tag": "Saldo",
@@ -449,7 +501,7 @@ def create_app(c: Container) -> FastAPI:
                 if t.kind is TransactionKind.EXPENSE and t.is_recurring
             ]
         recurring.sort(key=lambda t: t.amount_cents)  # most negative (biggest) first
-        categories = {x.id: x for x in data["categories"]}  # type: ignore[attr-defined]
+        categories = {x.id: x for x in data["categories"]}
         title = str(year) if month == 0 else format_month_long(YearMonth(year, month))
         top = summary.by_category[0].total_cents if summary.by_category else 0
         return {
@@ -482,8 +534,7 @@ def create_app(c: Container) -> FastAPI:
         y, m = _opt_int(year), _opt_int(month)
         year_value = y if y and 1900 <= y <= 9999 else now.year
         month_value = m if m is not None and 0 <= m <= 12 else now.month
-        year, month = year_value, month_value  # type: ignore[assignment]
-        return render(request, "dashboard.html", dashboard_context(year, month))
+        return render(request, "dashboard.html", dashboard_context(year_value, month_value))
 
     # --- entries -------------------------------------------------------------------------------
 
@@ -501,7 +552,7 @@ def create_app(c: Container) -> FastAPI:
             ym = YearMonth.from_date(today())
         period = Period.month(ym)
         data = lookups()
-        categories = {x.id: x for x in data["categories"]}  # type: ignore[attr-defined]
+        categories = {x.id: x for x in data["categories"]}
         with c.uow as work:
             month_rows = work.transactions.list_between(period.start, period.end)
             recent = work.transactions.list_between(today() - dt.timedelta(days=120), today())
@@ -568,7 +619,7 @@ def create_app(c: Container) -> FastAPI:
             "entry_kinds": _ENTRY_KINDS,
         }
 
-    def category_options(kind: str) -> list[object]:
+    def category_options(kind: str) -> list[Category]:
         try:
             wanted = CategoryKind.NEUTRAL if kind == "refund" else CategoryKind(kind)
         except ValueError:
@@ -709,7 +760,7 @@ def create_app(c: Container) -> FastAPI:
     def accounts_context() -> dict[str, object]:
         data = lookups()
         balances = {b.account_id: b for b in ListAccountBalances(c.uow).execute(today())}
-        data["accounts"] = [a for a in data["accounts"] if a.kind is not AccountKind.CREDIT_CARD]  # type: ignore[attr-defined]
+        data["accounts"] = [a for a in data["accounts"] if a.kind is not AccountKind.CREDIT_CARD]
         return {
             **data,
             "balances": balances,
@@ -842,15 +893,15 @@ def create_app(c: Container) -> FastAPI:
     def _money(text: str) -> int | None:
         return parse_brl(text) if text.strip() else None
 
-    def pick_statement(views: list[object], month: str | None) -> object | None:
+    def pick_statement(views: list[StatementView], month: str | None) -> StatementView | None:
         """The statement asked for, else the open one, else the oldest unpaid, else the newest."""
         if not views:
             return None
         if month:
             for v in views:
-                if str(v.statement.month) == month:  # type: ignore[attr-defined]
+                if str(v.statement.month) == month:
                     return v
-        by_status = {s: [v for v in views if v.status is s] for s in StatementStatus}  # type: ignore[attr-defined]
+        by_status = {s: [v for v in views if v.status is s] for s in StatementStatus}
         for status in (StatementStatus.OPEN, StatementStatus.CLOSED):
             if by_status[status]:
                 return by_status[status][0]
@@ -864,15 +915,11 @@ def create_app(c: Container) -> FastAPI:
         )
         statement = pick_statement(chosen.statements, month) if chosen else None
         detail = (
-            GetStatementDetail(c.uow, c.clock).execute(statement.statement.id)  # type: ignore[attr-defined]
+            GetStatementDetail(c.uow, c.clock).execute(statement.statement.id)
             if statement
             else None
         )
-        checking = [
-            a
-            for a in data["accounts"]
-            if a.kind is AccountKind.CHECKING and a.is_active  # type: ignore[attr-defined]
-        ]
+        checking = [a for a in data["accounts"] if a.kind is AccountKind.CHECKING and a.is_active]
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
         return {
@@ -882,7 +929,7 @@ def create_app(c: Container) -> FastAPI:
             "chosen": chosen,
             "statement": statement,
             "detail": detail,
-            "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
+            "category_by_id": {x.id: x for x in data["categories"]},
             "checking_accounts": checking,
             "installments": ListActiveInstallments(c.uow, c.clock).execute(chosen.account.id)
             if chosen
@@ -891,7 +938,7 @@ def create_app(c: Container) -> FastAPI:
             if chosen
             else [],
             "today": today().isoformat(),
-            "institution_choices": list(data["institutions"].values()),  # type: ignore[attr-defined]
+            "institution_choices": list(data["institutions"].values()),
         }
 
     @app.get("/cards", response_class=HTMLResponse)
@@ -948,7 +995,7 @@ def create_app(c: Container) -> FastAPI:
         limit: Annotated[str, Form()] = "",
     ):
         try:
-            SetCardSettings(c.uow).execute(
+            SetCardSettings(c.uow, c.clock).execute(
                 card_id,
                 _int(closing_days_before_due, "INVALID_DAYS_BEFORE_DUE"),
                 _int(due_day, "INVALID_CARD_DAY"),
@@ -1062,8 +1109,8 @@ def create_app(c: Container) -> FastAPI:
         form = form or {}
         card_list = [
             a for a in data["accounts"] if a.kind is AccountKind.CREDIT_CARD and a.is_active
-        ]  # type: ignore[attr-defined]
-        expense_categories = [x for x in data["categories"] if x.kind is CategoryKind.EXPENSE]  # type: ignore[attr-defined]
+        ]
+        expense_categories = [x for x in data["categories"] if x.kind is CategoryKind.EXPENSE]
         return {
             **data,
             "card_list": card_list,
@@ -1185,7 +1232,7 @@ def create_app(c: Container) -> FastAPI:
             "indexers": list(Indexer),
             "rate_modes": list(RateMode),
             "liquidities": list(Liquidity),
-            "issuers": list(data["institutions"].values()),  # type: ignore[attr-defined]
+            "issuers": list(data["institutions"].values()),
             "today": today().isoformat(),
         }
 
@@ -1388,6 +1435,37 @@ def create_app(c: Container) -> FastAPI:
     def more(request: Request):
         return render(request, "more.html", {})
 
+    # --- failures: what the browser reports and what the log holds -----------------------------
+
+    @app.post("/client-errors")
+    async def client_errors(request: Request) -> Response:
+        """The page reports its own failures here (see ``static/app.js``). Always 204: a report
+        that is rejected, too big or rate limited is simply dropped; it never shows an error."""
+        body = await request.body()
+        if len(body) <= 4096:
+            try:
+                payload = json.loads(body)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                c.failures.accept_client_report(
+                    payload,  # pyright: ignore[reportUnknownArgumentType]
+                    request.headers.get("user-agent", ""),
+                )
+        return Response(status_code=204)
+
+    @app.get("/diagnostics", response_class=HTMLResponse)
+    def diagnostics(request: Request):
+        return render(
+            request,
+            "diagnostics.html",
+            {
+                "failures": c.failures.recent(100),
+                "kind_labels": messages.FAILURE_KIND_LABELS,
+                "log_path": "data/logs/failures.jsonl",
+            },
+        )
+
     # --- budget, recurring and daily flow ------------------------------------------------------
 
     def _sane_year(value: str) -> int:
@@ -1406,12 +1484,8 @@ def create_app(c: Container) -> FastAPI:
             "range_name": budget_range.value,
             "year": chosen_year,
             "years": sorted({today().year - 3 + n for n in range(5)} | {chosen_year}),
-            "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
-            "expense_categories": [
-                x
-                for x in data["categories"]  # type: ignore[attr-defined]
-                if x.kind is CategoryKind.EXPENSE
-            ],
+            "category_by_id": {x.id: x for x in data["categories"]},
+            "expense_categories": [x for x in data["categories"] if x.kind is CategoryKind.EXPENSE],
             "editing": False,
         }
 
@@ -1453,7 +1527,7 @@ def create_app(c: Container) -> FastAPI:
                 **data,
                 "view": view,
                 "last_closed": view.current_month.add_months(-1),
-                "category_by_id": {x.id: x for x in data["categories"]},  # type: ignore[attr-defined]
+                "category_by_id": {x.id: x for x in data["categories"]},
             },
         )
 

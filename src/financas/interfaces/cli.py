@@ -2,6 +2,7 @@
 
 import datetime as dt
 import functools
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
@@ -22,6 +23,8 @@ from financas.application.queries.investments import (
     GetInvestmentPeriodTotals,
     GetNetWorth,
     GetYearEndPosition,
+    HoldingView,
+    InvestmentAccountView,
     ListHoldings,
     ListInvestments,
 )
@@ -146,6 +149,8 @@ holding_app = typer.Typer(
     help="Aplicações de renda fixa (CDB, LCI, Tesouro...).", no_args_is_help=True
 )
 invest_app.add_typer(holding_app, name="holding")
+log_app = typer.Typer(help="Registro de falhas deste computador.", no_args_is_help=True)
+app.add_typer(log_app, name="log")
 
 # markup is off: descriptions and names typed by the user may contain "[...]" (Rich would eat or
 # reject it); colors are applied with styles instead
@@ -195,7 +200,7 @@ def _set_appearance(
     )
 
 
-def _swatch(color: str | None) -> str:
+def _swatch(color: str | None) -> Text:
     return Text.assemble(("■ ", color), color) if color else Text("—")
 
 
@@ -666,6 +671,37 @@ def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) ->
     uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
 
 
+# --- failures ---------------------------------------------------------------------------------
+
+
+@log_app.command("show")
+def log_show(
+    last: Annotated[int, typer.Option("--last", "-n", min=1, max=500, help="Quantas.")] = 20,
+) -> None:
+    """Mostra as últimas falhas registradas (sem descrições nem valores)."""
+    c = container()
+    entries = c.failures.recent(last)
+    if not entries:
+        console.print("Nenhuma falha registrada.")
+        return
+    table = Table()
+    for column in ("Quando", "Código", "Tipo", "Onde", "Detalhe"):
+        table.add_column(column)
+    for item in entries:
+        where = f"{item.get('method', '')} {item.get('path', '')}".strip()
+        detail = str(item.get("error") or item.get("message") or item.get("code") or "")
+        status = f" · {item['status']}" if item.get("status") else ""
+        table.add_row(
+            str(item.get("ts", ""))[:19].replace("T", " "),
+            str(item.get("id", "")),
+            messages.FAILURE_KIND_LABELS.get(str(item.get("kind")), str(item.get("kind"))) + status,
+            where,
+            detail,
+        )
+    console.print(table)
+    console.print(f"Arquivo: {c.failures.path}")
+
+
 # --- cards ------------------------------------------------------------------------------------
 
 
@@ -728,7 +764,7 @@ def card_edit(
     c = container()
     card = find_card(c.uow, name)
     new_limit = None if no_limit else (_optional_money(limit) if limit else card.credit_limit_cents)
-    SetCardSettings(c.uow).execute(
+    SetCardSettings(c.uow, c.clock).execute(
         card.id,
         closes_before_due if closes_before_due is not None else card.closing_days_before_due or 0,
         due if due is not None else card.due_day or 0,
@@ -993,7 +1029,7 @@ def statement_dates(
 # --- investments and net worth ----------------------------------------------------------------
 
 
-def _age_text(view) -> str:
+def _age_text(view: HoldingView | InvestmentAccountView) -> str | Text:
     if view.age_days is None:
         return "sem avaliação"
     base = f"há {view.age_days} dia(s)"
@@ -1628,3 +1664,18 @@ def account_flow(
     console.print(
         f"Entradas {format_brl(view.inflow_cents)} · saídas {format_brl(view.outflow_cents)}"
     )
+
+
+def main() -> None:
+    """Entry point of the ``financas`` command: unexpected failures go to the failure log."""
+    try:
+        app()
+    except Exception as error:
+        code = container().failures.record_exception(
+            "cli", "cli_error", error, path=" ".join(sys.argv[1:2])
+        )
+        err_console.print(
+            f"Erro inesperado (código {code}). Veja os detalhes com: financas log show",
+            style="red",
+        )
+        raise SystemExit(1) from error

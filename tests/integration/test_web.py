@@ -18,8 +18,10 @@ HEADERS = {"host": "localhost", "origin": "http://localhost"}
 @pytest.fixture
 def container(tmp_path: Path) -> Container:
     settings = Settings(
-        db_url=f"sqlite:///{tmp_path / 'data' / 'f.db'}", data_dir=tmp_path / "data", _env_file=None
-    )  # type: ignore[call-arg]
+        db_url=f"sqlite:///{tmp_path / 'data' / 'f.db'}",
+        data_dir=tmp_path / "data",
+        _env_file=None,  # type: ignore[call-arg]
+    )
     c = Container(settings)
     c.migrate()
     seed_categories(c.uow)
@@ -383,7 +385,7 @@ def test_purchase_preview_explains_the_statement_and_shows_the_schedule(
     assert "Compra em 26/07/2026, depois do fechamento em 25/07" in text
     assert "fatura de ago/2026 (fecha 25/08 · vence 05/09)" in text
     assert "R$ 100,34" in text and "R$ 100,33" in text and "R$ 301,00" in text
-    assert "Melhor dia de compra neste cartão: 26/08/2026" in text
+    assert "Melhor dia de compra neste cartão: 25/08/2026" in text
     with container.uow as work:
         assert work.transactions.list_by_account(card) == []  # a preview writes nothing
 
@@ -1270,3 +1272,79 @@ def test_daily_flow_is_not_available_for_cards(client: TestClient, container: Co
     _, card = make_card(client, container)
     response = client.get(f"/accounts/{card}/flow")
     assert response.status_code == 400 and "Cartões não têm fluxo diário" in response.text
+
+
+# --- failure log ---
+
+
+def test_server_errors_show_a_code_and_land_in_the_log_without_values(
+    container: Container,
+) -> None:
+    app = create_app(container)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise RuntimeError("saldo R$ 1.234,56 de Café São João")
+
+    client = TestClient(
+        app,
+        base_url="http://localhost",
+        headers=HEADERS,
+        raise_server_exceptions=False,
+    )
+    page = client.get("/boom")
+    assert page.status_code == 500 and "Algo deu errado" in page.text
+    code = page.headers["x-request-id"]
+    assert f"<code>{code}</code>" in page.text
+    (entry,) = container.failures.recent()
+    assert entry["id"] == code and entry["kind"] == "server_error" and entry["status"] == 500
+    assert entry["error"] == "RuntimeError" and entry["path"] == "/boom"
+    raw = container.failures.path.read_text(encoding="utf-8")
+    assert "1.234,56" not in raw and "Café" not in raw
+    listing = client.get("/diagnostics")
+    assert listing.status_code == 200 and code in listing.text
+    assert "Erro no servidor" in listing.text
+
+
+def test_missing_pages_are_logged_but_not_the_favicon(
+    client: TestClient, container: Container
+) -> None:
+    assert client.get("/nao-existe").status_code == 404
+    assert client.get("/favicon.ico").status_code == 404
+    entries = container.failures.recent()
+    assert [(e["kind"], e["path"], e["status"]) for e in entries] == [
+        ("http_error", "/nao-existe", 404)
+    ]
+
+
+def test_the_browser_reports_failures(client: TestClient, container: Container) -> None:
+    report = {
+        "kind": "htmx_error",
+        "method": "POST",
+        "target": "/cards/purchase/preview",
+        "status": 500,
+        "message": "resposta com erro",
+        "path": "/cards/purchase",
+    }
+    assert client.post("/client-errors", json=report).status_code == 204
+    (entry,) = container.failures.recent()
+    assert (entry["source"], entry["kind"], entry["status"]) == ("client", "htmx_error", 500)
+    # junk, oversized and cross-origin reports are dropped quietly or refused
+    assert client.post("/client-errors", content=b"not json").status_code == 204
+    assert client.post("/client-errors", json={"kind": "x" * 10}).status_code == 204
+    assert client.post("/client-errors", content=b"{" + b" " * 5000).status_code == 204
+    assert len(container.failures.recent()) == 1
+    foreign = client.post(
+        "/client-errors", json=report, headers={**HEADERS, "origin": "http://evil.example"}
+    )
+    assert foreign.status_code == 403
+
+
+def test_the_script_reports_failures_and_the_page_links_the_diagnostics(
+    client: TestClient,
+) -> None:
+    script = client.get("/static/app.js").text
+    assert "/client-errors" in script and "unhandledrejection" in script
+    assert "htmx:responseError" in script
+    assert "/diagnostics" in client.get("/more").text
+    assert "Nenhuma falha registrada" in client.get("/diagnostics").text

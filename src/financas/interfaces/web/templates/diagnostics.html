@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Diagnóstico{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><span class="eyebrow">Menu</span><h1>Diagnóstico</h1>
+  <p>Falhas do servidor, da tela e dos comandos, guardadas só neste computador. O registro não contém descrições nem valores: apenas o tipo da falha, o endereço, o código do erro e os trechos de código envolvidos.</p></div>
+</header>
+<section class="panel">
+  {% if failures %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Quando</th><th>Código</th><th>O que aconteceu</th><th>Onde</th><th>Detalhe</th></tr></thead>
+      <tbody>
+      {% for f in failures %}
+        <tr>
+          <td>{{ f.ts[:19]|replace('T', ' ') }}</td>
+          <td><code>{{ f.id }}</code></td>
+          <td>{{ kind_labels.get(f.kind, f.kind) }}{% if f.status %} · {{ f.status }}{% endif %}</td>
+          <td>{{ f.method or '' }} {{ f.path or '' }}</td>
+          <td class="soft">{{ f.error or f.message or '' }}{% if f.code %} · {{ f.code }}{% endif %}{% if f.where %}<br><small>{{ f.where[-1] }}</small>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Nenhuma falha registrada. Quando algo não funcionar, ela aparece aqui com um código.</p>
+  {% endif %}
+  <p class="hint">Arquivo: {{ log_path }} · no terminal: <code>financas log show</code></p>
+</section>
+{% endblock %}

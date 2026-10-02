@@ -12,6 +12,7 @@ from financas.infrastructure.db.engine import make_engine, make_session_factory
 from financas.infrastructure.db.migrate import needs_upgrade, upgrade_to_head
 from financas.infrastructure.db.repositories import SqlUnitOfWork
 from financas.infrastructure.db.seed import seed_categories
+from financas.infrastructure.failure_log import FailureLog
 from financas.infrastructure.images import FileImageStore
 from financas.infrastructure.settings import Settings
 
@@ -27,6 +28,10 @@ class Container:
     @cached_property
     def images(self) -> ImageStore:
         return FileImageStore(self.settings.images_dir)
+
+    @cached_property
+    def failures(self) -> FailureLog:
+        return FailureLog(self.settings.logs_dir)
 
     @cached_property
     def clock(self) -> Clock:

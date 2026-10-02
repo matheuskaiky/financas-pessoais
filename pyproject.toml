@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-financas = "financas.interfaces.cli:app"
+financas = "financas.interfaces.cli:main"
 
 [dependency-groups]
 dev = [
