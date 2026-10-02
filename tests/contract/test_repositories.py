@@ -12,10 +12,13 @@ from financas.domain.models import (
     Category,
     CategoryGroup,
     CategoryKind,
+    InstallmentPlan,
     Institution,
+    Statement,
     Transaction,
     TransactionKind,
 )
+from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
 from financas.infrastructure.db.repositories import SqlUnitOfWork
 
@@ -237,3 +240,194 @@ def test_anchor_upsert_is_unique_per_account_and_date(uow: UnitOfWork) -> None:
             (D(2026, 7, 10), 999, "dois"),
         ]
         assert work.anchors.list_for_account("nope") == []
+
+
+# --- cards (Phase 2) -----------------------------------------------------------------------------
+
+
+def card(inst: Institution, n: int = 9) -> Account:
+    return Account(
+        id=f"k{n}".ljust(32, "0"),
+        kind=AccountKind.CREDIT_CARD,
+        institution_id=inst.id,
+        nickname="Cartão",
+        closing_day=25,
+        due_day=5,
+        credit_limit_cents=1_200_000,
+    )
+
+
+def statement(acc: Account, month: str, n: int = 1) -> Statement:
+    ym = YearMonth.parse(month)
+    return Statement(f"s{n}".ljust(32, "0"), acc.id, ym, ym.day(25), ym.add_months(1).day(5))
+
+
+def test_card_account_round_trip(uow: UnitOfWork) -> None:
+    inst, _, _ = populate(uow)
+    k = card(inst)
+    with uow as work:
+        work.accounts.add(k)
+        work.commit()
+    with uow as work:
+        assert work.accounts.get(k.id) == k
+        work.accounts.update(
+            Account(k.id, k.kind, k.institution_id, k.nickname, True, None, None, 10, 17, None)
+        )
+        work.commit()
+    with uow as work:
+        got = work.accounts.get(k.id)
+        assert got and (got.closing_day, got.due_day, got.credit_limit_cents) == (10, 17, None)
+
+
+def test_statements_are_unique_per_card_and_month_and_ordered(uow: UnitOfWork) -> None:
+    inst, _, _ = populate(uow)
+    k = card(inst)
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(statement(k, "2026-09", 2))
+        work.statements.add(statement(k, "2026-08", 1))
+        work.commit()
+    with uow as work:
+        assert [str(s.month) for s in work.statements.list_for_card(k.id)] == ["2026-08", "2026-09"]
+        found = work.statements.get_by_card_month(k.id, YearMonth(2026, 9))
+        assert found and found.due_date == D(2026, 10, 5)
+        assert work.statements.get_by_card_month(k.id, YearMonth(2026, 10)) is None
+        assert work.statements.get("z" * 32) is None
+        assert len(work.statements.list_all()) == 2
+    with pytest.raises(Exception), uow as work:  # noqa: B017  (IntegrityError or ValueError)
+        work.statements.add(statement(k, "2026-09", 3))
+        work.commit()
+
+
+def test_statement_update_keeps_informed_total(uow: UnitOfWork) -> None:
+    inst, _, _ = populate(uow)
+    k = card(inst)
+    st = statement(k, "2026-08")
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(st)
+        work.commit()
+    with uow as work:
+        work.statements.update(
+            Statement(st.id, st.account_id, st.month, D(2026, 8, 24), D(2026, 9, 6), 235_646)
+        )
+        work.commit()
+    with uow as work:
+        got = work.statements.get(st.id)
+        assert got and (got.closing_date, got.due_date, got.informed_total_cents) == (
+            D(2026, 8, 24),
+            D(2026, 9, 6),
+            235_646,
+        )
+
+
+def test_plan_transactions_and_lookups(uow: UnitOfWork) -> None:
+    inst, acc, cat = populate(uow)
+    k = card(inst)
+    st1, st2 = statement(k, "2026-08", 1), statement(k, "2026-09", 2)
+    plan = InstallmentPlan("p" * 32, k.id, "Fone", cat.id, 2, D(2026, 7, 26))
+    rows = [
+        tx(
+            1,
+            k,
+            cat,
+            D(2026, 7, 26),
+            -10_034,
+            plan_id=plan.id,
+            installment_number=1,
+            statement_id=st1.id,
+        ),
+        tx(
+            2,
+            k,
+            cat,
+            D(2026, 9, 25),
+            -10_033,
+            plan_id=plan.id,
+            installment_number=2,
+            statement_id=st2.id,
+        ),
+        tx(3, k, cat, D(2026, 8, 3), -500, statement_id=st1.id),
+    ]
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(st1)
+        work.statements.add(st2)
+        work.plans.add(plan)
+        work.transactions.add_many(rows)
+        work.commit()
+    with uow as work:
+        assert work.plans.get(plan.id) == plan
+        assert work.plans.list_all() == [plan]
+        assert [t.installment_number for t in work.transactions.list_by_plan(plan.id)] == [1, 2]
+        assert {t.id for t in work.transactions.list_by_statement(st1.id)} == {
+            rows[0].id,
+            rows[2].id,
+        }
+        assert len(work.transactions.list_by_account(k.id)) == 3
+        assert work.transactions.list_by_account(acc.id) == []
+        got = work.transactions.get(rows[1].id)
+        assert got and (got.plan_id, got.installment_number, got.statement_id) == (
+            plan.id,
+            2,
+            st2.id,
+        )
+
+
+def test_update_amount_and_set_statement(uow: UnitOfWork) -> None:
+    inst, _, cat = populate(uow)
+    k = card(inst)
+    st1, st2 = statement(k, "2026-08", 1), statement(k, "2026-09", 2)
+    row = tx(1, k, cat, D(2026, 8, 3), -500, statement_id=st1.id)
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(st1)
+        work.statements.add(st2)
+        work.transactions.add_many([row])
+        work.commit()
+    with uow as work:
+        work.transactions.update_amount(row.id, -750)
+        work.transactions.set_statement(row.id, st2.id)
+        work.commit()
+    with uow as work:
+        got = work.transactions.get(row.id)
+        assert got and (got.amount_cents, got.statement_id) == (-750, st2.id)
+
+
+def test_plan_delete(uow: UnitOfWork) -> None:
+    inst, _, cat = populate(uow)
+    k = card(inst)
+    plan = InstallmentPlan("p" * 32, k.id, "Fone", cat.id, 3, None)
+    with uow as work:
+        work.accounts.add(k)
+        work.plans.add(plan)
+        work.commit()
+    with uow as work:
+        work.plans.delete(plan.id)
+        work.commit()
+    with uow as work:
+        assert work.plans.get(plan.id) is None
+
+
+def test_competence_uses_the_statement_month_for_card_entries(uow: UnitOfWork) -> None:
+    inst, acc, cat = populate(uow)
+    k = card(inst)
+    august = statement(k, "2026-08", 1)
+    rows = [
+        tx(1, acc, cat, D(2026, 7, 26), -100),  # checking: counts in July (posted_on)
+        tx(2, k, cat, D(2026, 7, 26), -200, statement_id=august.id),  # card: counts in August
+        tx(3, k, cat, D(2026, 8, 25), -300, statement_id=august.id),
+        tx(4, acc, cat, D(2026, 8, 1), -400),
+    ]
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(august)
+        work.transactions.add_many(rows)
+        work.commit()
+    with uow as work:
+        july = {t.id for t in work.transactions.list_for_competence(D(2026, 7, 1), D(2026, 7, 31))}
+        aug = {t.id for t in work.transactions.list_for_competence(D(2026, 8, 1), D(2026, 8, 31))}
+        year = work.transactions.list_for_competence(D(2026, 1, 1), D(2026, 12, 31))
+    assert july == {rows[0].id}
+    assert aug == {rows[1].id, rows[2].id, rows[3].id}
+    assert len(year) == 4

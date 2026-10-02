@@ -99,7 +99,7 @@ def test_use_cases_end_to_end_and_atomic_transfer(sql_uow: SqlUnitOfWork) -> Non
         CreateAccountCommand(AccountKind.CHECKING, inst.id, "CC")
     )
     card = CreateAccount(sql_uow).execute(
-        CreateAccountCommand(AccountKind.CREDIT_CARD, inst.id, "Cartão")
+        CreateAccountCommand(AccountKind.CREDIT_CARD, inst.id, "Cartão", closing_day=25, due_day=5)
     )
     RegisterTransaction(sql_uow).execute(
         RegisterTransactionCommand(
@@ -113,3 +113,83 @@ def test_use_cases_end_to_end_and_atomic_transfer(sql_uow: SqlUnitOfWork) -> Non
     with sql_uow as work:
         rows = work.transactions.list_between(D(2026, 7, 1), D(2026, 7, 31))
     assert [(r.amount_cents, r.description_search) for r in rows] == [(-1_234, "cafe sao joao")]
+
+
+def test_migrating_an_old_database_takes_a_backup_first_and_keeps_the_data(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.container import Container
+    from financas.infrastructure.db.migrate import alembic_config, needs_upgrade
+    from financas.infrastructure.settings import Settings
+
+    url = f"sqlite:///{tmp_path / 'data' / 'f.db'}"
+    settings = Settings(db_url=url, data_dir=tmp_path / "data", _env_file=None)  # type: ignore[call-arg]
+    container = Container(settings)
+    assert needs_upgrade(url) is False  # nothing there yet
+    assert container.migrate() is None  # a new database needs no backup
+    # go back to the Phase 1 schema and put a row in it
+    command.downgrade(alembic_config(url), "ba63e5e4254f")
+    raw = sqlite3.connect(tmp_path / "data" / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.commit()
+    raw.close()
+    assert needs_upgrade(url) is True
+    backup = container.migrate()
+    assert backup is not None and (backup / "financas.db").exists()
+    assert needs_upgrade(url) is False
+    with sqlite3.connect(tmp_path / "data" / "f.db") as db:
+        assert db.execute("select name from institutions").fetchall() == [("BB",)]
+    with sqlite3.connect(backup / "financas.db") as old:  # the backup is the old schema
+        assert "closing_day" not in [r[1] for r in old.execute("pragma table_info(accounts)")]
+
+
+def test_database_rejects_invalid_card_rows(sql_uow: SqlUnitOfWork) -> None:
+    seed_categories(sql_uow)
+    inst = CreateInstitution(sql_uow).execute(CreateInstitutionCommand(name="BB"))
+    engine_url = sql_uow._factory.kw["bind"].url  # type: ignore[attr-defined]
+    raw = sqlite3.connect(engine_url.database)
+    raw.execute("PRAGMA foreign_keys=ON")
+    insert = (
+        "insert into accounts (id, kind, institution_id, nickname, is_active, closing_day, due_day,"
+        " credit_limit_cents) values (?, ?, ?, 'x', 1, ?, ?, ?)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # a card needs both days
+        raw.execute(insert, ("1" * 32, "credit_card", inst.id, 25, None, None))
+    with pytest.raises(sqlite3.IntegrityError):  # day out of range
+        raw.execute(insert, ("2" * 32, "credit_card", inst.id, 32, 5, None))
+    with pytest.raises(sqlite3.IntegrityError):  # a checking account has no card fields
+        raw.execute(insert, ("3" * 32, "checking", inst.id, 25, 5, None))
+    with pytest.raises(sqlite3.IntegrityError):  # negative limit
+        raw.execute(insert, ("4" * 32, "credit_card", inst.id, 25, 5, -1))
+    raw.execute(insert, ("5" * 32, "credit_card", inst.id, 25, 5, 100))
+    entry = (
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring, plan_id, installment_number)"
+        " values (?, ?, '2026-07-01', 'expense', (select id from categories limit 1), -1, 'x',"
+        " 'x', 0, ?, ?)"
+    )
+    raw.execute(
+        "insert into installment_plans"
+        " (id, account_id, category_id, description, installment_total)"
+        " values (?, ?, (select id from categories limit 1), 'x', 3)",
+        ("p" * 32, "5" * 32),
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # an installment number without a plan
+        raw.execute(entry, ("e" * 32, "5" * 32, None, 1))
+    with pytest.raises(sqlite3.IntegrityError):  # a plan without an installment number
+        raw.execute(entry, ("f" * 32, "5" * 32, "p" * 32, None))
+    with pytest.raises(sqlite3.IntegrityError):  # installment numbers start at 1
+        raw.execute(entry, ("g" * 32, "5" * 32, "p" * 32, 0))
+    raw.execute(entry, ("h" * 32, "5" * 32, "p" * 32, 2))
+    stmt = (
+        "insert into statements (id, account_id, month, closing_date, due_date)"
+        " values (?, ?, ?, ?, ?)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # bad month format
+        raw.execute(stmt, ("a" * 32, "5" * 32, "2026-7", "2026-07-25", "2026-08-05"))
+    with pytest.raises(sqlite3.IntegrityError):  # due must be after closing
+        raw.execute(stmt, ("b" * 32, "5" * 32, "2026-07", "2026-07-25", "2026-07-25"))
+    raw.execute(stmt, ("c" * 32, "5" * 32, "2026-07", "2026-07-25", "2026-08-05"))
+    with pytest.raises(sqlite3.IntegrityError):  # one statement per card and month
+        raw.execute(stmt, ("d" * 32, "5" * 32, "2026-07", "2026-07-25", "2026-08-05"))
+    raw.close()

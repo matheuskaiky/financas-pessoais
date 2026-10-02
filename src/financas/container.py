@@ -9,7 +9,7 @@ from financas.domain.ports import Clock, ImageStore, UnitOfWork
 from financas.infrastructure.backup import last_backup_date, make_backup
 from financas.infrastructure.clock import SystemClock
 from financas.infrastructure.db.engine import make_engine, make_session_factory
-from financas.infrastructure.db.migrate import upgrade_to_head
+from financas.infrastructure.db.migrate import needs_upgrade, upgrade_to_head
 from financas.infrastructure.db.repositories import SqlUnitOfWork
 from financas.infrastructure.db.seed import seed_categories
 from financas.infrastructure.images import FileImageStore
@@ -32,8 +32,15 @@ class Container:
     def clock(self) -> Clock:
         return SystemClock()
 
-    def migrate(self) -> None:
+    def migrate(self) -> Path | None:
+        """Bring the database to the latest schema.
+
+        An existing database that is behind the code is backed up first (CLAUDE.md section 14);
+        the backup folder is returned, or ``None`` when nothing needed to change.
+        """
+        backup = self.backup() if needs_upgrade(self.settings.db_url) else None
         upgrade_to_head(self.settings.db_url)
+        return backup
 
     def seed(self) -> int:
         """Create the initial categories that are missing; return how many were created."""
