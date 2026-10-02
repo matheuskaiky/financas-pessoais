@@ -31,6 +31,17 @@ def format_date(day: dt.date) -> str:
     return day.strftime("%d/%m/%Y")
 
 
+WEEKDAY_NAMES = (
+    "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+    "sexta-feira", "sábado", "domingo",
+)  # fmt: skip
+
+
+def format_day_label(day: dt.date) -> str:
+    """``quinta-feira, 25 de setembro``: the header of a day group in the entries list."""
+    return f"{WEEKDAY_NAMES[day.weekday()]}, {day.day} de {MONTH_NAMES[day.month - 1]}"
+
+
 def format_decimal_comma(cents: int) -> str:
     """``231846`` → ``2318,46``: the value for an input field (no currency symbol)."""
     whole, frac = divmod(abs(cents), 100)

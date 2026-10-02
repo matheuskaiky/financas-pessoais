@@ -108,6 +108,7 @@ from financas.interfaces import appearance, messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
+    format_day_label,
     format_decimal_comma,
     format_month,
     format_month_long,
@@ -167,6 +168,12 @@ async def _upload(file: UploadFile | None) -> bytes | None:
     return data or None
 
 
+def _money_parts(cents: int) -> tuple[str, str, str]:
+    """``(sign, whole, cents)`` of an amount, for big serif figures: ``("-", "1.234", "56")``."""
+    whole, frac = divmod(abs(cents), 100)
+    return ("−" if cents < 0 else "", f"{whole:,}".replace(",", "."), f"{frac:02d}")
+
+
 def create_app(c: Container) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.container = c
@@ -176,8 +183,10 @@ def create_app(c: Container) -> FastAPI:
 
     templates.env.filters.update(
         brl=format_brl,
+        money_parts=_money_parts,
         date=format_date,
         date_short=format_date_short,
+        day_label=format_day_label,
         signed=format_signed,
         month_short=format_month,
         percent=format_percent,

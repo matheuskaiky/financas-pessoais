@@ -10,8 +10,8 @@
       data: {
         labels: JSON.parse(months.dataset.months),
         datasets: [
-          { label: "Receitas", data: JSON.parse(months.dataset.income), backgroundColor: "#0E6151" },
-          { label: "Despesas (líquidas)", data: JSON.parse(months.dataset.expenses), backgroundColor: "#1E395F" },
+          { label: "Receitas", data: JSON.parse(months.dataset.income), backgroundColor: "#0F5C45" },
+          { label: "Despesas (líquidas)", data: JSON.parse(months.dataset.expenses), backgroundColor: "#C9A24D" },
         ],
       },
       options: {

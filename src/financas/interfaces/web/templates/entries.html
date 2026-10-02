@@ -7,7 +7,7 @@
 {% block content %}
 <header class="page-head">
   <div>
-    <h1>Lançamentos</h1>
+    <span class="eyebrow">Movimento</span><h1>Lançamentos</h1>
     <p>{{ month_label|capitalize }} · {{ month_count }} lançamento(s)</p>
   </div>
   <div class="head-tools">
@@ -50,7 +50,9 @@
     <section class="list-box" aria-label="Lista de lançamentos">
       {% if rows %}
       <div class="rowhead entry-head"><span>Data</span><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
+      {% set seen = namespace(day=none) %}
       {% for t in rows %}
+      {% if seen.day != t.posted_on %}{% set seen.day = t.posted_on %}<div class="day-head">{{ t.posted_on|day_label }}</div>{% endif %}
       <div class="row entry">
         <span class="c-date">{{ t.posted_on|date_short }}</span>
         <div class="c-desc">

@@ -10,6 +10,7 @@ from financas.interfaces import messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
+    format_day_label,
     format_month,
     format_month_long,
     format_percent,
@@ -111,3 +112,8 @@ def test_format_rate() -> None:
     assert format_rate(RateMode.SPREAD_OVER_INDEX, Indexer.IPCA, 650) == "IPCA + 6,50%"
     assert format_rate(RateMode.FIXED_ANNUAL, Indexer.PREFIXED, 1_230) == "12,30% a.a."
     assert format_rate(None, None, None) == "—"
+
+
+def test_day_label_names_the_weekday_in_portuguese() -> None:
+    assert format_day_label(dt.date(2026, 9, 24)) == "quinta-feira, 24 de setembro"
+    assert format_day_label(dt.date(2026, 3, 1)) == "domingo, 1 de março"

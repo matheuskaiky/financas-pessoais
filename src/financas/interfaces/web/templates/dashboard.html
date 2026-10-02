@@ -8,6 +8,7 @@
 {% block content %}
 <header class="page-head">
   <div>
+    <span class="eyebrow">Visão geral</span>
     <h1>Painel</h1>
     <p>{{ title|capitalize }} · tudo calculado a partir dos seus lançamentos</p>
   </div>
@@ -28,15 +29,38 @@
   </form>
 </header>
 
-<section class="cards" aria-label="Totais">
-  <div class="card"><span class="label">Receitas</span><strong>{{ summary.income_cents|brl }}</strong><small>Transferências não entram</small></div>
-  <div class="card"><span class="label">Despesas</span><strong>{{ summary.expenses_cents|brl }}</strong>
+{% set sign, whole, frac = summary.balance_cents|money_parts %}
+<section class="hero" aria-label="Saldo do período">
+  <div>
+    <span class="label">Saldo do período · {{ title }}</span>
+    <div class="amount {{ 'neg' if summary.balance_cents < 0 }}">
+      {% if sign %}<span class="minus">−</span>{% endif %}<span class="cur">R$</span>{{ whole }}<span class="cents">,{{ frac }}</span>
+    </div>
+  </div>
+  <div class="hero-row">
+    <div class="hero-figs">
+      <div><span class="label">Receitas</span><span class="fig">{{ summary.income_cents|brl }}</span></div>
+      <div><span class="label">Despesas</span><span class="fig">{{ summary.expenses_cents|brl }}</span></div>
+    </div>
+    {% if summary.income_cents %}
+    {% set spent = ((summary.expenses_cents / summary.income_cents) * 100)|round|int %}
+    <div class="gauge" role="img" aria-label="{{ spent }}% da renda gasta">
+      <div class="top"><span class="label">Renda gasta</span><span class="fig">{{ spent }}%</span></div>
+      <div class="track"><div class="fill" style="width: {{ [spent, 100]|min }}%"></div></div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="statstrip" aria-label="Totais">
+  <div><span class="label">Saldo do período</span>
+    <strong class="value {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas líquidas</small></div>
+  <div><span class="label">Despesas</span><strong class="value">{{ summary.expenses_cents|brl }}</strong>
     <small>{% if summary.refunds_cents %}Estornos à parte: {{ summary.refunds_cents|brl }} · líquido {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
-  <div class="card"><span class="label">Saldo do período</span>
-    <strong class="{{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas líquidas</small></div>
-  <div class="card"><span class="label">Aportes líquidos</span><strong>{{ summary.net_contributions_cents|brl }}</strong>
+  <div><span class="label">Receitas</span><strong class="value">{{ summary.income_cents|brl }}</strong><small>Transferências não entram</small></div>
+  <div><span class="label">Aportes líquidos</span><strong class="value">{{ summary.net_contributions_cents|brl }}</strong>
     <small>{% if summary.investment_rate is none %}Aportes − resgates{% else %}{{ summary.investment_rate|percent }} da renda investida{% endif %}</small></div>
-  <div class="card"><span class="label">Taxa de poupança</span><strong>{{ summary.savings_rate|percent }}</strong>
+  <div><span class="label">Taxa de poupança</span><strong class="value">{{ summary.savings_rate|percent }}</strong>
     <small>{% if summary.savings_rate is none %}Sem receitas no período{% else %}Saldo ÷ receitas{% endif %}</small></div>
 </section>
 
