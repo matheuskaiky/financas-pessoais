@@ -90,3 +90,113 @@ def test_delete_and_backup(tmp_path: Path) -> None:
     assert "não encontrado" in run("delete", "zzzzzzzz", ok=False)
     assert "Backup criado" in run("backup")
     assert len(list((tmp_path / "data" / "backups").iterdir())) == 1
+
+
+def setup_card() -> None:
+    setup_basic()
+    out = run(
+        "card",
+        "add",
+        "Nubank",
+        "-i",
+        "banco",
+        "--closing",
+        "25",
+        "--due",
+        "5",
+        "--limit",
+        "12.000,00",
+    )
+    assert "Cartão criado: Nubank (fecha dia 25, vence dia 5)" in out
+
+
+def test_card_purchase_with_schedule_and_explanation() -> None:
+    setup_card()
+    out = run(
+        "card", "buy", "Fone de ouvido", "--card", "nubank", "-d", "26/07/2026",
+        "--total", "301,00", "-n", "3", "-y",
+    )  # fmt: skip
+    assert "Compra em 26/07/2026, depois do fechamento do dia 25 → fatura de ago/2026" in out
+    assert "(fecha 25/08 · vence 05/09)" in out
+    assert "Melhor dia de compra neste cartão: dia 26" in out
+    assert "1/3" in out and "R$ 100,34" in out and "R$ 100,33" in out
+    assert "3 lançamento(s)" in out
+    listing = run("statement", "list")
+    assert "Fatura ago/2026 · fecha 25/08 · vence 05/09" in listing
+    assert "Fatura set/2026" in listing and "Fatura out/2026" in listing
+    assert "Fone de ouvido" in run("card", "installments")
+    shown = run("statement", "show", "nubank", "2026-08")
+    assert "R$ 100,34" in shown and "Fone de ouvido" in shown
+
+
+def test_card_purchase_can_be_declined_and_validates() -> None:
+    setup_card()
+    result = runner.invoke(
+        app,
+        ["card", "buy", "Teste", "--card", "nubank", "-d", "10/07/2026", "--total", "10,00"],
+        input="n\n",
+        terminal_width=200,
+    )
+    assert result.exit_code == 0 and "Nada foi salvo" in result.output
+    assert "Fatura jul" not in run("statement", "list")  # nothing was saved
+    assert "Informe a data da compra" in run(
+        "card", "buy", "x", "--card", "nubank", "--total", "1", "-y", ok=False
+    )
+    assert "Compra em andamento: informe a fatura" in run(
+        "card",
+        "buy",
+        "x",
+        "--card",
+        "nubank",
+        "-n",
+        "10",
+        "--current",
+        "3",
+        "--installment-value",
+        "61,88",
+        "-y",
+        ok=False,
+    )
+    assert "Informe o valor total ou o valor da parcela" in run(
+        "card", "buy", "x", "--card", "nubank", "-d", "10/07/2026", "-y", ok=False
+    )
+
+
+def test_running_purchase_statement_payment_and_reconciliation() -> None:
+    setup_card()
+    out = run(
+        "card", "buy", "Geladeira", "--card", "nubank", "-n", "10", "--current", "3",
+        "--installment-value", "61,88", "--statement", "2026-09", "-y",
+    )  # fmt: skip
+    assert "8 lançamento(s)" in out and "Fatura escolhida por você" in out
+    run("statement", "inform", "nubank", "2026-09", "70,00")
+    shown = run("statement", "show", "nubank", "2026-09")
+    assert "informado pelo banco R$ 70,00" in shown and "diferença R$ 8,12" in shown
+    assert "Diferença lançada: R$ 8,12" in run("statement", "difference", "nubank", "2026-09")
+    paid = run("statement", "pay", "nubank", "2026-09", "--from", "corrente", "--amount", "20,00")
+    assert "Pagamento de R$ 20,00 registrado" in paid
+    assert "R$ 50,00" in run("statement", "show", "nubank", "2026-09")  # still to pay
+    run("statement", "dates", "nubank", "2026-09", "--closing", "24/09/2026", "--due", "06/10/2026")
+    assert "fecha 24/09 · vence 06/10" in run("statement", "list")
+    assert "Total informado" in run("statement", "inform", "nubank", "2026-09", "--clear")
+
+
+def test_card_list_edit_and_limit() -> None:
+    setup_card()
+    run("card", "buy", "Mochila", "--card", "nubank", "-d", "10/07/2026", "--total", "100,00", "-y")
+    listing = run("card", "list")
+    assert "Nubank" in listing and "R$ 12.000,00" in listing and "R$ 100,00" in listing
+    run("card", "edit", "nubank", "--no-limit")
+    assert "limite não informado" in run("card", "list")
+    assert "Dia inválido" in run("card", "edit", "nubank", "--closing", "40", ok=False)
+    assert "veja" in run("account", "list")  # cards are not shown as an unavailable balance
+
+
+def test_add_on_a_card_uses_the_cycle_and_income_is_refused() -> None:
+    setup_card()
+    out = run("add", "45,90", "Padaria", "-a", "nubank", "-d", "26/07/2026")
+    assert "-R$ 45,90" in out
+    assert "Fatura ago/2026" in run("statement", "list")
+    assert "não aceita esse lançamento" in run(
+        "add", "5", "x", "-a", "nubank", "-k", "income", ok=False
+    )

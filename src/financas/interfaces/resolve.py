@@ -3,7 +3,8 @@
 from collections.abc import Callable, Sequence
 
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, Category, Institution
+from financas.domain.models import Account, AccountKind, Category, Institution, Statement
+from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
 from financas.domain.services.text import normalize_search
 
@@ -58,3 +59,18 @@ def default_checking_account(uow: UnitOfWork) -> Account | None:
             a for a in work.accounts.list_all() if a.kind is AccountKind.CHECKING and a.is_active
         ]
     return options[0] if len(options) == 1 else None
+
+
+def find_card(uow: UnitOfWork, reference: str) -> Account:
+    with uow as work:
+        items = [a for a in work.accounts.list_all() if a.kind is AccountKind.CREDIT_CARD]
+    return _pick(reference, items, "account", lambda a: [a.id, normalize_search(a.nickname)])
+
+
+def find_statement(uow: UnitOfWork, card_reference: str, month: str) -> tuple[Account, Statement]:
+    card = find_card(uow, card_reference)
+    with uow as work:
+        statement = work.statements.get_by_card_month(card.id, YearMonth.parse(month))
+    if statement is None:
+        raise DomainError("NOT_FOUND", entity="statement")
+    return card, statement

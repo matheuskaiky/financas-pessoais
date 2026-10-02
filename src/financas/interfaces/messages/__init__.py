@@ -1,7 +1,17 @@
 """pt-BR catalogue: the only place where user-facing text for domain codes lives."""
 
 from financas.domain.errors import DomainError
-from financas.domain.models import AccountKind, CategoryGroup, CategoryKind, TransactionKind
+from financas.domain.models import (
+    AccountKind,
+    CategoryGroup,
+    CategoryKind,
+    Statement,
+    StatementStatus,
+    TransactionKind,
+)
+from financas.domain.services.card_cycle import AssignmentReason, StatementAssignment
+from financas.domain.services.statements import LimitAlert
+from financas.interfaces.formatting import format_date, format_date_short, format_month
 
 TRANSACTION_KIND_LABELS: dict[TransactionKind, str] = {
     TransactionKind.EXPENSE: "Despesa",
@@ -31,7 +41,23 @@ ACCOUNT_KIND_LABELS: dict[AccountKind, str] = {
     AccountKind.INVESTMENT: "Investimento",
 }
 
+STATEMENT_STATUS_LABELS: dict[StatementStatus, str] = {
+    StatementStatus.FUTURE: "Futura",
+    StatementStatus.OPEN: "Aberta",
+    StatementStatus.CLOSED: "Fechada",
+    StatementStatus.PAID: "Paga",
+}
+
+LIMIT_ALERT_LABELS: dict[LimitAlert, str] = {
+    LimitAlert.NONE: "Normal",
+    LimitAlert.WARNING: "Atenção · 80%+",
+    LimitAlert.EXCEEDED: "Limite estourado",
+    LimitAlert.NOT_INFORMED: "Limite não informado",
+}
+
 ENTITY_LABELS: dict[str, str] = {
+    "statement": "Fatura",
+    "plan": "Compra parcelada",
     "institution": "Instituição",
     "account": "Conta",
     "category": "Categoria",
@@ -68,6 +94,27 @@ ERROR_MESSAGES: dict[str, str] = {
     "IMAGE_TYPE_NOT_ALLOWED": "Formato de imagem não permitido. Use PNG, JPEG ou WebP.",
     "IMAGE_NOT_SUPPORTED": "Este item não aceita imagem, apenas cor.",
     "BACKUP_NEEDS_SQLITE_FILE": "O backup exige um banco SQLite em arquivo.",
+    "AMOUNT_REQUIRED": "Informe o valor total ou o valor da parcela (só um dos dois).",
+    "BALANCE_NOT_FOR_CARDS": "Cartões não têm saldo informado; use a fatura e o limite.",
+    "CARD_DAYS_REQUIRED": "Informe o dia de fechamento e o dia de vencimento do cartão.",
+    "CARD_FIELDS_ONLY_FOR_CARDS": "Fechamento, vencimento e limite são só de cartões de crédito.",
+    "CARD_REQUIRED": "Esta operação exige um cartão de crédito.",
+    "DIFFERENCE_NOT_POSITIVE": (
+        "Não há diferença a lançar: o total do banco não é maior que o total lançado."
+    ),
+    "INSTALLMENT_AMOUNT_TOO_SMALL": "O valor é pequeno demais para {count} parcelas.",
+    "INSTALLMENT_OUT_OF_RANGE": (
+        "Parcela atual {number} fora do intervalo: a compra tem {count} parcela(s)."
+    ),
+    "INVALID_CARD_DAY": "Dia inválido: use um dia de 1 a 31.",
+    "INVALID_STATEMENT_DATES": "O vencimento precisa ser depois do fechamento.",
+    "NOT_A_CARD_PURCHASE": "Este lançamento não é uma compra de cartão.",
+    "NOTHING_TO_PAY": "Esta fatura não tem valor a pagar.",
+    "PURCHASE_DATE_REQUIRED": "Informe a data da compra ou a fatura.",
+    "STATEMENT_ALREADY_PAID": "A fatura já está paga; as parcelas dela não podem ser alteradas.",
+    "STATEMENT_ONLY_FOR_CARDS": "Só lançamentos de cartão têm fatura.",
+    "STATEMENT_REQUIRED": "Compra em andamento: informe a fatura da parcela atual.",
+    "TOTAL_NOT_INFORMED": "Informe antes o total que o banco mostra para a fatura.",
 }
 
 FLASH_MESSAGES: dict[str, str] = {
@@ -80,6 +127,15 @@ FLASH_MESSAGES: dict[str, str] = {
     "appearance": "Aparência atualizada.",
     "balance": "Saldo registrado.",
     "backup": "Backup criado. Guarde também uma cópia em outro disco ou dispositivo.",
+    "card": "Cartão salvo.",
+    "card_settings": "Cartão atualizado. Faturas já criadas mantêm as datas.",
+    "purchase": "Compra salva. Todas as parcelas, inclusive as futuras, já foram geradas.",
+    "payment": "Pagamento registrado.",
+    "informed": "Total informado atualizado.",
+    "difference": "Diferença lançada como “Não categorizado”.",
+    "dates": "Datas da fatura atualizadas.",
+    "adjusted": "Valor da parcela ajustado.",
+    "plan_deleted": "Compra parcelada apagada.",
 }
 
 _FALLBACK = "Erro inesperado ({code})."
@@ -110,3 +166,34 @@ def render_error(error: DomainError) -> str:
     if template is None:
         return _FALLBACK.format(code=error.code)
     return template.format(**params)
+
+
+def statement_label(statement: Statement) -> str:
+    """``Fatura jul/2026 · fecha 25/07 · vence 05/08``: closing and due dates always together."""
+    closing = format_date_short(statement.closing_date)
+    due = format_date_short(statement.due_date)
+    return f"Fatura {format_month(statement.month)} · fecha {closing} · vence {due}"
+
+
+def explain_assignment(a: StatementAssignment) -> str:
+    """The reason a purchase went to a statement, in Portuguese (CLAUDE.md rule 5)."""
+    where = (
+        f"fatura de {format_month(a.month)} "
+        f"(fecha {format_date_short(a.closing_date)} · vence {format_date_short(a.due_date)})"
+    )
+    if a.reason is AssignmentReason.EXPLICIT or a.purchase_date is None:
+        return f"Fatura escolhida por você: {where}."
+    when = format_date(a.purchase_date)
+    if a.reason is AssignmentReason.BEFORE_CLOSING:
+        return f"Compra em {when}, antes do fechamento do dia {a.closing_day} → {where}."
+    if a.reason is AssignmentReason.ON_CLOSING_DAY:
+        return (
+            f"Compra em {when}, no dia do fechamento (dia {a.closing_day}), ainda entra → {where}."
+        )
+    return f"Compra em {when}, depois do fechamento do dia {a.closing_day} → {where}."
+
+
+def best_day_hint(a: StatementAssignment) -> str:
+    return (
+        f"Melhor dia de compra neste cartão: dia {a.best_purchase_day} (logo depois do fechamento)."
+    )

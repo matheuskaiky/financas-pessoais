@@ -30,6 +30,12 @@ def format_date(day: dt.date) -> str:
     return day.strftime("%d/%m/%Y")
 
 
+def format_decimal_comma(cents: int) -> str:
+    """``231846`` → ``2318,46``: the value for an input field (no currency symbol)."""
+    whole, frac = divmod(abs(cents), 100)
+    return f"{'-' if cents < 0 else ''}{whole},{frac:02d}"
+
+
 def format_date_short(day: dt.date) -> str:
     return day.strftime("%d/%m")
 
