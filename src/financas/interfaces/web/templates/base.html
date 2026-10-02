@@ -3,30 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Finanças{% endblock %} · Finanças pessoais</title>
+  <title>{% block title %}Finanças{% endblock %} · finanças pessoais</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
+{% macro item(href, label, key, path) %}
+<a class="item" href="{{ href }}" {% if nav == key %}aria-current="page"{% endif %}>
+  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ path }}"/></svg>
+  {{ label }}</a>
+{% endmacro %}
 <div class="shell">
   <nav class="sidebar" aria-label="Principal">
-    <a class="brand" href="/"><span class="logo" aria-hidden="true">F</span><span>Finanças</span></a>
-    <ul>
-      <li><a href="/" {% if nav == 'dashboard' %}aria-current="page"{% endif %}>Painel</a></li>
-      <li><a href="/entries" {% if nav == 'entries' %}aria-current="page"{% endif %}>Lançamentos</a></li>
-      <li><a href="/cards" {% if nav == 'cards' %}aria-current="page"{% endif %}>Cartões</a></li>
-      <li><a href="/investments" {% if nav == 'investments' %}aria-current="page"{% endif %}>Investimentos</a></li>
-      <li><a href="/networth" {% if nav == 'networth' %}aria-current="page"{% endif %}>Patrimônio</a></li>
-      <li><a href="/budget" {% if nav == 'budget' %}aria-current="page"{% endif %}>Orçamento</a></li>
-      <li><a href="/recurring" {% if nav == 'recurring' %}aria-current="page"{% endif %}>Recorrentes</a></li>
-      <li><a href="/accounts" {% if nav == 'accounts' %}aria-current="page"{% endif %}>Contas</a></li>
-      <li><a href="/categories" {% if nav == 'categories' %}aria-current="page"{% endif %}>Categorias</a></li>
-    </ul>
+    <a class="brand" href="/"><span class="name">finanças</span><span class="sub">PESSOAIS</span></a>
+    <a class="new-entry" href="/entries#form">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Novo lançamento</a>
+    <div class="nav-groups">
+      <div class="nav-group">
+        {{ item('/', 'Painel', 'dashboard', 'M4 4h7v9H4z M13 4h7v5h-7z M13 11h7v9h-7z M4 15h7v5H4z') }}
+      </div>
+      <div class="nav-group"><div class="group-label">MOVIMENTO</div>
+        {{ item('/entries', 'Lançamentos', 'entries', 'M8 6h12 M8 12h12 M8 18h12 M4 6h.01 M4 12h.01 M4 18h.01') }}
+        {{ item('/cards', 'Cartões', 'cards', 'M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z M3 10h18 M7 15h4') }}
+        {{ item('/accounts', 'Contas', 'accounts', 'M3 10l9-6 9 6 M5 10v8 M9.5 10v8 M14.5 10v8 M19 10v8 M3 20h18') }}
+      </div>
+      <div class="nav-group"><div class="group-label">PATRIMÔNIO</div>
+        {{ item('/investments', 'Investimentos', 'investments', 'M3 17l6-6 4 4 8-9 M15 6h6v6') }}
+        {{ item('/networth', 'Patrimônio', 'networth', 'M12 3l9 4.5-9 4.5-9-4.5z M3 12l9 4.5 9-4.5 M3 16.5l9 4.5 9-4.5') }}
+      </div>
+      <div class="nav-group"><div class="group-label">PLANEJAMENTO</div>
+        {{ item('/budget', 'Orçamento', 'budget', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 12h.01') }}
+        {{ item('/recurring', 'Recorrentes', 'recurring', 'M17 2l3 3-3 3 M20 5H9a5 5 0 0 0-5 5 M7 22l-3-3 3-3 M4 19h11a5 5 0 0 0 5-5') }}
+        {{ item('/categories', 'Categorias', 'categories', 'M3 12V4h8l10 10-8 8z M7.5 8.5h.01') }}
+      </div>
+    </div>
     <div class="backup-box" id="backup">
-      <strong>{{ backup_label }}</strong>
-      <span>Dados só neste computador</span>
+      <span class="status"><span class="led {{ 'stale' if backup_notice }}"></span>{{ backup_label }}</span>
+      <span class="note">Dados só neste computador</span>
       <form method="post" action="/backup"><button type="submit">Fazer backup agora</button></form>
     </div>
   </nav>
@@ -40,19 +56,18 @@
 
 <nav class="tabbar" aria-label="Principal">
   <a href="/" {% if nav == 'dashboard' %}aria-current="page"{% endif %}>
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+    <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h7v9H4z M13 4h7v5h-7z M13 11h7v9h-7z M4 15h7v5H4z"/></svg>
     <span>Painel</span></a>
   <a href="/entries" {% if nav == 'entries' %}aria-current="page"{% endif %}>
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>
+    <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12 M8 12h12 M8 18h12 M4 6h.01 M4 12h.01 M4 18h.01"/></svg>
     <span>Lançamentos</span></a>
-  <a href="/entries#form" class="new">
-    <span class="plus"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
-    <span>Novo</span></a>
+  <a href="/entries#form" class="new" aria-label="Novo lançamento">
+    <span class="plus"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></a>
   <a href="/cards" {% if nav == 'cards' %}aria-current="page"{% endif %}>
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h4"/></svg>
+    <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h15A1.5 1.5 0 0 1 21 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z M3 10h18 M7 15h4"/></svg>
     <span>Cartões</span></a>
   <a href="/more" {% if nav in ('accounts', 'categories', 'investments', 'networth', 'budget', 'recurring', 'flow', 'more') %}aria-current="page"{% endif %}>
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+    <svg aria-hidden="true" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12h.01 M12 12h.01 M19 12h.01"/></svg>
     <span>Mais</span></a>
 </nav>
 </body>

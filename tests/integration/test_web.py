@@ -307,9 +307,14 @@ def test_design_shell_and_font_are_served_locally(client: TestClient) -> None:
     assert 'class="sidebar"' in home.text and 'class="tabbar"' in home.text
     assert "Dados só neste computador" in home.text and "Nenhum backup ainda" in home.text
     css = client.get("/static/app.css")
-    assert "IBM Plex Sans" in css.text and "fonts.googleapis" not in css.text
-    font = client.get("/static/fonts/IBMPlexSans-latin.woff2")
-    assert font.status_code == 200 and font.content[:4] == b"wOF2"
+    assert (
+        "Libre Franklin" in css.text
+        and "Source Serif 4" in css.text
+        and "fonts.googleapis" not in css.text
+    )
+    for name in ("LibreFranklin-latin", "SourceSerif4-latin"):
+        font = client.get(f"/static/fonts/{name}.woff2")
+        assert font.status_code == 200 and font.content[:4] == b"wOF2"
     assert client.get("/static/..%2f..%2fapp.py").status_code in {400, 404}
 
 
