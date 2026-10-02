@@ -2,7 +2,7 @@
 
 Gestão financeira pessoal **local, privada e sob medida**. Você lança contas, compras no cartão (com parcelas e fatura), transferências e investimentos; o sistema calcula faturas, saldos, parcelamentos, patrimônio e totais, sem enviar nada a terceiros.
 
-> **Status:** em desenvolvimento. As Fases 0 a 3 estão prontas (núcleo manual, cartões e investimentos: avaliações líquidas, aportes e resgates, rendimento, alocação, aplicações de renda fixa, escada de vencimentos, liquidez, exposição ao FGC, reserva de emergência e patrimônio líquido). Os comandos abaixo funcionam como descritos; as fases seguintes são orçamento e recorrentes (veja o [roadmap](#roadmap)).
+> **Status:** em desenvolvimento. As Fases 0 a 4 estão prontas (núcleo manual, cartões e investimentos: avaliações líquidas, aportes e resgates, rendimento, alocação, aplicações de renda fixa, escada de vencimentos, liquidez, exposição ao FGC, reserva de emergência e patrimônio líquido). Os comandos abaixo funcionam como descritos; a fase seguinte é opcional (servidor fechado, autenticação e backup criptografado) (veja o [roadmap](#roadmap)).
 >
 > **Escopo atual: entrada manual.** Por enquanto **não há importação** de extratos, faturas ou planilhas. Os dados entram pelo painel web ou pela CLI.
 
@@ -166,6 +166,9 @@ Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
 | `financas invest holding add \| list \| value \| flow \| redeem \| flags` | Aplicações de renda fixa (CDB, LCI, Tesouro...) numa conta controlada por aplicação |
 | `financas invest ladder \| liquidity \| fgc \| emergency` | Escada de vencimentos, faixas de liquidez, exposição ao FGC por grupo e cobertura da reserva de emergência |
 | `financas invest year 2026` | Aportes, rendimento capitalizado (não é renda), distribuições e posição em 31/12 |
+| `financas budget show [-y 2026] \| set CATEGORIA 700,00 [--clear]` | Matriz de orçamento: categoria × mês, média, meta e média − meta |
+| `financas recurring list \| alerts` | Matriz das despesas recorrentes e alertas (sumiu, mudou de valor, apareceu) |
+| `financas account flow CONTA -m 2026-07` | Fluxo diário: entradas, saídas, resultado e saldo corrido |
 | `financas networth` | Patrimônio líquido: caixa + investimentos − faturas; parcelas futuras à parte |
 | `financas backup` | Cópia consistente do banco e das imagens em `data/backups/` |
 | `financas serve` | Painel web local |
@@ -224,7 +227,7 @@ uv run lint-imports        # confere as regras de camadas
 - [x] **Fase 3, investimentos e patrimônio:**
   - [x] **3a, nível da conta:** avaliações (líquido e bruto), aportes e resgates, rendimento, alocação, patrimônio líquido, totais anuais.
   - [x] **3b, aplicações de renda fixa:** dados do contrato, vencimentos, liquidez, exposição ao FGC, reserva de emergência, posição em 31/12.
-- [ ] **Fase 4, acompanhamento:** orçamento, recorrentes com alertas, fluxo diário.
+- [x] **Fase 4, acompanhamento:** orçamento, recorrentes com alertas, fluxo diário.
 - [ ] **Fase 5, opcional:** servidor fechado, autenticação e backup criptografado.
 
 **Adiado, só sob pedido:** importação de extratos, faturas e planilhas; classificação automática por regras; Open Finance.
