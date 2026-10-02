@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pytest
 
 from fakes import MemoryImageStore, MemoryUnitOfWork
@@ -80,6 +82,59 @@ def test_account_requires_an_existing_institution(uow: MemoryUnitOfWork) -> None
     with pytest.raises(DomainError) as exc:
         CreateAccount(uow).execute(CreateAccountCommand(AccountKind.CHECKING, "nope", "Conta"))
     assert code(exc) == "NOT_FOUND"
+
+
+def test_opening_balance_becomes_the_first_informed_balance(
+    uow: MemoryUnitOfWork, institution: Institution
+) -> None:
+    on = dt.date(2026, 1, 1)
+    account = CreateAccount(uow).execute(
+        CreateAccountCommand(
+            AccountKind.CHECKING,
+            institution.id,
+            "Conta",
+            opening_balance_cents=30_421,
+            opening_balance_on=on,
+        )
+    )
+    (anchor,) = uow.anchors.list_for_account(account.id)
+    assert (anchor.on_date, anchor.balance_cents, anchor.gross_balance_cents) == (on, 30_421, None)
+    # an overdrawn opening balance is allowed (signed)
+    other = CreateAccount(uow).execute(
+        CreateAccountCommand(
+            AccountKind.CHECKING,
+            institution.id,
+            "Outra",
+            opening_balance_cents=-500,
+            opening_balance_on=on,
+        )
+    )
+    assert uow.anchors.list_for_account(other.id)[0].balance_cents == -500
+
+
+def test_opening_balance_needs_both_value_and_date_and_not_for_cards(
+    uow: MemoryUnitOfWork, institution: Institution
+) -> None:
+    for kwargs in ({"opening_balance_cents": 100}, {"opening_balance_on": dt.date(2026, 1, 1)}):
+        with pytest.raises(DomainError) as exc:
+            CreateAccount(uow).execute(
+                CreateAccountCommand(AccountKind.CHECKING, institution.id, "Conta", **kwargs)  # type: ignore[arg-type]
+            )
+        assert code(exc) == "OPENING_BALANCE_INCOMPLETE"
+    with pytest.raises(DomainError) as exc:
+        CreateAccount(uow).execute(
+            CreateAccountCommand(
+                AccountKind.CREDIT_CARD,
+                institution.id,
+                "Cartão",
+                closing_days_before_due=11,
+                due_day=5,
+                opening_balance_cents=100,
+                opening_balance_on=dt.date(2026, 1, 1),
+            )
+        )
+    assert code(exc) == "BALANCE_NOT_FOR_CARDS"
+    assert uow.accounts.list_all() == []  # nothing was half-created
 
 
 def test_account_can_be_deactivated(uow: MemoryUnitOfWork, checking: Account) -> None:

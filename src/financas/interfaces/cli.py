@@ -266,6 +266,16 @@ def account_add(
     emergency: Annotated[
         bool, typer.Option("--emergency", help="Conta marcada como reserva de emergência.")
     ] = False,
+    opening: Annotated[
+        str | None,
+        typer.Option(
+            "--opening", help="Saldo inicial, por exemplo: 1.234,56 (informe também a data)."
+        ),
+    ] = None,
+    opening_date: Annotated[
+        str | None,
+        typer.Option("--opening-date", help="Data do saldo inicial: dd/mm/aaaa, hoje ou ontem."),
+    ] = None,
     color: Color = None,
     image: Image = None,
 ) -> None:
@@ -281,10 +291,14 @@ def account_add(
             color=color,
             asset_class=asset_class,
             is_emergency_fund=emergency,
+            opening_balance_cents=parse_brl(opening) if opening else None,
+            opening_balance_on=parse_date(opening_date, c.clock.today()) if opening_date else None,
         )
     )
     _set_appearance(c, AppearanceTarget.ACCOUNT, account.id, color, image)
     console.print(f"Conta criada: {account.nickname} ({messages.ACCOUNT_KIND_LABELS[kind]}).")
+    if opening:
+        console.print(f"Saldo inicial registrado: {format_brl(parse_brl(opening))}.")
 
 
 @account_app.command("list")

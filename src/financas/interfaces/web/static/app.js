@@ -58,3 +58,17 @@ document.addEventListener("submit", function (event) {
   htmx("htmx:sendError", "falha de conexão");
   htmx("htmx:swapError", "falha ao atualizar a tela");
 })();
+
+// Contribution/withdrawal form: choosing where the money goes pre-selects the checking account of
+// the same institution when there is exactly one (the user can still pick another or none).
+(function () {
+  const target = document.querySelector("[data-flow-target]");
+  const other = document.querySelector("[data-flow-other]");
+  if (!target || !other) return;
+  target.addEventListener("change", function () {
+    const chosen = target.selectedOptions[0];
+    const institution = chosen ? chosen.dataset.institution : "";
+    const same = Array.from(other.options).filter(function (o) { return o.value && o.dataset.institution === institution; });
+    if (same.length === 1) other.value = same[0].value;
+  });
+})();

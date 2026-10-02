@@ -807,6 +807,8 @@ def create_app(c: Container) -> FastAPI:
         kind: Annotated[str, Form()] = "checking",
         color: Annotated[str, Form()] = "",
         use_color: Annotated[str, Form()] = "",
+        opening_balance: Annotated[str, Form()] = "",
+        opening_date: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
@@ -816,7 +818,12 @@ def create_app(c: Container) -> FastAPI:
                 detect_image_type(data)
             account = CreateAccount(c.uow).execute(
                 CreateAccountCommand(
-                    _enum(AccountKind, kind), institution_id, nickname, color=chosen
+                    _enum(AccountKind, kind),
+                    institution_id,
+                    nickname,
+                    color=chosen,
+                    opening_balance_cents=_money(opening_balance),
+                    opening_balance_on=_iso_date(opening_date),
                 )
             )
             if data is not None:
@@ -892,6 +899,9 @@ def create_app(c: Container) -> FastAPI:
 
     def _money(text: str) -> int | None:
         return parse_brl(text) if text.strip() else None
+
+    def _iso_date(text: str) -> dt.date | None:
+        return parse_date(text, today()) if text.strip() else None
 
     def pick_statement(views: list[StatementView], month: str | None) -> StatementView | None:
         """The statement asked for, else the open one, else the oldest unpaid, else the newest."""

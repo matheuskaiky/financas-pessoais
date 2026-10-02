@@ -1,5 +1,6 @@
 """Institutions, accounts, categories and their appearance (9.9)."""
 
+import datetime as dt
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
@@ -9,6 +10,7 @@ from financas.domain.models import (
     Account,
     AccountKind,
     AssetClass,
+    BalanceAnchor,
     Category,
     CategoryGroup,
     CategoryKind,
@@ -74,6 +76,8 @@ class CreateAccountCommand:
     credit_limit_cents: int | None = None
     asset_class: AssetClass | None = None  # investment accounts only (default: other)
     is_emergency_fund: bool = False
+    opening_balance_cents: int | None = None  # the account's first informed balance (not cards)
+    opening_balance_on: dt.date | None = None
 
 
 class CreateAccount:
@@ -92,6 +96,10 @@ class CreateAccount:
         investment = cmd.kind is AccountKind.INVESTMENT
         if not investment and (cmd.asset_class is not None or cmd.is_emergency_fund):
             raise DomainError("INVESTMENT_FIELDS_ONLY_FOR_INVESTMENTS")
+        if (cmd.opening_balance_cents is None) != (cmd.opening_balance_on is None):
+            raise DomainError("OPENING_BALANCE_INCOMPLETE")
+        if cmd.opening_balance_cents is not None and cmd.kind is AccountKind.CREDIT_CARD:
+            raise DomainError("BALANCE_NOT_FOR_CARDS")
         account = Account(
             id=new_id(),
             kind=cmd.kind,
@@ -108,6 +116,15 @@ class CreateAccount:
         with self._uow as uow:
             found(uow.institutions.get(cmd.institution_id), "institution")
             uow.accounts.add(account)
+            if cmd.opening_balance_cents is not None and cmd.opening_balance_on is not None:
+                uow.anchors.upsert(
+                    BalanceAnchor(
+                        id=new_id(),
+                        account_id=account.id,
+                        on_date=cmd.opening_balance_on,
+                        balance_cents=cmd.opening_balance_cents,
+                    )
+                )
             uow.commit()
         return account
 

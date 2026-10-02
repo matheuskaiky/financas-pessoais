@@ -88,17 +88,19 @@
           <label><input type="radio" name="direction" value="withdrawal"><span>Resgate</span></label>
         </div>
         <label class="field"><span>Onde</span>
-          <select name="target">
+          <select name="target" data-flow-target>
             {% for a in investment_accounts %}
-              {% if a.tracking.value == 'account' %}<option value="a:{{ a.id }}">{{ a.nickname }}</option>
+              {% if a.tracking.value == 'account' %}<option value="a:{{ a.id }}" data-institution="{{ a.institution_id }}">{{ a.nickname }}</option>
               {% else %}<optgroup label="{{ a.nickname }}">
-                {% for v in holdings if v.holding.account_id == a.id and v.holding.status.value == 'active' %}<option value="h:{{ v.holding.id }}">{{ v.holding.name }}</option>{% endfor %}
+                {% for v in holdings if v.holding.account_id == a.id and v.holding.status.value == 'active' %}<option value="h:{{ v.holding.id }}" data-institution="{{ a.institution_id }}">{{ v.holding.name }}</option>{% endfor %}
               </optgroup>{% endif %}
             {% endfor %}
           </select></label>
         <label class="field"><span>Conta corrente do outro lado</span>
-          <select name="other_account_id"><option value="">Conta não controlada</option>
-            {% for a in checking_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+          {# the checking account of the same institution is pre-selected when there is exactly one #}
+          {% set same = checking_accounts|selectattr('institution_id', 'equalto', investment_accounts[0].institution_id)|list %}
+          <select name="other_account_id" data-flow-other><option value="">Conta não controlada</option>
+            {% for a in checking_accounts %}<option value="{{ a.id }}" data-institution="{{ a.institution_id }}" {{ 'selected' if same|length == 1 and a.id == same[0].id }}>{{ a.nickname }}</option>{% endfor %}</select></label>
         <label class="field"><span>Valor</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required></label>
         <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
         <button type="submit">Registrar</button>

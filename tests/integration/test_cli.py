@@ -514,3 +514,17 @@ def test_failure_log_command() -> None:
     code = build_container().failures.record("cli", "cli_error", path="card", error="RuntimeError")
     out = run("log", "show")
     assert code in out and "Erro num comando" in out and "RuntimeError" in out
+
+
+def test_account_add_with_an_opening_balance() -> None:
+    run("init")
+    run("institution", "add", "Banco")
+    out = run(
+        "account", "add", "Corrente", "-i", "banco", "--opening", "1.183,67",
+        "--opening-date", "08/09/2026",
+    )  # fmt: skip
+    assert "Saldo inicial registrado: R$ 1.183,67" in out
+    assert "R$ 1.183,67" in run("balance", "list")
+    assert "valor e a data" in run(
+        "account", "add", "Outra", "-i", "banco", "--opening", "10,00", ok=False
+    )

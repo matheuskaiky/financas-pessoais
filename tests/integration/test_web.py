@@ -1348,3 +1348,54 @@ def test_the_script_reports_failures_and_the_page_links_the_diagnostics(
     assert "htmx:responseError" in script
     assert "/diagnostics" in client.get("/more").text
     assert "Nenhuma falha registrada" in client.get("/diagnostics").text
+
+
+def test_new_account_form_records_the_opening_balance(
+    client: TestClient, container: Container
+) -> None:
+    assert client.post("/institutions", data={"name": "Banco"}).status_code == 303
+    with container.uow as work:
+        inst = work.institutions.list_all()[0]
+    ok = client.post(
+        "/accounts",
+        data={
+            "nickname": "Corrente",
+            "institution_id": inst.id,
+            "opening_balance": "1.183,67",
+            "opening_date": "2026-09-08",
+        },
+    )
+    assert ok.status_code == 303
+    with container.uow as work:
+        (account,) = work.accounts.list_all()
+        (anchor,) = work.anchors.list_for_account(account.id)
+    assert (anchor.balance_cents, anchor.on_date) == (118_367, dt.date(2026, 9, 8))
+    page = client.get("/accounts")
+    assert "R$ 1.183,67" in page.text and "Saldo inicial" in page.text
+    half = client.post(
+        "/accounts",
+        data={"nickname": "Outra", "institution_id": inst.id, "opening_balance": "10,00"},
+    )
+    assert half.status_code == 400 and "valor e a data" in half.text
+
+
+def test_contribution_form_preselects_the_checking_account_of_the_same_bank(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings = setup_accounts(client, container)
+    page = client.get("/investments").text
+    assert f'<option value="{checking}"' in page
+    selected = page.split('name="other_account_id"')[1].split("</select>")[0]
+    assert f'value="{checking}"' in selected and "selected" in selected
+    assert "data-flow-target" in page
+    # two checking accounts at the bank: no guess, "conta não controlada" stays
+    with container.uow as work:
+        inst = work.institutions.list_all()[0]
+    client.post("/accounts", data={"nickname": "Segunda", "institution_id": inst.id})
+    again = (
+        client.get("/investments").text.split('name="other_account_id"')[1].split("</select>")[0]
+    )
+    assert "selected" not in again
+    script = client.get("/static/app.js").text
+    assert "data-flow-target" in script and "dataset.institution" in script
+    assert savings

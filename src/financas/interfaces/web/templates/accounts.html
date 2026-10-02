@@ -78,6 +78,8 @@
         <select name="institution_id" required>{% for i in institutions.values() %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
       <label class="field"><span>Tipo</span>
         <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ account_kind_labels[k] }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Saldo inicial (opcional)</span><input type="text" name="opening_balance" inputmode="decimal" placeholder="0,00" autocomplete="off"></label>
+      <label class="field"><span>Data do saldo inicial</span><input type="date" name="opening_date"></label>
       {{ color_fields() }}
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
       <button type="submit">Salvar conta</button>

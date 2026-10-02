@@ -158,6 +158,10 @@ ERROR_MESSAGES: dict[str, str] = {
     "INVALID_YEAR_MONTH": "Mês inválido. Use o formato AAAA-MM.",
     "INVALID_DATE": "Data inválida. Use dd/mm/aaaa.",
     "INVALID_COLOR": "Cor inválida. Use o formato #RRGGBB.",
+    "IMPORT_READER_MISSING": ("Falta o leitor de planilhas. Instale com: uv sync --extra import"),
+    "IMPORT_UNKNOWN_ORIGIN": "Planilha, linha {row}: origem desconhecida.",
+    "IMPORT_UNKNOWN_KIND": "Planilha, linha {row}: tipo desconhecido.",
+    "IMPORT_AMOUNT_NOT_CENTS": "Planilha, linha {row}: o valor não tem exatamente dois decimais.",
     "INVALID_SLUG": "Não foi possível gerar um identificador a partir desse nome.",
     "SIGN_KIND_MISMATCH": "O sinal do valor não combina com o tipo de lançamento ({kind_label}).",
     "CATEGORY_KIND_MISMATCH": (
@@ -184,6 +188,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "IMAGE_NOT_SUPPORTED": "Este item não aceita imagem, apenas cor.",
     "BACKUP_NEEDS_SQLITE_FILE": "O backup exige um banco SQLite em arquivo.",
     "AMOUNT_REQUIRED": "Informe o valor total ou o valor da parcela (só um dos dois).",
+    "OPENING_BALANCE_INCOMPLETE": "Para informar o saldo inicial, preencha o valor e a data.",
     "BALANCE_NOT_FOR_CARDS": "Cartões não têm saldo informado; use a fatura e o limite.",
     "CARD_DAYS_REQUIRED": "Informe o dia de fechamento e o dia de vencimento do cartão.",
     "CARD_FIELDS_ONLY_FOR_CARDS": "Fechamento, vencimento e limite são só de cartões de crédito.",
