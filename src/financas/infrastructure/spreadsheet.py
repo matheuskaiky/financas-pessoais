@@ -15,6 +15,7 @@ from typing import Any
 from financas.application.imports.model import (
     LegacyAccountRow,
     LegacyRow,
+    LegacyStatementTotal,
     LegacyWorkbook,
     Origin,
     RowKind,
@@ -27,6 +28,7 @@ from financas.domain.services.text import clean_text, normalize_search
 FACTS_SHEET = "fato_transacoes"
 ACCOUNTS_SHEET = "dim_contas"
 CATEGORIES_SHEET = "dim_categorias"
+STATEMENTS_SHEET = "cartao_faturas"  # derived: used only to cross-check the import
 
 _ORIGINS = {"conta corrente": Origin.CHECKING, "cartao de credito": Origin.CARD}
 _KINDS = {
@@ -68,9 +70,18 @@ def read_legacy_workbook(path: Path) -> LegacyWorkbook:
             for _, record in _records(workbook[CATEGORIES_SHEET])
             if record.get("categoria")
         ]
+        totals = (
+            [
+                total
+                for _, record in _records(workbook[STATEMENTS_SHEET])
+                if (total := _statement_total(record)) is not None
+            ]
+            if STATEMENTS_SHEET in workbook.sheetnames
+            else []
+        )
     finally:
         workbook.close()
-    return LegacyWorkbook(rows, accounts, categories)
+    return LegacyWorkbook(rows, accounts, categories, totals)
 
 
 def _records(sheet: Any) -> list[tuple[int, dict[str, Any]]]:
@@ -169,6 +180,20 @@ def _counterparty(description: str) -> str:
         name = found.group(1) if found else ""
     tokens = [t for t in normalize_search(name).split() if not _LONG_NUMBER.match(t)]
     return " ".join(tokens)
+
+
+def _statement_total(record: dict[str, Any]) -> LegacyStatementTotal | None:
+    """A line of the derived sheet, read only to cross-check the import; unreadable = skipped."""
+    month = _year_month(record.get("fatura_ref"))
+    total = _optional_cents(record.get("total_fatura"))
+    if month is None or total is None:
+        return None
+    return LegacyStatementTotal(
+        clean_text(str(record.get("instituicao") or "")),
+        month,
+        total,
+        _optional_cents(record.get("estornos")) or 0,
+    )
 
 
 def _account_row(record: dict[str, Any]) -> LegacyAccountRow:

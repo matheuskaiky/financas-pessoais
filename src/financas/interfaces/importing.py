@@ -36,6 +36,7 @@ from financas.application.imports.model import (
     TransferAction,
     TransferHint,
 )
+from financas.application.imports.planner import account_totals
 from financas.domain.errors import DomainError
 from financas.domain.models import AccountKind, AssetClass
 from financas.domain.money import parse_brl
@@ -386,29 +387,24 @@ def with_account_issues(plan: ImportPlan) -> ImportPlan:
     return replace(plan, issues=(*plan.issues, *extra)) if extra else plan
 
 
+# ---- notes stored with the entries ------------------------------------------------------------
+
+
+def entry_notes(action: EntryAction | PlanAction) -> str | None:
+    """Data stored in ``notes``: where the purchase was made, and the category that was replaced."""
+    parts: list[str] = []
+    place = getattr(action, "place", None)
+    if place:
+        parts.append(f"Local: {place}")
+    if action.original_category:
+        parts.append(f"Categoria original na planilha: {action.original_category}")
+    return "; ".join(parts) or None
+
+
+PAYMENT_DESCRIPTION = "Pagamento de fatura"
+
+
 # ---- report ----------------------------------------------------------------------------------
-
-
-def _account_totals(plan: ImportPlan) -> dict[str, int]:
-    totals: Counter[str] = Counter()
-    for a in plan.actions:
-        if isinstance(a, EntryAction):
-            sign = -1 if a.kind is RowKind.EXPENSE else 1
-            totals[a.account_key] += sign * a.amount_cents
-        elif isinstance(a, TransferAction):
-            if a.from_key:
-                totals[a.from_key] -= a.amount_cents
-            if a.to_key:
-                totals[a.to_key] += a.amount_cents
-        elif isinstance(a, PaymentAction):
-            if a.from_key:
-                totals[a.from_key] -= a.amount_cents
-            totals[a.card_key] += a.amount_cents
-        else:
-            present = {i.number: i.amount_cents for i in a.installments}
-            for n in range(a.first_number, a.total_installments + 1):
-                totals[a.account_key] -= present.get(n, a.installment_cents)
-    return dict(totals)
 
 
 def render_report(plan: ImportPlan, year: int, directory: Path) -> str:
@@ -444,7 +440,7 @@ def render_report(plan: ImportPlan, year: int, directory: Path) -> str:
         lines.append(f"  {REPORT['none']}")
     lines += ["", REPORT["accounts"]]
     names = {a.key: a.nickname for a in plan.accounts}
-    for key, total in sorted(_account_totals(plan).items()):
+    for key, total in sorted(account_totals(plan).items()):
         lines.append(f"  {names.get(key, key)}: {format_brl(total)}")
     own = sum(1 for c in plan.counterparties if c.decision == "own")
     third = sum(1 for c in plan.counterparties if c.decision == "third_party")

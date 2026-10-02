@@ -5,9 +5,17 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
+from sqlalchemy import Engine
+
 from financas.application.imports.model import LegacyWorkbook
 from financas.domain.ports import Clock, ImageStore, UnitOfWork
-from financas.infrastructure.backup import last_backup_date, make_backup
+from financas.infrastructure.backup import (
+    copy_database,
+    last_backup_date,
+    make_backup,
+    replace_database,
+    sqlite_path,
+)
 from financas.infrastructure.clock import SystemClock
 from financas.infrastructure.db.engine import make_engine, make_session_factory
 from financas.infrastructure.db.migrate import needs_upgrade, upgrade_to_head
@@ -24,8 +32,12 @@ class Container:
     settings: Settings
 
     @cached_property
+    def engine(self) -> Engine:
+        return make_engine(self.settings.db_url)
+
+    @cached_property
     def uow(self) -> UnitOfWork:
-        return SqlUnitOfWork(make_session_factory(make_engine(self.settings.db_url)))
+        return SqlUnitOfWork(make_session_factory(self.engine))
 
     @cached_property
     def images(self) -> ImageStore:
@@ -48,6 +60,17 @@ class Container:
         backup = self.backup() if needs_upgrade(self.settings.db_url) else None
         upgrade_to_head(self.settings.db_url)
         return backup
+
+    def working_copy(self, path: Path) -> "Container":
+        """A container on a consistent copy of the database, for work that may be thrown away."""
+        copy_database(self.settings.db_url, path)
+        return Container(self.settings.model_copy(update={"db_url": f"sqlite:///{path}"}))
+
+    def adopt(self, work: "Container") -> None:
+        """Replace this database with the working copy's file (after the checks passed)."""
+        self.engine.dispose()
+        work.engine.dispose()
+        replace_database(self.settings.db_url, sqlite_path(work.settings.db_url))
 
     def read_workbook(self, path: Path) -> LegacyWorkbook:
         """The source sheets of the old workbook (13.1), normalised."""

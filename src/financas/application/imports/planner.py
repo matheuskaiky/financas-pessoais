@@ -167,6 +167,7 @@ class _Planner:
         actions = self.resolve_payments(payment_rows, actions)
         actions.sort(key=lambda a: _action_date(a))
         return ImportPlan(
+            year=self.config.year,
             accounts=self.config.accounts,
             actions=tuple(actions),
             counterparties=self.counterparty_lines(),
@@ -591,6 +592,51 @@ class _Planner:
         ]
         lines.sort(key=lambda c: (-c.count, c.key))
         return tuple(lines)
+
+
+def installment_amounts(plan: PlanAction) -> dict[int, int]:
+    """Every installment the plan will have (sheet amounts and generated ones), by number."""
+    present = {i.number: i.amount_cents for i in plan.installments}
+    return {
+        n: present.get(n, plan.installment_cents)
+        for n in range(plan.first_number, plan.total_installments + 1)
+    }
+
+
+def account_totals(plan: ImportPlan) -> dict[str, int]:
+    """Net amount the plan puts on each account (cards: purchases negative, payments positive)."""
+    totals: Counter[str] = Counter()
+    for a in plan.actions:
+        if isinstance(a, EntryAction):
+            sign = -1 if a.kind is RowKind.EXPENSE else 1
+            totals[a.account_key] += sign * a.amount_cents
+        elif isinstance(a, TransferAction):
+            if a.from_key:
+                totals[a.from_key] -= a.amount_cents
+            if a.to_key:
+                totals[a.to_key] += a.amount_cents
+        elif isinstance(a, PaymentAction):
+            if a.from_key:
+                totals[a.from_key] -= a.amount_cents
+            totals[a.card_key] += a.amount_cents
+        else:
+            totals[a.account_key] -= sum(installment_amounts(a).values())
+    return dict(totals)
+
+
+def expected_counts(plan: ImportPlan) -> dict[str, int]:
+    """How many transactions the plan puts on each account."""
+    counts: Counter[str] = Counter()
+    for a in plan.actions:
+        if isinstance(a, EntryAction):
+            counts[a.account_key] += 1
+        elif isinstance(a, TransferAction):
+            counts.update(k for k in (a.from_key, a.to_key) if k)
+        elif isinstance(a, PaymentAction):
+            counts.update(k for k in (a.from_key, a.card_key) if k)
+        else:
+            counts[a.account_key] += len(installment_amounts(a))
+    return dict(counts)
 
 
 def _statements_covered(plan: PlanAction) -> set[YearMonth]:

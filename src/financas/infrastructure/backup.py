@@ -66,3 +66,29 @@ def last_backup_date(backups_dir: Path) -> dt.date | None:
         except ValueError:
             continue
     return max(dates, default=None)
+
+
+def copy_database(db_url: str, target: Path) -> None:
+    """A consistent copy of the SQLite database (SQLite's backup API) at ``target``."""
+    source = sqlite_path(db_url)
+    if not source.is_file():
+        raise DomainError("BACKUP_NEEDS_SQLITE_FILE")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.unlink(missing_ok=True)
+    src = sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True)
+    dst = sqlite3.connect(target)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+
+def replace_database(db_url: str, replacement: Path) -> None:
+    """Swap ``replacement`` in as the database file (the engines must be disposed first)."""
+    destination = sqlite_path(db_url)
+    for suffix in ("-wal", "-shm", "-journal"):
+        destination.with_name(destination.name + suffix).unlink(missing_ok=True)
+    shutil.move(str(replacement), destination)
+    for suffix in ("-wal", "-shm", "-journal"):
+        replacement.with_name(replacement.name + suffix).unlink(missing_ok=True)

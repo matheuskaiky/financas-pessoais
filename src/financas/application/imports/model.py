@@ -69,10 +69,21 @@ class LegacyAccountRow:
 
 
 @dataclass(frozen=True)
+class LegacyStatementTotal:
+    """One line of the derived ``cartao_faturas`` sheet: only a cross-check, never imported."""
+
+    institution: str
+    statement: YearMonth
+    total_cents: int  # gross: refunds are listed apart
+    refunds_cents: int
+
+
+@dataclass(frozen=True)
 class LegacyWorkbook:
     rows: list[LegacyRow]
     accounts: list[LegacyAccountRow]
     categories: list[str]
+    statement_totals: list[LegacyStatementTotal] = field(default_factory=lambda: [])
 
 
 @dataclass(frozen=True)
@@ -230,6 +241,7 @@ class CounterpartyLine:
 
 @dataclass(frozen=True)
 class ImportPlan:
+    year: int
     accounts: tuple[AccountSpec, ...]
     actions: tuple[PlannedAction, ...]
     counterparties: tuple[CounterpartyLine, ...]

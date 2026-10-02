@@ -190,6 +190,7 @@ def build_workbook(
     *,
     accounts: list[list[Any]] | None = None,
     categories: list[list[Any]] | None = None,
+    statement_totals: list[list[Any]] | None = None,
 ) -> Path:
     """Write the workbook: the three source sheets, an empty row and a derived sheet."""
     workbook = openpyxl.Workbook()
@@ -218,6 +219,11 @@ def build_workbook(
         [None, None, None, None, None, None, 0, None],
     ]:  # fmt: skip
         sheet.append(line)
+    if statement_totals is not None:  # derived sheet read only to cross-check the import
+        totals = workbook.create_sheet("cartao_faturas")
+        totals.append(["fatura_ref", "instituicao", "total_fatura", "estornos"])
+        for line in statement_totals:
+            totals.append(line)
     derived = workbook.create_sheet("fluxo_mensal")  # derived: the reader must never read it
     derived.append(["ano_mes", "receitas"])
     derived.append(["2026-01", "not a number"])

@@ -167,3 +167,22 @@ def test_missing_openpyxl_is_a_domain_error(
     with pytest.raises(DomainError) as exc:
         read_legacy_workbook(path)
     assert exc.value.code == "IMPORT_READER_MISSING"
+
+
+def test_statement_totals_of_the_derived_sheet_are_read_only_for_cross_checking(
+    tmp_path: Path,
+) -> None:
+    path = build_workbook(
+        tmp_path / "w.xlsx",
+        statement_totals=[
+            ["2026-01", "Banco Beta", 1037.12, 59.11],
+            ["2026-02", "Banco Beta", "x", None],  # unreadable: skipped
+            [None, "Banco Beta", 1.0, 0],
+        ],
+    )
+    workbook = read_legacy_workbook(path)
+    (line,) = workbook.statement_totals
+    assert (line.institution, str(line.statement), line.total_cents, line.refunds_cents) == (
+        "Banco Beta", "2026-01", 103_712, 5_911,
+    )  # fmt: skip
+    assert read_legacy_workbook(build_workbook(tmp_path / "n.xlsx")).statement_totals == []

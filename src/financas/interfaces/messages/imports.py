@@ -40,3 +40,12 @@ REPORT = {
     "next": "Próximo passo: revise contrapartes.csv, categorias.csv, contas.csv e lancamentos.csv "
     "em {directory}; depois rode o plano de novo.",
 }
+
+CHECK_LABELS = {
+    "COUNT_BY_ACCOUNT": "Quantidade de lançamentos por conta",
+    "SUM_BY_ACCOUNT": "Soma dos lançamentos por conta",
+    "TRANSFER_LEGS": "Pernas das transferências (no máximo duas, valores opostos)",
+    "CARD_ENTRY_STATEMENT": "Lançamentos de cartão ligados a uma fatura",
+    "HAS_ENTRIES": "Há lançamentos no banco",
+    "OPENING_BALANCE": "Saldo inicial informado",
+}

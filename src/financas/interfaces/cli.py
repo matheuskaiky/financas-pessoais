@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from financas.application.imports.apply import ApplyImport, compare_statement_totals, verify_import
 from financas.application.imports.planner import build_plan
 from financas.application.queries.balances import ListAccountBalances
 from financas.application.queries.cards import (
@@ -113,6 +114,7 @@ from financas.interfaces.formatting import (
 from financas.interfaces.formatting import (
     format_month as format_month_short,
 )
+from financas.interfaces.messages.imports import CHECK_LABELS as IMPORT_CHECK_LABELS
 from financas.interfaces.resolve import (
     default_checking_account,
     find_account,
@@ -693,29 +695,16 @@ def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) ->
 # --- spreadsheet import (CLAUDE.md 13.1) --------------------------------------------------------
 
 
-@import_app.command("plan")
-@handle_errors
-def import_plan(
-    xlsx: Annotated[
-        Path, typer.Argument(exists=True, dir_okay=False, help="Planilha antiga (.xlsx).")
-    ],
-    year: Annotated[int, typer.Option("--year", help="Ano a importar (por competência).")] = 2026,
-    holder: Annotated[
-        str | None,
-        typer.Option(
-            "--holder",
-            help="Seus nomes, separados por vírgula (ou FINANCAS_HOLDER_ALIASES): Pix para si.",
-        ),
-    ] = None,
-) -> None:
-    """Simula a importação: grava só arquivos de revisão em data/import/, nada no banco."""
-    c = container()
+def _reviewed_plan(c: Container, xlsx: Path, year: int, holder: str | None, *, write: bool):  # type: ignore[no-untyped-def]
+    """The plan built from the workbook and the (reviewed) files in ``data/import/``."""
     directory = c.import_dir
     workbook = c.read_workbook(xlsx)
     accounts_file = directory / importing.ACCOUNTS_FILE
     categories_file = directory / importing.CATEGORIES_FILE
     counterparties_file = directory / importing.COUNTERPARTIES_FILE
     entries_file = directory / importing.ENTRIES_FILE
+    if not write and not (accounts_file.exists() and categories_file.exists()):
+        raise DomainError("IMPORT_RUN_PLAN_FIRST")
     if accounts_file.exists():
         accounts = importing.read_accounts(accounts_file, c.clock.today())
     else:
@@ -744,13 +733,93 @@ def import_plan(
         edits=edits,
     )
     plan = importing.with_account_issues(build_plan(workbook.rows, config))
-    importing.write_counterparties(counterparties_file, plan.counterparties, decisions)
-    importing.write_entries(entries_file, plan, edits)
-    report = importing.render_report(plan, year, directory)
-    (directory / importing.REPORT_FILE).write_text(report, encoding="utf-8")
-    console.print(report)
+    if write:
+        importing.write_counterparties(counterparties_file, plan.counterparties, decisions)
+        importing.write_entries(entries_file, plan, edits)
+        (directory / importing.REPORT_FILE).write_text(
+            importing.render_report(plan, year, directory), encoding="utf-8"
+        )
+    return plan
+
+
+Xlsx = Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Planilha antiga (.xlsx).")]
+Year = Annotated[int, typer.Option("--year", help="Ano a importar (por competência).")]
+Holder = Annotated[
+    str | None,
+    typer.Option(
+        "--holder",
+        help="Seus nomes, separados por vírgula (ou FINANCAS_HOLDER_ALIASES): Pix para si.",
+    ),
+]
+
+
+@import_app.command("plan")
+@handle_errors
+def import_plan(xlsx: Xlsx, year: Year = 2026, holder: Holder = None) -> None:
+    """Simula a importação: grava só arquivos de revisão em data/import/, nada no banco."""
+    c = container()
+    plan = _reviewed_plan(c, xlsx, year, holder, write=True)
+    console.print(importing.render_report(plan, year, c.import_dir))
     if plan.errors:
         raise typer.Exit(1)
+
+
+@import_app.command("apply")
+@handle_errors
+def import_apply(
+    xlsx: Xlsx,
+    year: Year = 2026,
+    holder: Holder = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Não pedir confirmação.")] = False,
+) -> None:
+    """Aplica o plano revisado: backup, cópia de trabalho, conferências e só então troca o banco."""
+    c = container()
+    plan = _reviewed_plan(c, xlsx, year, holder, write=False)
+    workbook_totals = c.read_workbook(xlsx).statement_totals
+    console.print(importing.render_report(plan, year, c.import_dir))
+    if plan.errors:
+        raise typer.Exit(1)
+    if not yes and not typer.confirm("Aplicar este plano ao banco de dados?", default=False):
+        console.print("Nada foi alterado.")
+        return
+    c.migrate()
+    c.seed()
+    backup = c.backup()
+    console.print(f"Backup criado em {backup}.")
+    work_path = c.import_dir / "work.db"
+    work = c.working_copy(work_path)
+    try:
+        result = ApplyImport(work.uow, work.clock).execute(
+            plan, importing.entry_notes, importing.PAYMENT_DESCRIPTION
+        )
+        verification = verify_import(work.uow, plan, result.account_ids)
+    except Exception:
+        work.engine.dispose()
+        work_path.unlink(missing_ok=True)
+        raise
+    failed = [chk for chk in verification.checks if not chk.ok]
+    for code in sorted({chk.code for chk in verification.checks}):
+        bad = [chk.detail for chk in failed if chk.code == code]
+        label = IMPORT_CHECK_LABELS.get(code, code)
+        console.print(
+            f"  {'FALHOU' if bad else 'ok'} · {label}{' (' + ', '.join(bad) + ')' if bad else ''}"
+        )
+    equal, different = compare_statement_totals(work.uow, plan, result.account_ids, workbook_totals)
+    console.print(
+        f"  Totais de fatura iguais aos da planilha: {equal} · diferentes: {len(different)}"
+        + (f" ({', '.join(different)})" if different else "")
+    )
+    if failed:
+        work.engine.dispose()
+        work_path.unlink(missing_ok=True)
+        err_console.print("As conferências falharam: o banco não foi alterado.", style="red")
+        raise typer.Exit(1)
+    c.adopt(work)
+    console.print(
+        f"Importação concluída: {result.entries} lançamentos, {result.transfers} transferências, "
+        f"{result.plans} parcelamentos, {result.payments} pagamentos de fatura. "
+        "Revise e ajuste pelo painel (`financas serve`)."
+    )
 
 
 # --- failures ---------------------------------------------------------------------------------

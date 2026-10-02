@@ -142,3 +142,73 @@ def test_an_invalid_accounts_file_is_a_clear_error(tmp_path: Path) -> None:
     rows[0]["due_day"] = "abc"
     write(directory / "contas.csv", rows)
     assert "contas.csv: há uma linha inválida" in plan(xlsx, ok=False)
+
+
+def apply_cmd(xlsx: Path, *args: str, ok: bool = True) -> str:
+    result = runner.invoke(app, ["import", "apply", str(xlsx), "--yes", *args], terminal_width=200)
+    assert (result.exit_code == 0) is ok, result.output
+    return result.output
+
+
+def prepare(tmp_path: Path) -> tuple[Path, Path]:
+    xlsx = build_workbook(tmp_path / "old.xlsx")
+    plan(xlsx, ok=False)
+    directory = tmp_path / "data" / "import"
+    fill_cards(directory)
+    return xlsx, directory
+
+
+def database_counts(tmp_path: Path) -> tuple[int, int]:
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "data" / "f.db") as db:
+        return (
+            db.execute("select count(*) from transactions").fetchone()[0],
+            db.execute("select count(*) from accounts").fetchone()[0],
+        )
+
+
+def test_apply_needs_a_reviewed_plan_first(tmp_path: Path) -> None:
+    xlsx = build_workbook(tmp_path / "old.xlsx")
+    assert "Rode `financas import plan`" in apply_cmd(xlsx, ok=False)
+
+
+def test_apply_imports_into_the_database_after_a_backup(tmp_path: Path) -> None:
+    xlsx, directory = prepare(tmp_path)
+    out = apply_cmd(xlsx, "--holder", "Fulano de Tal")
+    assert "Backup criado em" in out and "Importação concluída" in out
+    assert "FALHOU" not in out and "ok · Soma dos lançamentos por conta" in out
+    entries, accounts = database_counts(tmp_path)
+    assert accounts == 4 and entries > 0
+    assert any((tmp_path / "data" / "backups").iterdir())
+    assert not (directory / "work.db").exists()  # the working copy was swapped in
+    assert "Banco Alfa c/c" in run_cli("account", "list")
+    # a second apply is refused: the database already has entries
+    again = apply_cmd(xlsx, "--holder", "Fulano de Tal", ok=False)
+    assert "só roda num banco sem lançamentos" in again
+
+
+def run_cli(*args: str) -> str:
+    result = runner.invoke(app, list(args), terminal_width=200)
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+def test_a_failed_check_leaves_the_database_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financas.application.imports import apply as apply_module
+
+    xlsx, directory = prepare(tmp_path)
+    real_verify = apply_module.verify_import
+
+    def broken(uow, plan, ids):  # type: ignore[no-untyped-def]
+        result = real_verify(uow, plan, ids)
+        result.add("SUM_BY_ACCOUNT", False, "forced")
+        return result
+
+    monkeypatch.setattr("financas.interfaces.cli.verify_import", broken)
+    out = apply_cmd(xlsx, "--holder", "Fulano de Tal", ok=False)
+    assert "FALHOU" in out and "o banco não foi alterado" in out
+    assert database_counts(tmp_path) == (0, 0)
+    assert not (directory / "work.db").exists()
