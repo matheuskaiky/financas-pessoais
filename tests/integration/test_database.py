@@ -193,3 +193,144 @@ def test_database_rejects_invalid_card_rows(sql_uow: SqlUnitOfWork) -> None:
     with pytest.raises(sqlite3.IntegrityError):  # one statement per card and month
         raw.execute(stmt, ("d" * 32, "5" * 32, "2026-07", "2026-07-25", "2026-08-05"))
     raw.close()
+
+
+def test_investment_migration_keeps_existing_investment_accounts(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    command.upgrade(alembic_config(url), "04545ce71be4")  # the Phase 2 schema
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a1', 'investment', 'i', 'Caixinha', 1), ('a2', 'checking', 'i', 'CC', 1)"
+    )
+    raw.commit()
+    raw.close()
+    upgrade_to_head(url)
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        rows = db.execute(
+            "select id, tracking, asset_class, is_emergency_fund from accounts order by id"
+        ).fetchall()
+    assert rows == [("a1", "account", "other", 0), ("a2", None, None, 0)]
+
+
+def test_database_rejects_invalid_investment_rows(sql_uow: SqlUnitOfWork) -> None:
+    seed_categories(sql_uow)
+    inst = CreateInstitution(sql_uow).execute(CreateInstitutionCommand(name="BB"))
+    engine_url = sql_uow._factory.kw["bind"].url  # type: ignore[attr-defined]
+    raw = sqlite3.connect(engine_url.database)
+    raw.execute("PRAGMA foreign_keys=ON")
+    insert = (
+        "insert into accounts (id, kind, institution_id, nickname, is_active, tracking,"
+        " asset_class, is_emergency_fund) values (?, ?, ?, 'x', 1, ?, ?, ?)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # an investment account needs both fields
+        raw.execute(insert, ("1" * 32, "investment", inst.id, None, "other", 0))
+    with pytest.raises(sqlite3.IntegrityError):
+        raw.execute(insert, ("2" * 32, "investment", inst.id, "account", None, 0))
+    with pytest.raises(sqlite3.IntegrityError):  # unknown class
+        raw.execute(insert, ("3" * 32, "investment", inst.id, "account", "gold", 0))
+    with pytest.raises(sqlite3.IntegrityError):  # unknown tracking
+        raw.execute(insert, ("4" * 32, "investment", inst.id, "everything", "other", 0))
+    with pytest.raises(sqlite3.IntegrityError):  # a checking account has none of them
+        raw.execute(insert, ("5" * 32, "checking", inst.id, "account", "other", 0))
+    with pytest.raises(sqlite3.IntegrityError):
+        raw.execute(insert, ("6" * 32, "checking", inst.id, None, None, 1))
+    raw.execute(insert, ("7" * 32, "investment", inst.id, "holdings", "fixed_income", 1))
+    raw.execute(insert, ("8" * 32, "checking", inst.id, None, None, 0))
+    anchor = (
+        "insert into balance_anchors (id, account_id, on_date, balance_cents, gross_balance_cents)"
+        " values (?, ?, ?, ?, ?)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):  # gross below net
+        raw.execute(anchor, ("a" * 32, "7" * 32, "2026-07-01", 100, 99))
+    raw.execute(anchor, ("b" * 32, "7" * 32, "2026-07-01", 100, 120))
+    raw.execute(anchor, ("c" * 32, "7" * 32, "2026-07-02", 100, None))
+    raw.close()
+
+
+def test_holdings_migration_keeps_existing_valuations(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    command.upgrade(alembic_config(url), "8cd33775afe5")  # the Phase 3a schema
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active, tracking,"
+        " asset_class,"
+        " is_emergency_fund) values ('a', 'investment', 'i', 'Cx', 1, 'account', 'other', 0)"
+    )
+    raw.execute(
+        "insert into balance_anchors (id, account_id, on_date, balance_cents)"
+        " values ('b1', 'a', '2026-07-01', 100)"
+    )
+    raw.commit()
+    raw.close()
+    upgrade_to_head(url)
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute(
+            "select id, holding_id, balance_cents from balance_anchors"
+        ).fetchall() == [("b1", None, 100)]
+        with pytest.raises(sqlite3.IntegrityError):  # still one valuation per account and date
+            db.execute(
+                "insert into balance_anchors (id, account_id, on_date, balance_cents)"
+                " values ('b2', 'a', '2026-07-01', 200)"
+            )
+
+
+def test_database_rejects_invalid_holding_rows(sql_uow: SqlUnitOfWork) -> None:
+    seed_categories(sql_uow)
+    inst = CreateInstitution(sql_uow).execute(CreateInstitutionCommand(name="BB"))
+    engine_url = sql_uow._factory.kw["bind"].url  # type: ignore[attr-defined]
+    raw = sqlite3.connect(engine_url.database)
+    raw.execute("PRAGMA foreign_keys=ON")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active, tracking,"
+        " asset_class,"
+        " is_emergency_fund) values ('a', 'investment', ?, 'Cx', 1, 'holdings', 'fixed_income', 0)",
+        (inst.id,),
+    )
+    insert = (
+        "insert into investment_holdings (id, account_id, name, instrument_type, issuer_id,"
+        " indexer,"
+        " rate_mode, rate_bps, applied_on, principal_cents, maturity_on, liquidity, liquid_from,"
+        " fgc_covered, is_emergency_fund, asset_class, status)"
+        " values (?, 'a', 'x', ?, ?, ?, ?, ?, '2026-03-01', ?, ?, ?, ?, 1, 0, 'fixed_income', ?)"
+    )
+
+    def row(**overrides: object) -> tuple[object, ...]:
+        values: dict[str, object] = {
+            "id": "h1", "type": "cdb", "issuer": inst.id, "indexer": "cdi",
+            "mode": "percent_of_index", "bps": 11_000, "principal": 1_000, "maturity": "2028-03-01",
+            "liquidity": "at_maturity", "liquid_from": None, "status": "active",
+        }  # fmt: skip
+        values.update(overrides)
+        return tuple(values.values())
+
+    bad_cases = [
+        {"type": "gold"},
+        {"mode": "percent_of_index", "bps": None},  # a mode without a rate
+        {"mode": None, "bps": 11_000},  # a rate without a mode
+        {"bps": -1},
+        {"principal": 0},
+        {"maturity": None},  # at maturity needs the date
+        {"liquid_from": "2026-06-01"},  # a grace period only with daily liquidity
+        {"maturity": "2026-03-01"},  # not after the application
+        {"status": "gone"},
+        {"liquidity": "weekly"},
+    ]
+    for n, overrides in enumerate(bad_cases):
+        with pytest.raises(sqlite3.IntegrityError):
+            raw.execute(insert, row(id=f"bad{n}", **overrides))
+    raw.execute(insert, row(id="ok1"))
+    raw.execute(
+        insert, row(id="ok2", liquidity="daily", maturity=None, mode=None, bps=None, indexer=None)
+    )
+    raw.close()

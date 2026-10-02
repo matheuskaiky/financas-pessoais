@@ -8,12 +8,20 @@ from fakes import MemoryUnitOfWork
 from financas.domain.models import (
     Account,
     AccountKind,
+    AssetClass,
     BalanceAnchor,
     Category,
     CategoryGroup,
     CategoryKind,
+    HoldingStatus,
+    Indexer,
     InstallmentPlan,
     Institution,
+    InstrumentType,
+    InvestmentHolding,
+    InvestmentTracking,
+    Liquidity,
+    RateMode,
     Statement,
     Transaction,
     TransactionKind,
@@ -242,7 +250,7 @@ def test_anchor_upsert_is_unique_per_account_and_date(uow: UnitOfWork) -> None:
         assert work.anchors.list_for_account("nope") == []
 
 
-# --- cards (Phase 2) -----------------------------------------------------------------------------
+# --- cards (Phase 2) ---
 
 
 def card(inst: Institution, n: int = 9) -> Account:
@@ -431,3 +439,148 @@ def test_competence_uses_the_statement_month_for_card_entries(uow: UnitOfWork) -
     assert july == {rows[0].id}
     assert aug == {rows[1].id, rows[2].id, rows[3].id}
     assert len(year) == 4
+
+
+def test_investment_account_and_gross_balance_round_trip(uow: UnitOfWork) -> None:
+    inst, _, _ = populate(uow)
+    fund = Account(
+        id="f".ljust(32, "0"),
+        kind=AccountKind.INVESTMENT,
+        institution_id=inst.id,
+        nickname="Tesouro",
+        tracking=InvestmentTracking.ACCOUNT,
+        asset_class=AssetClass.FIXED_INCOME,
+        is_emergency_fund=True,
+    )
+    with uow as work:
+        work.accounts.add(fund)
+        work.anchors.upsert(
+            BalanceAnchor("a" * 32, fund.id, D(2026, 7, 31), 1_000_000, "x", 1_020_000)
+        )
+        work.commit()
+    with uow as work:
+        assert work.accounts.get(fund.id) == fund
+        (anchor,) = work.anchors.list_for_account(fund.id)
+        assert (anchor.balance_cents, anchor.gross_balance_cents, anchor.note) == (
+            1_000_000,
+            1_020_000,
+            "x",
+        )
+        work.anchors.upsert(BalanceAnchor("b" * 32, fund.id, D(2026, 7, 31), 1_010_000, None, None))
+        work.commit()
+    with uow as work:
+        (anchor,) = work.anchors.list_for_account(fund.id)
+        assert (anchor.balance_cents, anchor.gross_balance_cents) == (1_010_000, None)
+
+
+# --- holdings (Phase 3b) ---
+
+
+def broker(inst: Institution) -> Account:
+    return Account(
+        id="b".ljust(32, "0"),
+        kind=AccountKind.INVESTMENT,
+        institution_id=inst.id,
+        nickname="Corretora",
+        tracking=InvestmentTracking.HOLDINGS,
+        asset_class=AssetClass.FIXED_INCOME,
+    )
+
+
+def holding(acc: Account, inst: Institution, n: int = 1, **kw: object) -> InvestmentHolding:
+    base: dict[str, object] = {
+        "id": f"h{n}".ljust(32, "0"),
+        "account_id": acc.id,
+        "name": f"CDB {n}",
+        "instrument_type": InstrumentType.CDB,
+        "issuer_id": inst.id,
+        "indexer": Indexer.CDI,
+        "rate_mode": RateMode.PERCENT_OF_INDEX,
+        "rate_bps": 11_000,
+        "applied_on": D(2026, 3, 1),
+        "principal_cents": 1_000_000,
+        "maturity_on": D(2028, 3, 1),
+        "liquidity": Liquidity.AT_MATURITY,
+        "liquid_from": None,
+        "fgc_covered": True,
+        "is_emergency_fund": False,
+        "asset_class": AssetClass.FIXED_INCOME,
+        "status": HoldingStatus.ACTIVE,
+    }
+    base.update(kw)
+    return InvestmentHolding(**base)  # type: ignore[arg-type]
+
+
+def test_holding_round_trip_update_and_listing(uow: UnitOfWork) -> None:
+    inst, _, _ = populate(uow)
+    acc = broker(inst)
+    h1, h2 = (
+        holding(acc, inst, 1),
+        holding(acc, inst, 2, liquidity=Liquidity.DAILY, maturity_on=None),
+    )
+    with uow as work:
+        work.accounts.add(acc)
+        work.holdings.add(h1)
+        work.holdings.add(h2)
+        work.commit()
+    with uow as work:
+        assert work.holdings.get(h1.id) == h1 and work.holdings.get("z" * 32) is None
+        assert [h.name for h in work.holdings.list_all()] == ["CDB 1", "CDB 2"]
+        assert work.holdings.list_for_account(acc.id) == [h1, h2]
+        assert work.holdings.list_for_account("nope") == []
+        work.holdings.update(
+            holding(
+                acc,
+                inst,
+                1,
+                status=HoldingStatus.REDEEMED,
+                fgc_covered=False,
+                is_emergency_fund=True,
+            )
+        )
+        work.commit()
+    with uow as work:
+        got = work.holdings.get(h1.id)
+        assert got and (got.status, got.fgc_covered, got.is_emergency_fund) == (
+            HoldingStatus.REDEEMED,
+            False,
+            True,
+        )
+
+
+def test_valuations_and_flows_are_kept_per_holding(uow: UnitOfWork) -> None:
+    inst, _, cat = populate(uow)
+    acc = broker(inst)
+    h1, h2 = holding(acc, inst, 1), holding(acc, inst, 2)
+    flow = tx(1, acc, cat, D(2026, 7, 10), 100_000, kind=TransactionKind.TRANSFER, holding_id=h1.id)
+    other = tx(2, acc, cat, D(2026, 7, 11), 50_000, kind=TransactionKind.TRANSFER, holding_id=h2.id)
+    with uow as work:
+        work.accounts.add(acc)
+        work.holdings.add(h1)
+        work.holdings.add(h2)
+        work.transactions.add_many([flow, other])
+        work.anchors.upsert(
+            BalanceAnchor("a" * 32, acc.id, D(2026, 7, 31), 1_000, None, None, h1.id)
+        )
+        work.anchors.upsert(
+            BalanceAnchor("b" * 32, acc.id, D(2026, 7, 31), 2_000, None, None, h2.id)
+        )
+        work.anchors.upsert(BalanceAnchor("c" * 32, acc.id, D(2026, 7, 31), 9_000))  # whole account
+        work.commit()
+    with uow as work:
+        assert work.transactions.movements_for_holding(h1.id) == [(D(2026, 7, 10), 100_000)]
+        assert work.transactions.get(flow.id).holding_id == h1.id  # type: ignore[union-attr]
+        assert [a.balance_cents for a in work.anchors.list_for_holding(h1.id)] == [1_000]
+        assert [a.balance_cents for a in work.anchors.list_for_holding(h2.id)] == [2_000]
+        assert [a.balance_cents for a in work.anchors.list_for_account(acc.id)] == [9_000]
+        # the same day again replaces the valuation of that holding only
+        work.anchors.upsert(
+            BalanceAnchor("d" * 32, acc.id, D(2026, 7, 31), 1_500, "x", None, h1.id)
+        )
+        work.commit()
+    with uow as work:
+        assert [(a.balance_cents, a.note) for a in work.anchors.list_for_holding(h1.id)] == [
+            (1_500, "x")
+        ]
+        assert [a.balance_cents for a in work.anchors.list_for_holding(h2.id)] == [2_000]
+        assert [a.balance_cents for a in work.anchors.list_for_account(acc.id)] == [9_000]

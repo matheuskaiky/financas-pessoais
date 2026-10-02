@@ -14,6 +14,7 @@ from financas.domain.models import (
     Category,
     InstallmentPlan,
     Institution,
+    InvestmentHolding,
     Statement,
     Transaction,
     TransactionKind,
@@ -25,6 +26,7 @@ from financas.infrastructure.db.orm import (
     CategoryRow,
     InstallmentPlanRow,
     InstitutionRow,
+    InvestmentHoldingRow,
     StatementRow,
     TransactionRow,
 )
@@ -46,6 +48,9 @@ def _account(r: AccountRow) -> Account:
         r.closing_day,
         r.due_day,
         r.credit_limit_cents,
+        r.tracking,
+        r.asset_class,
+        r.is_emergency_fund,
     )
 
 
@@ -69,6 +74,7 @@ def _transaction(r: TransactionRow) -> Transaction:
         r.statement_id,
         r.plan_id,
         r.installment_number,
+        r.holding_id,
     )
 
 
@@ -89,8 +95,38 @@ def _plan(r: InstallmentPlanRow) -> InstallmentPlan:
     )
 
 
+def _holding(r: InvestmentHoldingRow) -> InvestmentHolding:
+    return InvestmentHolding(
+        r.id,
+        r.account_id,
+        r.name,
+        r.instrument_type,
+        r.issuer_id,
+        r.indexer,
+        r.rate_mode,
+        r.rate_bps,
+        r.applied_on,
+        r.principal_cents,
+        r.maturity_on,
+        r.liquidity,
+        r.liquid_from,
+        r.fgc_covered,
+        r.is_emergency_fund,
+        r.asset_class,
+        r.status,
+    )
+
+
 def _anchor(r: BalanceAnchorRow) -> BalanceAnchor:
-    return BalanceAnchor(r.id, r.account_id, r.on_date, r.balance_cents, r.note)
+    return BalanceAnchor(
+        r.id,
+        r.account_id,
+        r.on_date,
+        r.balance_cents,
+        r.note,
+        r.gross_balance_cents,
+        r.holding_id,
+    )
 
 
 class SqlInstitutions:
@@ -269,6 +305,14 @@ class SqlTransactions:
         )
         return [(posted_on, cents) for posted_on, cents in rows]
 
+    def movements_for_holding(self, holding_id: str) -> list[tuple[dt.date, int]]:
+        rows = self._s.execute(
+            sa.select(TransactionRow.posted_on, TransactionRow.amount_cents).where(
+                TransactionRow.holding_id == holding_id
+            )
+        )
+        return [(posted_on, cents) for posted_on, cents in rows]
+
     def last_category_id(self, description_search: str, kind: TransactionKind) -> str | None:
         return self._s.scalars(
             sa.select(TransactionRow.category_id)
@@ -352,26 +396,74 @@ class SqlAnchors:
         self._s = session
 
     def upsert(self, anchor: BalanceAnchor) -> None:
-        existing = self._s.scalars(
-            sa.select(BalanceAnchorRow).where(
+        target = (
+            BalanceAnchorRow.holding_id == anchor.holding_id
+            if anchor.holding_id is not None
+            else sa.and_(
                 BalanceAnchorRow.account_id == anchor.account_id,
-                BalanceAnchorRow.on_date == anchor.on_date,
+                BalanceAnchorRow.holding_id.is_(None),
             )
+        )
+        existing = self._s.scalars(
+            sa.select(BalanceAnchorRow).where(target, BalanceAnchorRow.on_date == anchor.on_date)
         ).first()
         if existing is None:
             self._s.add(BalanceAnchorRow(**vars(anchor)))
         else:
             existing.balance_cents = anchor.balance_cents
             existing.note = anchor.note
+            existing.gross_balance_cents = anchor.gross_balance_cents
         self._s.flush()
 
     def list_for_account(self, account_id: str) -> list[BalanceAnchor]:
         rows = self._s.scalars(
             sa.select(BalanceAnchorRow)
-            .where(BalanceAnchorRow.account_id == account_id)
+            .where(BalanceAnchorRow.account_id == account_id, BalanceAnchorRow.holding_id.is_(None))
             .order_by(BalanceAnchorRow.on_date)
         )
         return [_anchor(r) for r in rows]
+
+    def list_for_holding(self, holding_id: str) -> list[BalanceAnchor]:
+        rows = self._s.scalars(
+            sa.select(BalanceAnchorRow)
+            .where(BalanceAnchorRow.holding_id == holding_id)
+            .order_by(BalanceAnchorRow.on_date)
+        )
+        return [_anchor(r) for r in rows]
+
+
+class SqlHoldings:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, holding: InvestmentHolding) -> None:
+        self._s.add(InvestmentHoldingRow(**vars(holding)))
+        self._s.flush()
+
+    def update(self, holding: InvestmentHolding) -> None:
+        row = self._s.get(InvestmentHoldingRow, holding.id)
+        assert row is not None
+        for key, value in vars(holding).items():
+            setattr(row, key, value)
+        self._s.flush()
+
+    def get(self, holding_id: str) -> InvestmentHolding | None:
+        row = self._s.get(InvestmentHoldingRow, holding_id)
+        return _holding(row) if row else None
+
+    def list_all(self) -> list[InvestmentHolding]:
+        rows = self._s.scalars(
+            sa.select(InvestmentHoldingRow).order_by(sa.text("investment_holdings.rowid"))
+        )
+        return [_holding(r) for r in rows]
+
+    def list_for_account(self, account_id: str) -> list[InvestmentHolding]:
+        rows = self._s.scalars(
+            sa.select(InvestmentHoldingRow)
+            .where(InvestmentHoldingRow.account_id == account_id)
+            .order_by(sa.text("investment_holdings.rowid"))
+        )
+        return [_holding(r) for r in rows]
 
 
 class SqlUnitOfWork:
@@ -384,6 +476,7 @@ class SqlUnitOfWork:
     anchors: SqlAnchors
     statements: SqlStatements
     plans: SqlPlans
+    holdings: SqlHoldings
 
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._factory = session_factory
@@ -399,6 +492,7 @@ class SqlUnitOfWork:
         self.anchors = SqlAnchors(session)
         self.statements = SqlStatements(session)
         self.plans = SqlPlans(session)
+        self.holdings = SqlHoldings(session)
         return self
 
     def __exit__(
