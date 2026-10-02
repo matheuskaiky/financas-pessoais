@@ -9,6 +9,7 @@ from financas.domain.models import AccountKind, BalanceAnchor, InvestmentTrackin
 from financas.domain.ports import UnitOfWork
 from financas.domain.rules import validate_gross_balance
 from financas.domain.services.balances import AnchorPoint, balance_on
+from financas.domain.services.investments import current_value
 from financas.domain.services.text import clean_text
 
 
@@ -48,7 +49,13 @@ class RecordBalance:
                 for a in uow.anchors.list_for_account(cmd.account_id)
                 if a.on_date != cmd.on_date
             ]
-            computed = balance_on(others, uow.transactions.movements(cmd.account_id), cmd.on_date)
+            movements = uow.transactions.movements(cmd.account_id)
+            if account.kind is AccountKind.INVESTMENT:
+                # the yield since the LAST valuation (9.7), not since the nearest anchor
+                before = [a for a in others if a.on_date < cmd.on_date]
+                computed = current_value(before, movements, cmd.on_date)
+            else:
+                computed = balance_on(others, movements, cmd.on_date)
             anchor = BalanceAnchor(
                 id=new_id(),
                 account_id=cmd.account_id,

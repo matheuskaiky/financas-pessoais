@@ -30,6 +30,9 @@ class FixedClock:
     def today(self) -> dt.date:
         return self._today
 
+    def now(self) -> dt.datetime:
+        return dt.datetime.combine(self._today, dt.time(12, 0))
+
 
 class MemoryInstitutions:
     def __init__(self) -> None:
@@ -200,7 +203,8 @@ class MemoryStatements:
         return sorted(rows, key=lambda s: s.month)
 
     def list_all(self) -> list[Statement]:
-        return list(self.items.values())
+        # like SQL: by month, then insertion order (sorted() is stable)
+        return sorted(self.items.values(), key=lambda s: s.month)
 
 
 class MemoryPlans:

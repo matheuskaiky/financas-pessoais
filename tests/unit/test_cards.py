@@ -454,7 +454,7 @@ def test_delete_purchase_removes_the_plan_and_all_installments(
 
 def test_move_an_entry_to_another_statement(uow: MemoryUnitOfWork, card: Account) -> None:
     (entry,) = buy(uow, card, purchased_on=D(2026, 7, 26), total_cents=500).transactions
-    MoveEntryToStatement(uow).execute(entry.id, YM(2026, 7))
+    MoveEntryToStatement(uow, FixedClock(D(2026, 8, 1))).execute(entry.id, YM(2026, 7))
     moved = uow.transactions.get(entry.id)
     statement = uow.statements.get(moved.statement_id or "")  # type: ignore[union-attr]
     assert statement and str(statement.month) == "2026-07"

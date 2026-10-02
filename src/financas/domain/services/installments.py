@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from financas.domain.errors import DomainError
 from financas.domain.money import YearMonth
 
+MAX_INSTALLMENTS = 120  # ten years: more than any real purchase, and keeps a typo harmless
+
 
 @dataclass(frozen=True)
 class InstallmentLine:
@@ -15,8 +17,8 @@ class InstallmentLine:
 
 def split_total(total_cents: int, count: int) -> list[int]:
     """Installments 2..N get ⌊total ÷ N⌋; the first one absorbs the whole remainder."""
-    if count < 1:
-        raise DomainError("INSTALLMENT_OUT_OF_RANGE", number=count, count=count)
+    if not 1 <= count <= MAX_INSTALLMENTS:
+        raise DomainError("INVALID_INSTALLMENT_COUNT", count=count)
     if total_cents <= 0:
         raise DomainError("AMOUNT_NOT_POSITIVE")
     base = total_cents // count
@@ -39,7 +41,9 @@ def build_schedule(
     new purchase, of the current one for a purchase already running). Give either the purchase
     total (split by ``split_total``) or the installment value as printed on the statement.
     """
-    if count < 1 or not 1 <= first_number <= count:
+    if not 1 <= count <= MAX_INSTALLMENTS:
+        raise DomainError("INVALID_INSTALLMENT_COUNT", count=count)
+    if not 1 <= first_number <= count:
         raise DomainError("INSTALLMENT_OUT_OF_RANGE", number=first_number, count=count)
     if (total_cents is None) == (installment_cents is None):
         raise DomainError("AMOUNT_REQUIRED")

@@ -33,6 +33,15 @@ from financas.domain.services.holdings import suggest_fgc_covered
 from financas.domain.services.text import clean_text
 
 
+def _require_checking(uow: UnitOfWork, account_id: str | None) -> None:
+    """The other side of a contribution or redemption is a tracked checking account."""
+    if account_id is None:
+        return
+    other = found(uow.accounts.get(account_id), "account")
+    if other.kind is not AccountKind.CHECKING:
+        raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=other.kind.value)
+
+
 def _holdings_account(uow: UnitOfWork, account_id: str) -> Account:
     account = found(uow.accounts.get(account_id), "account")
     if account.kind is not AccountKind.INVESTMENT:
@@ -71,6 +80,8 @@ class RegisterHolding:
         with self._uow as uow:
             account = _holdings_account(uow, cmd.account_id)
             found(uow.institutions.get(cmd.issuer_id), "institution")
+            if cmd.contribute:
+                _require_checking(uow, cmd.from_account_id)
             holding = InvestmentHolding(
                 id=new_id(),
                 account_id=account.id,
@@ -152,7 +163,8 @@ class RecordHoldingValuation:
         self._uow = uow
 
     def execute(self, cmd: RecordHoldingValuationCommand) -> RecordHoldingValuationResult:
-        from financas.domain.services.balances import AnchorPoint, balance_on
+        from financas.domain.services.balances import AnchorPoint
+        from financas.domain.services.investments import current_value
 
         validate_gross_balance(cmd.balance_cents, cmd.gross_balance_cents)
         with self._uow as uow:
@@ -165,8 +177,9 @@ class RecordHoldingValuation:
                 for a in uow.anchors.list_for_holding(holding.id)
                 if a.on_date != cmd.on_date
             ]
-            computed = balance_on(
-                others, uow.transactions.movements_for_holding(holding.id), cmd.on_date
+            before = [a for a in others if a.on_date < cmd.on_date]
+            computed = current_value(
+                before, uow.transactions.movements_for_holding(holding.id), cmd.on_date
             )
             anchor = BalanceAnchor(
                 id=new_id(),
@@ -207,6 +220,13 @@ class RedeemHolding:
             _holdings_account(uow, holding.account_id)
             if holding.status is HoldingStatus.REDEEMED:
                 raise DomainError("HOLDING_REDEEMED")
+            _require_checking(uow, cmd.to_account_id)
+            last_valuation = max(
+                (a.on_date for a in uow.anchors.list_for_holding(holding.id)),
+                default=holding.applied_on,
+            )
+            if cmd.redeemed_on < max(holding.applied_on, last_valuation):
+                raise DomainError("INVALID_REDEMPTION_DATE")
             legs = build_transfer_legs(
                 uow,
                 RegisterTransferCommand(

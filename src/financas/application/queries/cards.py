@@ -91,6 +91,14 @@ class ScheduleRow:
     amount_cents: int  # installments only (plan entries), not other purchases
 
 
+def is_locked(view: StatementView) -> bool:
+    """A paid statement is history: its entries are never rewritten (9.4).
+
+    An empty closed statement counts as paid for the status but holds nothing to protect.
+    """
+    return view.status is StatementStatus.PAID and (view.total_cents != 0 or view.paid_cents != 0)
+
+
 def card_accounts(uow: UnitOfWork) -> list[Account]:
     return [a for a in uow.accounts.list_all() if a.kind is AccountKind.CREDIT_CARD]
 

@@ -2,7 +2,7 @@ import datetime as dt
 
 import pytest
 
-from fakes import MemoryUnitOfWork
+from fakes import FixedClock, MemoryUnitOfWork
 from financas.application.use_cases.catalog import SetAccountActive
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
@@ -175,15 +175,15 @@ def test_deleting_one_transfer_leg_deletes_both(
     legs = RegisterTransfer(uow).execute(
         RegisterTransferCommand(checking.id, savings.id, D(2026, 7, 5), 100)
     )
-    assert DeleteTransaction(uow).execute(legs[0].id) == 2
+    assert DeleteTransaction(uow, FixedClock()).execute(legs[0].id) == 2
     assert uow.transactions.items == {}
 
 
 def test_deleting_a_plain_entry_and_unknown_id(uow: MemoryUnitOfWork, checking: Account) -> None:
     t = register(uow, checking)
-    assert DeleteTransaction(uow).execute(t.id) == 1
+    assert DeleteTransaction(uow, FixedClock()).execute(t.id) == 1
     with pytest.raises(DomainError) as exc:
-        DeleteTransaction(uow).execute(t.id)
+        DeleteTransaction(uow, FixedClock()).execute(t.id)
     assert exc.value.code == "NOT_FOUND"
 
 

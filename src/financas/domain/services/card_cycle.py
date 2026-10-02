@@ -43,7 +43,13 @@ def due_date(month: YearMonth, closing_day: int, due_day: int) -> dt.date:
     """First occurrence of ``due_day`` after the closing date (no business-day adjustment)."""
     _check_day(closing_day)
     _check_day(due_day)
-    return month.day(due_day) if due_day > closing_day else month.add_months(1).day(due_day)
+    if due_day > closing_day:
+        due = month.day(due_day)
+        closing = month.day(closing_day)
+        if due > closing:
+            return due
+        # both were clamped to the end of a short month: the due day is not after closing yet
+    return month.add_months(1).day(due_day)
 
 
 def statement_dates(month: YearMonth, closing_day: int, due_day: int) -> tuple[dt.date, dt.date]:

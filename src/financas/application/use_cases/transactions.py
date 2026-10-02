@@ -3,12 +3,19 @@
 import datetime as dt
 from dataclasses import dataclass
 
+from financas.application.queries.cards import is_locked, statement_view
 from financas.application.use_cases._cards import assignment_for, ensure_statement, require_card
 from financas.application.use_cases._common import found, new_id
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, Category, Transaction, TransactionKind
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    Category,
+    Transaction,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
-from financas.domain.ports import UnitOfWork
+from financas.domain.ports import Clock, UnitOfWork
 from financas.domain.rules import (
     validate_category_kind,
     validate_sign,
@@ -133,6 +140,9 @@ def build_transfer_legs(uow: UnitOfWork, cmd: RegisterTransferCommand) -> list[T
     description = clean_text(cmd.description)
     transfer_id = new_id()
     category = found(uow.categories.get_by_slug("transfer"), "category")
+    holding_account_id = None
+    if cmd.holding_id is not None:  # the holding is tagged on the leg of its own account only
+        holding_account_id = found(uow.holdings.get(cmd.holding_id), "holding").account_id
     legs: list[Transaction] = []
     for account_id, amount in (
         (cmd.from_account_id, -magnitude),
@@ -142,6 +152,7 @@ def build_transfer_legs(uow: UnitOfWork, cmd: RegisterTransferCommand) -> list[T
             continue
         account = found(uow.accounts.get(account_id), "account")
         _check_account(account, _TRANSFER_ACCOUNT_KINDS)
+        tag = holding_account_id is not None and account.id == holding_account_id
         legs.append(
             Transaction(
                 id=new_id(),
@@ -154,7 +165,7 @@ def build_transfer_legs(uow: UnitOfWork, cmd: RegisterTransferCommand) -> list[T
                 description_search=normalize_search(description),
                 transfer_id=transfer_id,
                 notes=clean_text(cmd.notes) if cmd.notes else None,
-                holding_id=cmd.holding_id if account.kind is AccountKind.INVESTMENT else None,
+                holding_id=cmd.holding_id if tag else None,
             )
         )
     return legs
@@ -175,12 +186,19 @@ class RegisterTransfer:
 class DeleteTransaction:
     """Deletes an entry; for a transfer, every leg goes together."""
 
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
+        self._clock = clock
 
     def execute(self, transaction_id: str) -> int:
         with self._uow as uow:
             transaction = found(uow.transactions.get(transaction_id), "transaction")
+            if transaction.plan_id is not None:
+                raise DomainError("USE_DELETE_PURCHASE")  # an installment leaves with its plan
+            if transaction.statement_id and transaction.kind is not TransactionKind.TRANSFER:
+                statement = found(uow.statements.get(transaction.statement_id), "statement")
+                if is_locked(statement_view(uow, statement, self._clock.today())):
+                    raise DomainError("STATEMENT_ALREADY_PAID")
             targets = (
                 uow.transactions.list_by_transfer(transaction.transfer_id)
                 if transaction.transfer_id

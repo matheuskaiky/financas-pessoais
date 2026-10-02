@@ -3,7 +3,7 @@
 import datetime as dt
 from collections.abc import Sequence
 from types import TracebackType
-from typing import Protocol, Self
+from typing import Protocol
 
 from financas.domain.models import (
     Account,
@@ -21,6 +21,7 @@ from financas.domain.money import YearMonth
 
 class Clock(Protocol):
     def today(self) -> dt.date: ...
+    def now(self) -> dt.datetime: ...
 
 
 class InstitutionRepository(Protocol):
@@ -135,7 +136,7 @@ class UnitOfWork(Protocol):
     plans: PlanRepository
     holdings: HoldingRepository
 
-    def __enter__(self) -> Self: ...
+    def __enter__(self) -> "UnitOfWork": ...
     def __exit__(
         self,
         exc_type: type[BaseException] | None,

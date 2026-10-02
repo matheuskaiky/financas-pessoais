@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from financas.application.use_cases._common import found
-from financas.application.use_cases.transactions import RegisterTransfer, RegisterTransferCommand
+from financas.application.use_cases.transactions import (
+    RegisterTransferCommand,
+    build_transfer_legs,
+)
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
@@ -64,15 +67,19 @@ class RegisterInvestmentFlow:
                 other = found(uow.accounts.get(cmd.other_account_id), "account")
                 if other.kind is not AccountKind.CHECKING:
                     raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=other.kind.value)
-        into = cmd.direction is FlowDirection.CONTRIBUTION
-        return RegisterTransfer(self._uow).execute(
-            RegisterTransferCommand(
-                from_account_id=cmd.other_account_id if into else cmd.investment_account_id,
-                to_account_id=cmd.investment_account_id if into else cmd.other_account_id,
-                posted_on=cmd.posted_on,
-                amount_cents=cmd.amount_cents,
-                description=cmd.description,
-                notes=cmd.notes,
-                holding_id=cmd.holding_id,
+            into = cmd.direction is FlowDirection.CONTRIBUTION
+            legs = build_transfer_legs(
+                uow,
+                RegisterTransferCommand(
+                    from_account_id=cmd.other_account_id if into else cmd.investment_account_id,
+                    to_account_id=cmd.investment_account_id if into else cmd.other_account_id,
+                    posted_on=cmd.posted_on,
+                    amount_cents=cmd.amount_cents,
+                    description=cmd.description,
+                    notes=cmd.notes,
+                    holding_id=cmd.holding_id,
+                ),
             )
-        )
+            uow.transactions.add_many(legs)
+            uow.commit()
+        return legs

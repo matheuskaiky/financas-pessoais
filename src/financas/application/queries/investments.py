@@ -92,6 +92,7 @@ class HoldingView:
     simple_return: float | None
     available_from: dt.date | None
     bucket: LiquidityBucket
+    return_base_cents: int | None = None  # start value + net contributions (simple return base)
 
 
 def holding_views(
@@ -131,6 +132,7 @@ def holding_views(
                 span.simple_return if span else None,
                 available,
                 bucket_for(available, today),
+                span.start_value_cents + span.net_contributions_cents if span else None,
             )
         )
     return sorted(rows, key=lambda v: (v.holding.status.value, v.holding.name))
@@ -163,9 +165,10 @@ def _holdings_account_view(account: Account, views: list[HoldingView]) -> Invest
         value = None
     spans = [v for v in views if v.yield_cents is not None]
     yield_total = sum(v.yield_cents or 0 for v in spans) if spans else None
-    base = sum(
-        (v.current_value_cents or 0) - (v.yield_cents or 0) for v in spans
-    )  # value - yield = what was put in, net of withdrawals
+    # simple return: only holdings with a positive base (a redeemed one has none left)
+    based = [v for v in spans if (v.return_base_cents or 0) > 0]
+    base = sum(v.return_base_cents or 0 for v in based)
+    based_yield = sum(v.yield_cents or 0 for v in based)
     ages = [v.age_days for v in valued if v.age_days is not None]
     last = max(
         (v.last_valuation for v in valued if v.last_valuation),
@@ -180,7 +183,7 @@ def _holdings_account_view(account: Account, views: list[HoldingView]) -> Invest
         any(v.stale for v in valued),
         sum(v.net_contributions_cents for v in spans),
         yield_total,
-        yield_total / base if yield_total is not None and base > 0 else None,
+        based_yield / base if base > 0 else None,
         None,
         tuple(views),
     )
@@ -230,9 +233,19 @@ class ListInvestments:
                         None,
                     )
                 )
-        allocation = allocate(
-            (r.account.asset_class or AssetClass.OTHER, r.current_value_cents) for r in rows
-        )
+        items: list[tuple[AssetClass, int | None]] = []
+        for r in rows:
+            account_class = r.account.asset_class or AssetClass.OTHER
+            if r.account.tracking is InvestmentTracking.HOLDINGS and r.holdings:
+                # each holding counts in its own class (a holdings-level account mixes them)
+                items.extend(
+                    (v.holding.asset_class, v.current_value_cents)
+                    for v in r.holdings
+                    if v.holding.status is HoldingStatus.ACTIVE
+                )
+            else:
+                items.append((account_class, r.current_value_cents))
+        allocation = allocate(items)
         total = allocation.total_cents
         rows = [
             replace(
@@ -418,8 +431,10 @@ class GetNetWorth:
         closed = opened = future = 0
         with self._uow as uow:
             for account in uow.accounts.list_all():
-                if account.kind is AccountKind.CREDIT_CARD or not account.is_active:
+                if account.kind is AccountKind.CREDIT_CARD:
                     continue
+                # a deactivated account still holds money: it counts when it has a balance, and
+                # is only listed as pending while it is active
                 if account.tracking is InvestmentTracking.HOLDINGS:
                     views = [
                         v
@@ -436,13 +451,15 @@ class GetNetWorth:
                 if account.kind is AccountKind.CHECKING:
                     value = balance_on(anchors, flows, today)
                     if value is None:
-                        pending.append(account)
+                        if account.is_active:
+                            pending.append(account)
                     else:
                         cash += value
                 else:
                     value = current_value(anchors, flows, today)
                     if value is None:
-                        pending.append(account)
+                        if account.is_active:
+                            pending.append(account)
                     else:
                         investments += value
             for card in card_accounts(uow):
@@ -522,8 +539,6 @@ class GetFixedIncomeOverview:
             emergency_value = 0
             marked: list[str] = []
             for account in uow.accounts.list_all():
-                if not account.is_active:
-                    continue
                 points = _points(uow.anchors.list_for_account(account.id))
                 flows = uow.transactions.movements(account.id)
                 if account.kind is AccountKind.CHECKING:
@@ -560,13 +575,21 @@ class GetFixedIncomeOverview:
         )
 
     def _average_essential(self, today: dt.date) -> int:
-        """Average monthly ``essential`` spending over the last 3 closed months."""
+        """Average monthly ``essential`` spending over the last 3 closed months.
+
+        Months before the first essential spending are not counted, so a new user's coverage is
+        not overstated by empty months.
+        """
         queries = GetSummary(self._uow)
         current = YearMonth.from_date(today)
-        total = 0
-        for back in (1, 2, 3):
+        spent: list[int] = []
+        for back in (3, 2, 1):  # oldest first
             summary = queries.execute(Period.month(current.add_months(-back)))
-            total += sum(
-                g.total_cents for g in summary.by_group if g.group is CategoryGroup.ESSENTIAL
+            spent.append(
+                sum(g.total_cents for g in summary.by_group if g.group is CategoryGroup.ESSENTIAL)
             )
-        return total // 3
+        first = next((i for i, v in enumerate(spent) if v > 0), None)
+        if first is None:
+            return 0
+        window = spent[first:]
+        return sum(window) // len(window)

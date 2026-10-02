@@ -3,7 +3,7 @@
 import datetime as dt
 from dataclasses import dataclass, replace
 
-from financas.application.queries.cards import statement_view
+from financas.application.queries.cards import is_locked, statement_view
 from financas.application.use_cases._cards import (
     assignment_for,
     ensure_statement,
@@ -17,7 +17,6 @@ from financas.domain.models import (
     CategoryKind,
     InstallmentPlan,
     Statement,
-    StatementStatus,
     Transaction,
     TransactionKind,
 )
@@ -25,7 +24,7 @@ from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork
 from financas.domain.rules import validate_card_settings
 from financas.domain.services.card_cycle import StatementAssignment, statement_dates
-from financas.domain.services.installments import build_schedule
+from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedule
 from financas.domain.services.text import clean_text, normalize_search
 
 
@@ -120,6 +119,8 @@ def _default_category_id(uow: UnitOfWork, category_id: str | None) -> str:
 
 def _build_preview(uow: UnitOfWork, cmd: CardPurchaseCommand) -> tuple[Account, PurchasePreview]:
     card = require_card(uow, cmd.account_id)
+    if not 1 <= cmd.installments <= MAX_INSTALLMENTS:
+        raise DomainError("INVALID_INSTALLMENT_COUNT", count=cmd.installments)
     if not 1 <= cmd.current_installment <= cmd.installments:
         raise DomainError(
             "INSTALLMENT_OUT_OF_RANGE", number=cmd.current_installment, count=cmd.installments
@@ -225,7 +226,7 @@ class AdjustInstallment:
             if entry.statement_id is None or entry.kind is not TransactionKind.EXPENSE:
                 raise DomainError("NOT_A_CARD_PURCHASE")
             statement = found(uow.statements.get(entry.statement_id), "statement")
-            if statement_view(uow, statement, self._clock.today()).status is StatementStatus.PAID:
+            if is_locked(statement_view(uow, statement, self._clock.today())):
                 raise DomainError("STATEMENT_ALREADY_PAID")
             uow.transactions.update_amount(transaction_id, -amount_cents)
             uow.commit()
@@ -244,10 +245,7 @@ class DeletePurchase:
             entries = uow.transactions.list_by_plan(plan_id)
             for entry in entries:
                 statement = found(uow.statements.get(entry.statement_id or ""), "statement")
-                if (
-                    statement_view(uow, statement, self._clock.today()).status
-                    is StatementStatus.PAID
-                ):
+                if is_locked(statement_view(uow, statement, self._clock.today())):
                     raise DomainError("STATEMENT_ALREADY_PAID")
             for entry in entries:
                 uow.transactions.delete(entry.id)
@@ -399,8 +397,9 @@ class SetStatementDates:
 class MoveEntryToStatement:
     """Override the statement of one card entry (the issuer behaved differently, 9.3)."""
 
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
+        self._clock = clock
 
     def execute(self, transaction_id: str, month: YearMonth) -> None:
         with self._uow as uow:
@@ -408,6 +407,12 @@ class MoveEntryToStatement:
             card = require_card(uow, entry.account_id)
             if entry.kind is TransactionKind.TRANSFER:
                 raise DomainError("NOT_A_CARD_PURCHASE")
+            if entry.statement_id is not None:
+                source = found(uow.statements.get(entry.statement_id), "statement")
+                if is_locked(statement_view(uow, source, self._clock.today())):
+                    raise DomainError("STATEMENT_ALREADY_PAID")
             statement = ensure_statement(uow, card, month)
+            if is_locked(statement_view(uow, statement, self._clock.today())):
+                raise DomainError("STATEMENT_ALREADY_PAID")
             uow.transactions.set_statement(transaction_id, statement.id)
             uow.commit()

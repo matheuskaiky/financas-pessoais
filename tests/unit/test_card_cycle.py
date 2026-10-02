@@ -105,3 +105,32 @@ def test_invalid_days_are_rejected(day: int) -> None:
     assert exc.value.code == "INVALID_CARD_DAY"
     with pytest.raises(DomainError):
         assign_statement(D(2026, 7, 1), closing_day=25, due_day=day)
+
+
+@pytest.mark.parametrize(
+    ("month", "closing_day", "due_day", "due"),
+    [
+        # February 2027 has 28 days: a due day that clamps to the 28th is not after closing
+        (YM(2027, 2), 28, 29, D(2027, 3, 29)),
+        (YM(2027, 2), 28, 30, D(2027, 3, 30)),
+        (YM(2027, 2), 28, 31, D(2027, 3, 31)),
+        (YM(2027, 2), 27, 30, D(2027, 2, 28)),  # still after closing (27th) once clamped
+        (YM(2027, 1), 28, 30, D(2027, 1, 30)),
+        (YM(2028, 2), 28, 29, D(2028, 2, 29)),  # leap year: the 29th exists
+        (YM(2027, 4), 30, 31, D(2027, 5, 31)),
+    ],
+)
+def test_due_date_is_always_after_the_closing_date(
+    month: YearMonth, closing_day: int, due_day: int, due: dt.date
+) -> None:
+    closes, got = statement_dates(month, closing_day, due_day)
+    assert got == due and got > closes
+
+
+def test_due_after_closing_for_every_day_pair_in_a_leap_and_a_common_year() -> None:
+    for year in (2027, 2028):
+        for month in range(1, 13):
+            for closing in range(1, 32):
+                for due in (1, 5, 10, 15, 20, 25, 28, 29, 30, 31):
+                    closes, got = statement_dates(YM(year, month), closing, due)
+                    assert got > closes, (year, month, closing, due)

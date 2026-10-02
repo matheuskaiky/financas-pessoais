@@ -86,7 +86,6 @@ def test_year_rollover_in_the_schedule() -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"count": 0, "first_number": 1},
         {"count": 3, "first_number": 0},
         {"count": 3, "first_number": 4},
     ],
@@ -105,3 +104,21 @@ def test_exactly_one_amount_is_required() -> None:
     with pytest.raises(DomainError) as exc:
         build_schedule(count=2, first_number=1, first_statement=YM(2026, 7), installment_cents=0)
     assert exc.value.code == "AMOUNT_NOT_POSITIVE"
+
+
+@pytest.mark.parametrize("count", [0, -1, 121, 20_000])
+def test_installment_count_is_bounded(count: int) -> None:
+    with pytest.raises(DomainError) as exc:
+        build_schedule(
+            count=count, first_number=1, first_statement=YM(2026, 7), total_cents=10_000_000
+        )
+    assert exc.value.code == "INVALID_INSTALLMENT_COUNT"
+    with pytest.raises(DomainError):
+        split_total(10_000_000, count)
+
+
+def test_the_maximum_is_accepted() -> None:
+    lines = build_schedule(
+        count=120, first_number=1, first_statement=YM(2026, 7), total_cents=12_000
+    )
+    assert len(lines) == 120 and lines[-1].statement_month == YM(2036, 6)

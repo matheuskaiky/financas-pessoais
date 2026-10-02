@@ -133,7 +133,7 @@ class SetInvestmentSettings:
                     if account.tracking is InvestmentTracking.ACCOUNT
                     else uow.holdings.list_for_account(account.id)
                 )
-                if in_use:
+                if in_use or uow.transactions.movements(account.id):
                     raise DomainError("TRACKING_IN_USE")
             account = replace(
                 account,
@@ -174,7 +174,7 @@ class CreateCategory:
 
     def execute(self, cmd: CreateCategoryCommand) -> Category:
         validate_group_kind(cmd.group, cmd.kind)
-        if cmd.monthly_budget_cents is not None and cmd.monthly_budget_cents < 0:
+        if cmd.monthly_budget_cents is not None and cmd.monthly_budget_cents <= 0:
             raise DomainError("AMOUNT_NOT_POSITIVE")
         name = _name(cmd.name)
         category = Category(
