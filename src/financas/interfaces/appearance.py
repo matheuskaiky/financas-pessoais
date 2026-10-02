@@ -7,8 +7,8 @@ from financas.domain.models import Account, Institution
 
 # Fixed palette for items without a chosen color; picked by a stable hash of the slug/id.
 DEFAULT_PALETTE = (
-    "#1E395F", "#0E6151", "#8A4B08", "#6B3FA0", "#B3261E",
-    "#00677F", "#5C6B00", "#9A3B72", "#37474F", "#7A5C00",
+    "#0F5C45", "#2F5D8C", "#8A5A00", "#6B3FA0", "#B3283C",
+    "#00677F", "#4F6B1F", "#9A3B72", "#0A2E24", "#7C4A2D",
 )  # fmt: skip
 
 

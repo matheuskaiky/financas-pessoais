@@ -126,9 +126,9 @@ _CSP = (
     "script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 )
 _GROUP_COLORS = {
-    "essential": "#1E395F",
-    "non_essential": "#6FA3C7",
-    "charges": "#B3261E",
+    "essential": "#0F5C45",
+    "non_essential": "#C9A24D",
+    "charges": "#B3283C",
     "review": "#8A5A00",
 }
 _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.REFUND)

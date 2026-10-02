@@ -49,7 +49,7 @@
 
     <section class="list-box" aria-label="Lista de lançamentos">
       {% if rows %}
-      <div class="rowhead entry-head"><span>Data</span><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
+      <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
       {% set seen = namespace(day=none) %}
       {% for t in rows %}
       {% if seen.day != t.posted_on %}{% set seen.day = t.posted_on %}<div class="day-head">{{ t.posted_on|day_label }}</div>{% endif %}
@@ -57,7 +57,7 @@
         <span class="c-date">{{ t.posted_on|date_short }}</span>
         <div class="c-desc">
           <span>{{ t.description or kind_labels[t.kind] }}</span>
-          <small><span class="m-date">{{ t.posted_on|date_short }} · </span>{{ kind_labels[t.kind] }}{% if t.is_recurring %} <span class="tag">recorrente</span>{% endif %}</small>
+          <small>{{ kind_labels[t.kind] }}{% if t.is_recurring %} <span class="tag">recorrente</span>{% endif %}</small>
         </div>
         <span class="c-cat with-dot">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
         <span class="c-acct">{% for a in accounts if a.id == t.account_id %}{{ a.nickname }}{% endfor %}</span>

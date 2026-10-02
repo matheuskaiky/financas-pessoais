@@ -8,7 +8,7 @@
 
 {% macro appearance_form(target, entity_id, color, has_image, allow_image=True) %}
 <form method="post" action="/appearance/{{ target }}/{{ entity_id }}" enctype="multipart/form-data" class="row-form">
-  <label class="field"><span>Cor</span><input type="color" name="color" value="{{ color or '#1E395F' }}"></label>
+  <label class="field"><span>Cor</span><input type="color" name="color" value="{{ color or '#0F5C45' }}"></label>
   <label class="check"><input type="checkbox" name="use_color" value="1" {{ 'checked' if color }}> Usar esta cor</label>
   {% if allow_image %}
   <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
@@ -19,7 +19,7 @@
 {% endmacro %}
 
 {% macro color_fields(name_prefix='') %}
-<label class="field"><span>Cor</span><input type="color" name="color" value="#1E395F"></label>
+<label class="field"><span>Cor</span><input type="color" name="color" value="#0F5C45"></label>
 <label class="check"><input type="checkbox" name="use_color" value="1"> Usar esta cor</label>
 {% endmacro %}
 

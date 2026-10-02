@@ -53,8 +53,6 @@
 </section>
 
 <section class="statstrip" aria-label="Totais">
-  <div><span class="label">Saldo do período</span>
-    <strong class="value {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{{ summary.balance_cents|signed }}</strong><small>Receitas − despesas líquidas</small></div>
   <div><span class="label">Despesas</span><strong class="value">{{ summary.expenses_cents|brl }}</strong>
     <small>{% if summary.refunds_cents %}Estornos à parte: {{ summary.refunds_cents|brl }} · líquido {{ summary.net_expenses_cents|brl }}{% else %}Sem estornos no período{% endif %}</small></div>
   <div><span class="label">Receitas</span><strong class="value">{{ summary.income_cents|brl }}</strong><small>Transferências não entram</small></div>
@@ -70,10 +68,10 @@
     {% if summary.by_category %}
     <div>
       <div class="stackbar" role="img" aria-label="{% for g in summary.by_group %}{{ group_labels[g.group] }} {{ g.share|percent }}{{ ', ' if not loop.last }}{% endfor %}">
-        {% for g in summary.by_group %}<span style="flex: {{ (g.share or 0) * 100 }} 1 0; background: {{ group_colors.get(g.group.value, '#A9BBCB') }}"></span>{% endfor %}
+        {% for g in summary.by_group %}<span style="flex: {{ (g.share or 0) * 100 }} 1 0; background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></span>{% endfor %}
       </div>
       <div class="legend" style="margin-top: 8px">
-        {% for g in summary.by_group %}<span><i style="background: {{ group_colors.get(g.group.value, '#A9BBCB') }}"></i>{{ group_labels[g.group] }} · {{ g.total_cents|brl }} · {{ g.share|percent }}</span>{% endfor %}
+        {% for g in summary.by_group %}<span><i style="background: {{ group_colors.get(g.group.value, '#B9C7BD') }}"></i>{{ group_labels[g.group] }} · {{ g.total_cents|brl }} · {{ g.share|percent }}</span>{% endfor %}
       </div>
     </div>
     <div class="rows">
@@ -110,8 +108,8 @@
       <div>
         <div class="stackbar" style="height: 12px; border-radius: 6px" role="img"
              aria-label="Recorrente {{ ((summary.recurring_expenses_cents / total) * 100)|round(1) }}%, variável {{ ((summary.variable_expenses_cents / total) * 100)|round(1) }}%">
-          <span style="flex: {{ summary.recurring_expenses_cents }} 1 0; background: #0E6151"></span>
-          <span style="flex: {{ summary.variable_expenses_cents }} 1 0; background: #A9BBCB"></span>
+          <span style="flex: {{ summary.recurring_expenses_cents }} 1 0; background: #0F5C45"></span>
+          <span style="flex: {{ summary.variable_expenses_cents }} 1 0; background: #B9C7BD"></span>
         </div>
         <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-top: 8px">
           <span>Recorrente · {{ summary.recurring_expenses_cents|brl }}</span><span class="soft">Variável · {{ summary.variable_expenses_cents|brl }}</span>

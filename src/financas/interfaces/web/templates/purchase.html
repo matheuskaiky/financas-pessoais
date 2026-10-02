@@ -55,7 +55,7 @@
   <section class="panel quick" aria-labelledby="h-sched">
     <h2 id="h-sched">Cronograma das parcelas</h2>
     <p class="hint" style="margin-top: -8px">Aparece ao preencher o cartão, a data e o valor.</p>
-    <div id="preview" hx-post="/cards/purchase/preview" hx-trigger="load" hx-include="#purchase" hx-target="this"></div>
+    <div id="preview" {% if form.amount %}hx-post="/cards/purchase/preview" hx-trigger="load" hx-include="#purchase" hx-target="this"{% endif %}></div>
   </section>
 </form>
 {% endif %}
