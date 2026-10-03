@@ -45,7 +45,7 @@ link-mode = "copy"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-pythonpath = ["tests"]
+pythonpath = ["tests", "scripts"]
 
 [tool.ruff]
 line-length = 100
@@ -61,7 +61,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "src/financas/infrastructure/db/migrations/versions/*" = ["E501", "I", "UP", "RUF"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
+extraPaths = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"

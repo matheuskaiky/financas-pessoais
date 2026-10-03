@@ -27,6 +27,7 @@ from financas.interfaces.formatting import (
     format_date_short,
     format_month,
 )
+from financas.interfaces.messages.csvfeed import CSV_ERROR_MESSAGES
 
 TRANSACTION_KIND_LABELS: dict[TransactionKind, str] = {
     TransactionKind.EXPENSE: "Despesa",
@@ -261,6 +262,8 @@ ERROR_MESSAGES: dict[str, str] = {
     ),
 }
 
+ERROR_MESSAGES.update(CSV_ERROR_MESSAGES)  # codes that only the CSV feed raises (13.3)
+
 FLASH_MESSAGES: dict[str, str] = {
     "entry": "Lançamento salvo.",
     "transfer": "Transferência salva.",
@@ -308,7 +311,9 @@ def render_error(error: DomainError) -> str:
     params = dict(error.params)
     if "kind" in params:
         kind = str(params["kind"])
-        if error.code in {"CATEGORY_GROUP_KIND_MISMATCH"}:
+        if kind == "balance":  # a CSV feed kind that is not a transaction kind
+            params["kind_label"] = "Saldo"
+        elif error.code in {"CATEGORY_GROUP_KIND_MISMATCH"}:
             params["kind_label"] = CATEGORY_KIND_LABELS[CategoryKind(kind)]
         else:
             params["kind_label"] = TRANSACTION_KIND_LABELS[TransactionKind(kind)]

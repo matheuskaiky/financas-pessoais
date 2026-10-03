@@ -61,6 +61,14 @@ class Container:
         upgrade_to_head(self.settings.db_url)
         return backup
 
+    def database_exists(self) -> bool:
+        """True when the SQLite file exists (an engine on a missing file would create it)."""
+        return sqlite_path(self.settings.db_url).is_file()
+
+    def needs_migration(self) -> bool:
+        """True when an existing database is behind the code (nothing is written to find out)."""
+        return needs_upgrade(self.settings.db_url)
+
     def working_copy(self, path: Path) -> "Container":
         """A container on a consistent copy of the database, for work that may be thrown away."""
         copy_database(self.settings.db_url, path)

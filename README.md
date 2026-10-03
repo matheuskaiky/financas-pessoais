@@ -242,6 +242,18 @@ uv run financas import plan "docs/Gestão Financeira.xlsx" --year 2026 --holder 
 
 O comando grava em `data/import/` (ignorado pelo git) cinco arquivos para você revisar: `contas.csv` (contas, cartões com vencimento e dias de fechamento, saldos iniciais), `categorias.csv`, `contrapartes.csv` (decisão para cada pessoa que recebeu ou enviou Pix: própria, terceiro ou categoria), `lancamentos.csv` (cada lançamento planejado, com avisos e as colunas `keep` e `category_override`) e `relatorio.txt` (só contagens e totais). Depois de editar, rode o plano de novo: as decisões são lembradas. A aplicação (`import apply`) só roda com o banco sem lançamentos, faz backup antes e troca o banco só se todas as conferências passarem.
 
+## Alimentar o banco por CSV
+
+Para lançar muitos dados de uma vez, prepare um CSV no formato do projeto e use o script (o guia completo, em inglês, está em `docs/CSV_IMPORT.md`, que fica só neste computador):
+
+```bash
+uv run python scripts/feed_from_csv.py --template > lancamentos.csv      # modelo com uma linha de exemplo por tipo
+uv run python scripts/feed_from_csv.py lancamentos.csv                   # simulação (padrão): só mostra o plano e os erros
+uv run python scripts/feed_from_csv.py lancamentos.csv --apply           # grava: backup, cópia de trabalho, conferências e só então troca o banco
+```
+
+Cobre despesas, receitas, estornos, transferências (inclusive aportes), compras e parcelamentos no cartão, pagamento de fatura e saldos informados. Contas e categorias precisam existir antes. Qualquer erro na validação cancela tudo e aponta a linha e a coluna; o mesmo arquivo não é aplicado duas vezes (confere o SHA-256). Um exemplo sintético está em `scripts/examples/entries_example.csv`. Uma opção direta no painel virá depois.
+
 ## Roadmap
 
 - [x] **Fase 0, bootstrap:** estrutura do projeto, ferramentas de qualidade, funções de dinheiro e invariantes com testes.

@@ -1,0 +1,18 @@
+# Synthetic example for docs/CSV_IMPORT.md: every kind of row. Names are made up.
+# Needs these accounts (checking: Conta Corrente, Conta Reserva; investment: Caixinha Exemplo;
+# card: Cartão Exemplo, due on day 5, closing 11 days before) and the initial categories.
+date;kind;account;to_account;amount;description;category;recurring;notes;statement;installments;installment_number;amount_type;gross_amount
+2026-09-01;despesa;Conta Corrente;;-1.250,00;Aluguel;Casa;sim;;;;;;
+05/09/2026;income;Conta Corrente;;5.000,00;Salário setembro;Salário;yes;;;;;;
+2026-09-10;expense;Conta Corrente;;R$ 89,90;Supermercado Bom Preço;supermercado;no;;;;;;
+2026-09-12;refund;Conta Corrente;;25,00;Estorno farmácia;;;;;;;;
+2026-09-15;transfer;Conta Corrente;Conta Reserva;300,00;Para a reserva;;;;;;;;
+2026-09-16;transfer;Conta Corrente;Caixinha Exemplo;1.000,00;Aporte mensal;;;;;;;;
+2026-08-20;expense;Cartão Exemplo;;150,00;Livraria;Compras;;;;;;;
+2026-09-10;expense;Cartão Exemplo;;39,90;Streaming;Assinaturas;sim;;;;;;
+2026-08-26;expense;Cartão Exemplo;;301,00;Fone de ouvido;Compras;;compra em 3x;;3;;total;
+2026-03-10;expense;Cartão Exemplo;;350,00;Curso online;Educação;;parcela 4 de 10;2026-09;10;4;installment;
+2026-09-12;refund;Cartão Exemplo;;20,00;Estorno loja;;;;;;;;
+05/09/2026;transfer;Conta Corrente;Cartão Exemplo;150,00;;;;;2026-08;;;;
+2026-09-30;saldo;Conta Corrente;;3.456,78;Conferência com o extrato;;;;;;;;
+2026-09-30;balance;Caixinha Exemplo;;1.012,34;;;;;;;;;1.020,00
