@@ -1,0 +1,76 @@
+{#-
+  patrimonio.html — macro Jinja2 da ilha <fp-patrimonio>.
+
+  Uso (em qualquer template):
+
+      {% from "patrimonio.html" import patrimonio %}
+      {{ patrimonio(points=serie,
+                    badge="parcial",
+                    footnote="Parcial: investimentos mais caixa, menos as faturas já fechadas.",
+                    empty_href=url_for("novo_saldo")) }}
+
+  `serie` é uma lista de pares [data ISO, centavos inteiros], em qualquer ordem (o componente ordena):
+
+      serie = [[d.isoformat(), cents] for d, cents in rows]      # nunca float, nunca reais
+
+  Duas formas de entregar os dados:
+    · points=…  → o JSON vai DENTRO do elemento (sem requisição extra; ideal para séries pequenas, como as de lançamento manual);
+    · src="/api/patrimonio" → o componente busca na mesma origem (só mesma origem; qualquer outra é bloqueada).
+
+  O que o servidor renderiza antes do JavaScript ligar (e que o componente troca ao subir):
+    · o último saldo em texto, para quem tem JavaScript desligado ou a página ainda carregando;
+    · a caixa já na altura final (regra `fp-patrimonio:not(:defined)` do fp-patrimonio.css): zero salto de layout.
+
+  Moeda: o saldo que o servidor escreve sai pelo filtro `money` (fp_money.py), com símbolo, separadores e posição da divisa em
+  vigor: nenhum "R$" fica escrito aqui. Requer `fp_money.install(templates.env)` uma vez, ao subir o app. No navegador a ilha lê o
+  mesmo `window.APP_CONFIG`, que o fp-money.js lê deste bloco de dados no <head> do base.html (não executa, vale com CSP estrita):
+      <script type="application/json" id="app-config">{{ config.client | tojson }}</script>
+
+  Modo privacidade (opcional): `private="networth"` põe o patrimônio no grupo «Saldo do patrimônio» do modo privacidade
+  (fp-privacy.js + tokens.css). O valor que o servidor escreve já sai com data-private, então não há lampejo do número nítido
+  antes da ilha subir; a ilha marca o número, o sinal, a variação, o tooltip e os rótulos do eixo, e vira ponto de espiada
+  (passar o mouse, focar ou segurar revela o cartão inteiro). Sem `private`, o HTML é exatamente o de sempre.
+      {{ patrimonio(points=serie, private="networth") }}
+
+  Segurança: com autoescape ligado (padrão do Jinja2Templates do FastAPI para .html) os atributos saem escapados, e o filtro
+  `tojson` escapa <, > e & dentro do <script>, então o JSON não consegue fechar a tag. Esse <script> é um bloco de DADOS
+  (type="application/json"): a política de segurança de conteúdo (CSP) não o executa nem o bloqueia.
+-#}
+
+{%- macro _data(iso) -%}
+  {%- set meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"] -%}
+  {%- set p = iso.split("-") -%}
+  {{- "%02d" | format(p[2] | int) }} {{ meses[(p[1] | int) - 1] }} {{ p[0] -}}
+{%- endmacro -%}
+
+{%- macro patrimonio(
+      points=None, src=None, heading="Patrimônio", badge=None, footnote=None, range="1A",
+      plot_height=236, min_points=8, empty_href=None, empty_label=None, status="ready", id=None, private=None
+) -%}
+<fp-patrimonio
+  {%- if id %} id="{{ id }}"{% endif %}
+  heading="{{ heading }}"
+  {%- if badge %} badge="{{ badge }}"{% endif %}
+  {%- if footnote %} footnote="{{ footnote }}"{% endif %}
+  range="{{ range }}"
+  {%- if plot_height != 236 %} plot-height="{{ plot_height }}"{% endif %}
+  {%- if min_points != 8 %} min-points="{{ min_points }}"{% endif %}
+  {%- if empty_href %} empty-href="{{ empty_href }}"{% endif %}
+  {%- if empty_label %} empty-label="{{ empty_label }}"{% endif %}
+  {%- if src %} src="{{ src }}"{% endif %}
+  {%- if status == "loading" %} status="loading"{% endif %}
+  {%- if private %} private="{{ private }}"{% endif %}>
+  {%- if points is not none and not src %}
+  <script type="application/json">{{ {"points": points} | tojson }}</script>
+  {%- endif %}
+  <div class="fp-ssr">
+    <p class="fp-ssr-t overline">{{ heading }}{% if badge %} <span class="fp-badge">{{ badge }}</span>{% endif %}</p>
+    {%- if points %}
+    {%- set ultimo = (points | sort(attribute=0))[-1] %}
+    <p class="fp-ssr-v display">{% if private %}{{ ultimo[1] | money(size="display", private=private) }}{% else %}{{ ultimo[1] | money(size="display") }}{% endif %}</p>
+    <p class="fp-ssr-w">em {{ _data(ultimo[0]) }}</p>
+    {%- endif %}
+    <noscript><p class="fp-ssr-n">O gráfico precisa de JavaScript.{% if points %} O saldo acima é o último registro.{% endif %}</p></noscript>
+  </div>
+</fp-patrimonio>
+{%- endmacro %}

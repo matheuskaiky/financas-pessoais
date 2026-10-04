@@ -17,16 +17,16 @@
   <div class="inv-hero-row">
     <div class="inv-total">
       <span class="label">Total investido</span>
-      <div class="amount">{{ odometer(overview.total_cents, size='clamp(46px, 7vw, 76px)', dark=True) }}</div>
+      <div class="amount">{{ odometer(overview.total_cents, size='clamp(46px, 7vw, 76px)', dark=True, private="investments") }}</div>
       {% if overview.pending or overview.pending_holdings %}<span class="pill warn" style="align-self: flex-start">Parcial · {{ overview.pending|length + overview.pending_holdings|length }} pendente(s)</span>
       {% else %}<small class="on-dark">Soma dos valores líquidos</small>{% endif %}
     </div>
     <dl class="inv-figs">
-      <div><dt>Aportes líquidos em {{ year }}</dt><dd><span class="fig-d">{{ year_totals.net_contributions_cents|brl }}</span><small class="on-dark">aportes − resgates</small></dd></div>
+      <div><dt>Aportes líquidos em {{ year }}</dt><dd><span class="fig-d">{{ year_totals.net_contributions_cents|money(private="investments") }}</span><small class="on-dark">aportes − resgates</small></dd></div>
       <div><dt>Rendimento capitalizado em {{ year }}</dt>
         {% if year_totals.capitalized_yield_cents is none %}<dd><span class="fig-d">—</span><small class="on-dark">Sem duas avaliações para comparar</small></dd>
-        {% else %}<dd><span class="fig-d {{ 'gold' if year_totals.capitalized_yield_cents >= 0 else 'neg' }}">{{ year_totals.capitalized_yield_cents|signed }}</span><small class="on-dark">retorno simples {{ year_totals.simple_return|percent }} · não é renda</small></dd>{% endif %}</div>
-      <div><dt>Distribuições pagas na conta ({{ month_name }})</dt><dd><span class="fig-d">{{ month_totals.distributions_cents|brl }}</span><small class="on-dark">entram como renda em “Rendimentos”</small></dd></div>
+        {% else %}<dd><span class="fig-d {{ 'gold' if year_totals.capitalized_yield_cents >= 0 else 'neg' }}">{{ year_totals.capitalized_yield_cents|money(sign="always", private="investments") }}</span><small class="on-dark">retorno simples {{ year_totals.simple_return|percent }} · não é renda</small></dd>{% endif %}</div>
+      <div><dt>Distribuições pagas na conta ({{ month_name }})</dt><dd><span class="fig-d">{{ month_totals.distributions_cents|money(private="investments") }}</span><small class="on-dark">entram como renda em “Rendimentos”</small></dd></div>
     </dl>
   </div>
   <div class="inv-alloc" aria-labelledby="h-alloc">
@@ -36,7 +36,7 @@
       {% for r in overview.allocation.rows %}<span style="flex: {{ r.share * 100 }} 1 0; background: {{ palette[loop.index0 % 5] }}"></span>{% endfor %}
     </div>
     <ul class="legend-d">
-      {% for r in overview.allocation.rows %}<li><span class="dot" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true"></span>{{ asset_labels[r.asset_class] }} · <strong>{{ r.value_cents|brl }}</strong> · {{ r.share|percent }}</li>{% endfor %}
+      {% for r in overview.allocation.rows %}<li><span class="dot" style="background: {{ palette[loop.index0 % 5] }}" aria-hidden="true"></span>{{ asset_labels[r.asset_class] }} · <strong>{{ r.value_cents|money(private="investments") }}</strong> · {{ r.share|percent }}</li>{% endfor %}
       {% if overview.allocation.pending_count %}<li class="pend"><span class="dot hollow" aria-hidden="true"></span>{{ overview.allocation.pending_count }} conta(s) sem avaliação ficam de fora</li>{% endif %}
     </ul>
     {% else %}<p class="on-dark">Alocação por classe: sem avaliações ainda.</p>{% endif %}
@@ -54,9 +54,9 @@
       <tr>
         <td><span class="with-avatar">{{ avatar(account_looks[v.account.id], 36) }}<span><strong>{{ v.account.nickname }}</strong><br>
           <small>{{ institutions[v.account.institution_id].name }} · {{ asset_labels[v.account.asset_class] }} · {{ tracking_labels[v.account.tracking] }}{% if v.account.is_emergency_fund %} · reserva{% endif %}</small></span></span></td>
-        <td class="num" data-label="Valor atual">{% if v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% endif %}</td>
-        <td class="num" data-label="Aportes líq.">{{ v.net_contributions_cents|brl if v.last_valuation else '—' }}</td>
-        <td class="num {{ 'pos' if v.yield_cents and v.yield_cents > 0 else ('neg' if v.yield_cents and v.yield_cents < 0 else '') }}" data-label="Rendimento">{{ v.yield_cents|signed if v.yield_cents is not none else '—' }}</td>
+        <td class="num" data-label="Valor atual">{% if v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ v.current_value_cents|money(private="investments") }}</strong>{% endif %}</td>
+        <td class="num" data-label="Aportes líq.">{{ v.net_contributions_cents|money(private="investments") if v.last_valuation else '—' }}</td>
+        <td class="num {{ 'pos' if v.yield_cents and v.yield_cents > 0 else ('neg' if v.yield_cents and v.yield_cents < 0 else '') }}" data-label="Rendimento">{{ v.yield_cents|money(sign="always", private="investments") if v.yield_cents is not none else '—' }}</td>
         <td class="num" data-label="Retorno">{% if v.yield_cents is none %}—{% else %}{{ delta_chip(v.simple_return|percent, 'pos' if v.yield_cents >= 0 else 'neg', 'up' if v.yield_cents >= 0 else 'down') }}{% endif %}</td>
         <td class="num" data-label="%">{{ v.share|percent }}</td>
         <td data-label="Avaliação">{% if v.age_days is none %}<span class="pill grey">Sem avaliação</span>
@@ -90,8 +90,8 @@
         <label class="field"><span>Conta</span>
           <select name="account_id" data-valuation-account>{% for a in account_level %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
         <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
-        <label class="field"><span>Valor líquido</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="net" inputmode="decimal" placeholder="0,00" required></span></label>
-        <label class="field"><span>Valor bruto (opcional)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="gross" inputmode="decimal" placeholder="0,00"></span></label>
+        <label class="field"><span>Valor líquido</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="net" inputmode="decimal" placeholder="0,00" required></span></label>
+        <label class="field"><span>Valor bruto (opcional)</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="gross" inputmode="decimal" placeholder="0,00"></span></label>
         <label class="field wide"><span>Observação</span><input type="text" name="note"></label>
         <button type="submit">Salvar avaliação</button>
       </form>
@@ -121,7 +121,7 @@
           {% set same = checking_accounts|selectattr('institution_id', 'equalto', investment_accounts[0].institution_id)|list %}
           <select name="other_account_id" data-flow-other><option value="">Conta não controlada</option>
             {% for a in checking_accounts %}<option value="{{ a.id }}" data-institution="{{ a.institution_id }}" {{ 'selected' if same|length == 1 and a.id == same[0].id }}>{{ a.nickname }}</option>{% endfor %}</select></label>
-        <label class="field"><span>Valor</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required></span></label>
+        <label class="field"><span>Valor</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required></span></label>
         <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
         <button type="submit">Registrar</button>
       </form>
@@ -143,8 +143,8 @@
       <small>Apoio ao IRPF (“Bens e Direitos”). O sistema não calcula imposto.</small>
       <ul class="ledger-list">
         {% for r in position.rows %}<li><span>{{ r.account.nickname }}</span><i aria-hidden="true"></i>
-          <span class="v">{% if r.value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ r.value_cents|brl }}</strong>{% if r.yield_cents is not none %} <small>· rendimento {{ r.yield_cents|signed }}</small>{% endif %}{% endif %}</span></li>{% endfor %}
-        <li class="total"><strong>Total</strong><i aria-hidden="true"></i><strong class="v">{{ position.total_cents|brl }}</strong></li>
+          <span class="v">{% if r.value_cents is none %}<span class="pill grey">Sem avaliação</span>{% else %}<strong>{{ r.value_cents|money(private="investments") }}</strong>{% if r.yield_cents is not none %} <small>· rendimento {{ r.yield_cents|money(sign="always", private="investments") }}</small>{% endif %}{% endif %}</span></li>{% endfor %}
+        <li class="total"><strong>Total</strong><i aria-hidden="true"></i><strong class="v">{{ position.total_cents|money(private="investments") }}</strong></li>
       </ul>
       {% if position.pending %}<span class="pill warn" style="align-self: flex-start">Parcial · {{ position.pending|length }} sem avaliação</span>{% endif %}
     </section>
@@ -173,14 +173,14 @@
         <td data-label="FGC">{% if h.fgc_covered %}<span class="ok-mark"><span aria-hidden="true">✓</span> coberto</span>{% else %}não{% endif %}</td>
         <td class="num" data-label="Valor líquido">{% if h.status.value == 'redeemed' %}<span class="pill grey">Resgatada</span>
           {% elif v.current_value_cents is none %}<span class="pill grey">Sem avaliação</span>
-          {% else %}<strong>{{ v.current_value_cents|brl }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|signed }}</small>{% endif %}{% endif %}</td>
+          {% else %}<strong>{{ v.current_value_cents|money(private="investments") }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|money(sign="always", private="investments") }}</small>{% endif %}{% endif %}</td>
         <td data-label="Avaliação">{% if h.status.value == 'active' %}
           {% if v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>{% elif v.age_days is not none %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
           <details><summary>Avaliar</summary>
             <form method="post" action="/investments/holdings/{{ h.id }}/valuation" class="row-form">
               <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
-              <label class="field"><span>Líquido</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="net" inputmode="decimal" required></span></label>
-              <label class="field"><span>Bruto (opcional)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="gross" inputmode="decimal"></span></label>
+              <label class="field"><span>Líquido</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="net" inputmode="decimal" required></span></label>
+              <label class="field"><span>Bruto (opcional)</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="gross" inputmode="decimal"></span></label>
               <button type="submit" class="secondary">Salvar</button></form></details>
           <details><summary>Marcas</summary>
             <form method="post" action="/investments/holdings/{{ h.id }}/flags" class="row-form">
@@ -190,7 +190,7 @@
           <details><summary>Resgatar tudo</summary>
             <form method="post" action="/investments/holdings/{{ h.id }}/redeem" class="row-form" data-confirm="A aplicação será marcada como resgatada e deixa de contar nos totais." data-confirm-title="Resgatar aplicação" data-confirm-ok="Resgatar">
               <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
-              <label class="field"><span>Valor líquido recebido</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" required></span></label>
+              <label class="field"><span>Valor líquido recebido</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" required></span></label>
               <label class="field"><span>Conta que recebeu</span>
                 <select name="to_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
               <button type="submit" class="secondary">Resgatar</button></form></details>
@@ -213,7 +213,7 @@
       <label class="field"><span>Emissor</span>
         <select name="issuer_id">{% for i in issuers %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
       <label class="field"><span>Data da aplicação</span><input type="date" name="applied_on" value="{{ today }}" required></label>
-      <label class="field"><span>Valor aplicado</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="principal" inputmode="decimal" placeholder="0,00" required></span></label>
+      <label class="field"><span>Valor aplicado</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="principal" inputmode="decimal" placeholder="0,00" required></span></label>
       <label class="field"><span>Liquidez</span>
         <select name="liquidity">{% for l in liquidities %}<option value="{{ l.value }}">{{ liquidity_labels[l] }}</option>{% endfor %}</select></label>
       <label class="field"><span>Vencimento</span><input type="date" name="maturity_on"><small>Obrigatório com liquidez no vencimento</small></label>
@@ -245,14 +245,14 @@
       <header><h2 id="h-ladder">Escada de vencimentos</h2>{% if fixed.ladder|length > 1 %}<small>{{ fixed.ladder[0].month|month_short }} a {{ fixed.ladder[-1].month|month_short }}</small>{% endif %}</header>
       {% if fixed.ladder %}
       {% set top = fixed.ladder|map(attribute='value_cents')|max %}
-      <ul class="hbars">{% for r in fixed.ladder %}<li><span class="hb-l">{{ r.month|month_short }}</span><span class="hb-t"><i style="width: {{ [(r.value_cents * 100 / top)|round|int if top else 0, 3]|max }}%"></i></span><strong class="hb-v">{{ r.value_cents|brl }}</strong></li>{% endfor %}</ul>
+      <ul class="hbars">{% for r in fixed.ladder %}<li><span class="hb-l">{{ r.month|month_short }}</span><span class="hb-t"><i style="width: {{ [(r.value_cents * 100 / top)|round|int if top else 0, 3]|max }}%"></i></span><strong class="hb-v">{{ r.value_cents|money(private="investments") }}</strong></li>{% endfor %}</ul>
       {% else %}{{ state_empty('Nenhuma aplicação avaliada com vencimento.', 'A escada aparece quando uma aplicação com vencimento tem avaliação.', icon='calendar') }}{% endif %}
       <small>Títulos marcados a mercado podem valer menos que a curva contratada; o sistema não projeta valor no vencimento.</small>
     </section>
     <section class="panel" aria-labelledby="h-liq">
       <h2 id="h-liq">Liquidez</h2>
       {% set liq_top = fixed.liquidity|map(attribute='value_cents')|max %}
-      <ul class="meters">{% for r in fixed.liquidity %}<li><span class="m-top"><span>{{ bucket_labels[r.bucket] }}</span><strong>{{ r.value_cents|brl }}</strong></span><span class="m-track"><i class="{{ 'now' if loop.first else ('later' if loop.last else 'mid') }}" style="width: {{ [(r.value_cents * 100 / liq_top)|round|int if liq_top else 0, 0]|max }}%"></i></span></li>{% endfor %}</ul>
+      <ul class="meters">{% for r in fixed.liquidity %}<li><span class="m-top"><span>{{ bucket_labels[r.bucket] }}</span><strong>{{ r.value_cents|money(private="investments") }}</strong></span><span class="m-track"><i class="{{ 'now' if loop.first else ('later' if loop.last else 'mid') }}" style="width: {{ [(r.value_cents * 100 / liq_top)|round|int if liq_top else 0, 0]|max }}%"></i></span></li>{% endfor %}</ul>
       <small>Só aplicações com avaliação. Faixas: hoje, até 30, 90, 180 e 365 dias, e mais tarde.</small>
     </section>
   </div>
@@ -262,9 +262,9 @@
       {% if fixed.fgc %}
       <ul class="fgc-list">
         {% for r in fixed.fgc %}<li><span class="fgc-top"><span class="soft">Grupo</span><strong>{{ r.group }}</strong></span>
-          <span class="fig-sm">{{ r.exposure_cents|brl }}</span>
+          <span class="fig-sm">{{ r.exposure_cents|money(private="investments") }}</span>
           {{ stroke_gauge(r.percent_of_limit, height=12, mark=False, label='Exposição de ' ~ ((r.percent_of_limit / 100)|percent) ~ ' do limite' ~ (', acima do limite' if r.exceeded else '')) }}
-          <small>{{ (r.percent_of_limit / 100)|percent }} de {{ r.limit_cents|brl }} · aplicações cobertas {{ r.covered_holdings_cents|brl }} + conta corrente {{ r.checking_cents|brl }}</small>
+          <small>{{ (r.percent_of_limit / 100)|percent }} de {{ r.limit_cents|money(private="cards") }} · aplicações cobertas {{ r.covered_holdings_cents|money(private="investments") }} + conta corrente {{ r.checking_cents|money(private="investments") }}</small>
           {% if r.exceeded %}<span class="pill warn">Acima do limite</span>{% endif %}</li>{% endfor %}
       </ul>
       {% else %}{{ state_empty('Nenhuma aplicação coberta com avaliação.', 'A exposição soma as aplicações cobertas e a conta corrente de cada grupo de instituições.', icon='inbox') }}{% endif %}
@@ -276,7 +276,7 @@
       {% if fixed.emergency.months is none %}<span class="fig-big">—</span><span class="soft">Sem gasto essencial nos últimos 3 meses fechados para comparar.</span>
       {% else %}<span class="fig-big">{{ '%.1f'|format(fixed.emergency.months)|replace('.', ',') }} <small>meses</small></span>
       <div class="plan-steps emg" role="img" aria-label="{{ '%.1f'|format(fixed.emergency.months)|replace('.', ',') }} de 12 meses">{% for i in range(12) %}<i class="{{ 'paid' if i < fixed.emergency.months|int else '' }}"></i>{% endfor %}</div>{% endif %}
-      <span class="soft">{{ fixed.emergency.value_cents|brl }} marcados como reserva ÷ gasto essencial médio dos últimos 3 meses fechados ({{ fixed.emergency.average_essential_cents|brl }}).</span>
+      <span class="soft">{{ fixed.emergency.value_cents|money(private="investments") }} marcados como reserva ÷ gasto essencial médio dos últimos 3 meses fechados ({{ fixed.emergency.average_essential_cents|money(private="investments") }}).</span>
       <small>{{ fixed.emergency.items|join(', ') }}</small>
       {% else %}{{ state_empty('Sem reserva de emergência marcada', 'Marque aplicações ou contas como reserva de emergência para ver a cobertura.', icon='inbox') }}{% endif %}
     </section>

@@ -2,6 +2,14 @@
 {% block title %}Mais{% endblock %}
 {% block content %}
 <header class="page-head"><div><span class="eyebrow">Menu</span><h1>Mais</h1><p>Tudo o que não cabe na barra de abas</p></div></header>
+{#- Privacy mode controls for phones (the sidebar, where the eye lives on desktop, is hidden below 1100 px). -#}
+<section class="panel more-privacy" aria-label="Privacidade">
+  <span class="eyebrow">Privacidade</span>
+  <div class="more-privacy-row">
+    {% include "snippets/privacy-eye-toggle.html" %}
+    <small>Desfoca os valores na tela. Só neste navegador.</small>
+  </div>
+</section>
 {#- Data-driven: every registered page that is not one of the tab pages (financas/interfaces/web/nav.py). -#}
 {% for group in nav_more_groups(assistant_enabled) %}
 <section class="panel" aria-label="{{ group.label or 'Outras páginas' }}">

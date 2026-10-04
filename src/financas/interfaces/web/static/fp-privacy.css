@@ -1,0 +1,68 @@
+/* fp-privacy.css — controls of the privacy mode: eye toggle, gear, settings sheet. Needs tokens.css. Markup: templates/macros/privacidade.html */
+/* fp-privacy: controls · eye (global toggle) + gear (settings) in one grouped control for the top bar */
+.fp-priv{position:relative;display:inline-flex;align-items:center;flex:none;box-sizing:border-box;padding:0 4px;border-radius:16px;background:var(--solid-1);border:1px solid var(--line);box-shadow:var(--sh-1)}
+.fp-priv-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:44px;height:44px;margin:0;padding:0;border:0;border-radius:12px;background:transparent;color:var(--text-secondary);font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background-color var(--privacy-ms) ease,color var(--privacy-ms) ease,box-shadow var(--privacy-ms) ease}
+.fp-priv-btn:hover{background:var(--fill-3);color:var(--text-primary)}
+.fp-priv-btn svg{display:block;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.fp-priv-eye{color:var(--text-primary)}
+.fp-priv-eye svg{position:absolute;inset:0;margin:auto;transition:opacity var(--privacy-ms) ease,transform var(--d-ui) var(--sp-ui)}
+.fp-priv-eye .icon-eye-off{opacity:0;transform:scale(.78)}
+/* masked = data-state="masked" (set by fp-privacy.js) OR a data-privacy-mask ancestor (already written in <head>, so the icon never flashes on load) */
+.fp-priv-eye[data-state="masked"] .icon-eye,[data-privacy-mask] .fp-priv-eye .icon-eye{opacity:0;transform:scale(.78)}
+.fp-priv-eye[data-state="masked"] .icon-eye-off,[data-privacy-mask] .fp-priv-eye .icon-eye-off{opacity:1;transform:none}
+.fp-priv-eye[data-state="masked"],[data-privacy-mask] .fp-priv-eye{color:var(--accent);background:var(--fill-1);box-shadow:inset 0 0 0 1px var(--accent)}
+.fp-priv-gear svg{width:20px;height:20px}
+.fp-priv-gear::before{content:"";position:absolute;left:-2px;top:12px;bottom:12px;width:1px;background:var(--line)}
+.fp-priv-tip{position:absolute;top:calc(100% + 10px);left:50%;z-index:var(--z-pop);box-sizing:border-box;display:inline-flex;align-items:center;gap:8px;padding:6px 8px 6px 11px;border-radius:10px;border:1px solid var(--glass-line);background:var(--tip-bg);-webkit-backdrop-filter:saturate(180%) blur(14px);backdrop-filter:saturate(180%) blur(14px);box-shadow:var(--tip-sh);color:var(--text-primary);font-size:12.5px;font-weight:500;line-height:1.2;white-space:nowrap;opacity:0;transform:translate(-50%,-3px);pointer-events:none;transition:opacity .14s ease,transform .14s ease}
+.fp-priv-gear>.fp-priv-tip{left:auto;right:-4px;transform:translate(0,-3px)}
+.fp-priv-btn:is(:hover,:focus-visible)>.fp-priv-tip{opacity:1;transform:translate(-50%,0);transition-delay:.4s}
+.fp-priv-gear:is(:hover,:focus-visible)>.fp-priv-tip{transform:translate(0,0)}
+.fp-priv-kbd{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;box-sizing:border-box;border-radius:6px;background:var(--fill-3);color:var(--text-secondary);font:600 11px/1 var(--sans);letter-spacing:.02em;vertical-align:middle}
+
+/* fp-privacy: settings sheet · level-2 surface (white 9 % + blur on dark). <dialog class="fp-priv-panel fp-priv-dialog"> on pages, <section class="fp-priv-panel"> on boards */
+.fp-priv-panel{box-sizing:border-box;color:var(--text-primary);background:linear-gradient(var(--surface-2),var(--surface-2)) var(--under-2);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border:1px solid var(--glass-line);border-radius:22px;box-shadow:var(--sh-3);font-family:var(--sans);font-variant-numeric:lining-nums tabular-nums;overflow:hidden}
+dialog.fp-priv-dialog{position:fixed;inset:0;margin:auto;padding:0;width:min(480px,calc(100vw - 32px));max-width:none;height:fit-content;max-height:min(calc(100dvh - 32px),780px)}
+dialog.fp-priv-dialog[open]{display:flex;flex-direction:column}
+dialog.fp-priv-dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%)}
+dialog.fp-priv-dialog{opacity:0;transform:translateY(14px) scale(.975);transition:opacity .2s ease,transform var(--d-ui) var(--sp-ui),overlay .2s allow-discrete,display .2s allow-discrete}
+dialog.fp-priv-dialog[open]{opacity:1;transform:none}
+dialog.fp-priv-dialog::backdrop{opacity:0;transition:opacity .2s ease,overlay .2s allow-discrete,display .2s allow-discrete}
+dialog.fp-priv-dialog[open]::backdrop{opacity:1}
+@starting-style{dialog.fp-priv-dialog[open]{opacity:0;transform:translateY(14px) scale(.975)}dialog.fp-priv-dialog[open]::backdrop{opacity:0}}
+.fp-priv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px 14px 0 28px}
+.fp-priv-title{margin:0;font-family:var(--serif);font-size:26px;font-weight:400;letter-spacing:var(--track-title);line-height:1.15;color:var(--text-primary)}
+.fp-priv-sub{margin:8px 0 0;font-size:13.5px;line-height:1.5;color:var(--text-secondary);text-wrap:pretty}
+.fp-priv-x{flex:none}
+.fp-priv-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 16px 8px}
+.fp-priv-label{margin:16px 12px 4px;font-size:11px;font-weight:600;letter-spacing:var(--track-label);text-transform:uppercase;color:var(--text-secondary)}
+.fp-priv-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
+.fp-priv-row,.fp-priv-switch{position:relative;display:flex;align-items:center;gap:14px;box-sizing:border-box;width:100%;min-height:60px;margin:0;padding:10px 12px;border:0;border-radius:14px;background:transparent;color:var(--text-primary);font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background-color .16s var(--ease)}
+.fp-priv-row:hover,.fp-priv-switch:hover{background:var(--fill-1)}
+.fp-priv-check{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.fp-priv-box{flex:none;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:24px;height:24px;border-radius:8px;border:1.5px solid var(--line-3);background:transparent;transition:background-color var(--privacy-ms) ease,border-color var(--privacy-ms) ease,box-shadow var(--privacy-ms) ease}
+.fp-priv-box svg{width:14px;height:14px;fill:none;stroke:var(--on-accent);stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:16;stroke-dashoffset:16;transition:stroke-dashoffset var(--d-ui) var(--sp-ui)}
+.fp-priv-check:checked+.fp-priv-box,.fp-priv-box[data-on="true"]{background:var(--accent);border-color:var(--accent)}
+.fp-priv-check:checked+.fp-priv-box svg,.fp-priv-box[data-on="true"] svg{stroke-dashoffset:0}
+.fp-priv-check:focus-visible+.fp-priv-box{outline:2px solid var(--ring);outline-offset:3px}
+.fp-priv-text{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.fp-priv-name{font-size:15px;font-weight:500;line-height:1.3;color:var(--text-primary)}
+.fp-priv-help{font-size:12.5px;line-height:1.4;color:var(--text-secondary)}
+.fp-priv-sample{flex:none;font-size:14px;font-weight:500;color:var(--text-primary)}
+.fp-priv-switch:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.fp-priv-track{position:relative;flex:none;display:block;width:51px;height:31px;border-radius:999px;background:var(--fill-4);box-shadow:inset 0 0 0 1px var(--line);transition:background-color var(--d-ui) var(--sp-ui)}
+.fp-priv-track i{position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--solid-1);box-shadow:0 0 0 .5px var(--line-2),0 2px 4px rgba(var(--sh-ink),.22),0 1px 1px rgba(var(--sh-ink),.12);transition:transform var(--d-ui) var(--sp-ui),width var(--d-press) var(--sp-press)}
+.fp-priv-switch[aria-checked="true"] .fp-priv-track{background:var(--accent)}
+.fp-priv-switch[aria-checked="true"] .fp-priv-track i{transform:translateX(20px)}
+.fp-priv-switch:active .fp-priv-track i{width:33px}
+.fp-priv-switch[aria-checked="true"]:active .fp-priv-track i{transform:translateX(14px)}
+.fp-priv-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 24px calc(20px + env(safe-area-inset-bottom,0px)) 28px;border-top:1px solid var(--line)}
+.fp-priv-note{flex:1 1 100%;margin:0;font-size:12.5px;line-height:1.4;color:var(--text-tertiary)}
+.fp-priv-btn-primary{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:48px;padding:0 28px;border:0;border-radius:12px;background:var(--accent);color:var(--on-accent);font:600 15px/1 var(--sans);cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.14),0 1px 2px rgba(var(--sh-ink),.2),0 6px 14px -6px rgba(var(--sh-accent),.45)}
+.fp-priv-btn-quiet{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:var(--accent);font:600 14px/1 var(--sans);cursor:pointer}
+.fp-priv-btn-quiet:hover{background:var(--fill-1)}
+@media (max-width:640px){
+dialog.fp-priv-dialog{inset:auto 0 0 0;margin:0;width:100%;max-height:calc(100dvh - 24px);border-radius:22px 22px 0 0;transform:translateY(40px)}
+.fp-priv-head{padding-top:22px}
+.fp-priv-foot{padding-left:24px}
+}
+.fp-priv-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}

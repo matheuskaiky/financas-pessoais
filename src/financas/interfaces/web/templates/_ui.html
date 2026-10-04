@@ -16,14 +16,15 @@
 {#- Rolling-digit figure. ``cents`` is an int; the server prints the final digits and the CSS rolls them
     from 0 on load (``flat`` turns that off). ``size``: px number or any CSS length ("clamp(54px,9vw,84px)").
     ``dark``: on a dark panel (gold "R$", light cents). ``prefix=False`` hides "R$" (tables).
+    ``private``: privacy group (networth, accounts, investments, cards, transactions); the figure blurs when the mode is on.
     ``static/ui.js``: ``FinUI.odometer.set(el, cents)`` rolls an existing odometer to a new value. -#}
-{% macro odometer(cents, size=56, dark=False, prefix=True, delay=0, flat=False) %}
+{% macro odometer(cents, size=56, dark=False, prefix=True, delay=0, flat=False, private=None) %}
 {%- set sign, whole, frac = cents|money_parts -%}
 {%- set text = whole ~ ',' ~ frac -%}
 {%- set px = (size ~ 'px') if size is number else size -%}
 {%- set scale = ' od-sm' if (size is number and size < 24) else (' od-md' if (size is number and size < 40) else '') -%}
 {%- set ns = namespace(n=0, tail=false) -%}
-<span class="od{{ scale }}{{ ' od-dark' if dark }}{{ ' od-flat' if flat }}" role="img" aria-label="{{ cents|brl if prefix else (sign ~ text) }}" data-odometer="{{ cents }}" data-od-prefix="{{ 1 if prefix else 0 }}" style="--od-size: {{ px }}">
+<span class="od{{ scale }}{{ ' od-dark' if dark }}{{ ' od-flat' if flat }}" role="img" aria-label="{{ cents|brl if prefix else (sign ~ text) }}" data-odometer="{{ cents }}"{% if private %} data-private="{{ private }}"{% endif %} data-od-prefix="{{ 1 if prefix else 0 }}" style="--od-size: {{ px }}">
   {%- if sign %}<span class="od-sign" aria-hidden="true">−</span>{% endif -%}
   {%- if prefix %}<span class="od-cur" aria-hidden="true">R$</span>{% endif -%}
   {%- for ch in text -%}
@@ -59,9 +60,10 @@
 {%- endmacro %}
 
 {#- Change chip. ``tone``: pos | neg | warn | neu (colors in tokens.css); ``direction``: 'up' | 'down' | none
-    (draws the arrow). The sign belongs in ``text`` ("+67,42 vs agosto"): color is never the only signal. -#}
-{% macro delta_chip(text, tone='neu', direction=None) -%}
-<span class="dl dl-chip dl-{{ tone }}{{ ' dl-up' if direction == 'up' }}{{ ' dl-dn' if direction == 'down' }}">{{ text }}</span>
+    (draws the arrow). The sign belongs in ``text`` ("+67,42 vs agosto"): color is never the only signal.
+    ``private``: privacy group, when the text carries an amount. -#}
+{% macro delta_chip(text, tone='neu', direction=None, private=None) -%}
+<span class="dl dl-chip dl-{{ tone }}{{ ' dl-up' if direction == 'up' }}{{ ' dl-dn' if direction == 'down' }}"{% if private %} data-private="{{ private }}"{% endif %}>{{ text }}</span>
 {%- endmacro %}
 
 {#- Loading placeholder with a fixed size (so the loaded content does not move the page). ``width`` and

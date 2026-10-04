@@ -29,7 +29,7 @@
     <input type="hidden" name="range" value="{{ range_name }}"><input type="hidden" name="year" value="{{ year }}">
     {% for cat in expense_categories %}
     <label class="field"><span>{{ cat.name }}</span>
-      <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="goal_{{ cat.id }}" inputmode="decimal" placeholder="sem meta" value="{{ submitted[cat.id] if submitted and cat.id in submitted else (decimal(cat.monthly_budget_cents) if cat.monthly_budget_cents is not none else '') }}"></span></label>
+      <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="goal_{{ cat.id }}" inputmode="decimal" placeholder="sem meta" value="{{ submitted[cat.id] if submitted and cat.id in submitted else (decimal(cat.monthly_budget_cents) if cat.monthly_budget_cents is not none else '') }}"></span></label>
     {% endfor %}
     <button type="submit">Salvar metas</button>
     <a class="btn secondary" href="/budget?range={{ range_name }}&year={{ year }}">Cancelar</a>
@@ -42,10 +42,10 @@
 {{ state_empty('Ainda não há mês fechado neste período.', 'O mês em andamento fica de fora para não parecer economia. Escolha outro período ou volte quando um mês fechar.', icon='calendar') }}
 {% else %}
 <section class="statstrip budget-strip" aria-label="Resumo do orçamento">
-  <div><span class="label">Meta mensal</span><span class="fig">{{ budget.goal_total_cents|brl }}</span><small>soma das {{ budget.with_goal_count }} categorias com meta</small></div>
-  <div><span class="label">Média · {{ budget.months[0]|month_short }} a {{ budget.months[-1]|month_short }}</span><span class="fig">{{ budget.average_with_goal_cents|brl }}</span><small>nas mesmas categorias</small></div>
+  <div><span class="label">Meta mensal</span><span class="fig">{{ budget.goal_total_cents|money(private="transactions") }}</span><small>soma das {{ budget.with_goal_count }} categorias com meta</small></div>
+  <div><span class="label">Média · {{ budget.months[0]|month_short }} a {{ budget.months[-1]|month_short }}</span><span class="fig">{{ budget.average_with_goal_cents|money(private="transactions") }}</span><small>nas mesmas categorias</small></div>
   <div><span class="label">Diferença</span>
-    <span class="fig {{ 'neg' if budget.diff_total_cents > 0 else 'pos' }}">{{ budget.diff_total_cents|signed }}</span>
+    <span class="fig {{ 'neg' if budget.diff_total_cents > 0 else 'pos' }}">{{ budget.diff_total_cents|money(sign="always", private="transactions") }}</span>
     {% if budget.diff_percent is none %}<small>Sem metas ainda</small>
     {% else %}<span>{{ delta_chip(budget.diff_percent|percent ~ (' acima da meta' if budget.diff_total_cents > 0 else ' dentro da meta'), 'neg' if budget.diff_total_cents > 0 else 'pos', 'up' if budget.diff_total_cents > 0 else 'down') }}</span>{% endif %}</div>
   <div><span class="label">Acima da meta</span><span class="fig">{{ budget.over_count }} <small class="of">de {{ budget.with_goal_count }}</small></span>
@@ -62,22 +62,22 @@
     {% for r in budget.with_goal %}
       <tr>
         <td><span class="with-dot">{{ dot(category_colors[r.category_id]) }}{{ category_by_id[r.category_id].name }}</span></td>
-        {% for v in r.months %}<td class="num {{ 'over' if r.over_months[loop.index0] }}" data-label="{{ budget.months[loop.index0]|month_short }}"><span class="cellv">{{ v|brl }}</span></td>{% endfor %}
-        <td class="num" data-label="Média"><strong>{{ r.average_cents|brl }}</strong></td>
-        <td class="num" data-label="Meta">{{ r.goal_cents|brl }}</td>
-        <td class="num" data-label="Média − meta"><strong class="{{ 'neg' if r.diff_cents > 0 else 'pos' }}">{{ r.diff_cents|signed }}</strong>
+        {% for v in r.months %}<td class="num {{ 'over' if r.over_months[loop.index0] }}" data-label="{{ budget.months[loop.index0]|month_short }}"><span class="cellv">{{ v|money(private="transactions") }}</span></td>{% endfor %}
+        <td class="num" data-label="Média"><strong>{{ r.average_cents|money(private="transactions") }}</strong></td>
+        <td class="num" data-label="Meta">{{ r.goal_cents|money(private="transactions") }}</td>
+        <td class="num" data-label="Média − meta"><strong class="{{ 'neg' if r.diff_cents > 0 else 'pos' }}">{{ r.diff_cents|money(sign="always", private="transactions") }}</strong>
           <br><small>{{ 'acima da meta' if r.diff_cents > 0 else 'dentro da meta' }}</small></td>
         <td class="dv-cell" aria-hidden="true"><span class="dv"><i class="{{ 'up' if r.diff_cents > 0 else 'dn' }}" style="width: {{ (r.diff_cents|abs * 50 / ns.top)|round(1) }}%"></i></span></td>
       </tr>
     {% endfor %}
-      <tr class="subtotal"><td><strong>Categorias com meta</strong></td>{% for v in budget.month_totals_with_goal %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|brl }}</td>{% endfor %}
-        <td class="num" data-label="Média"><strong>{{ budget.average_with_goal_cents|brl }}</strong></td><td class="num" data-label="Meta">{{ budget.goal_total_cents|brl }}</td>
-        <td class="num" data-label="Média − meta"><strong class="{{ 'neg' if budget.diff_total_cents > 0 else 'pos' }}">{{ budget.diff_total_cents|signed }}</strong></td>
+      <tr class="subtotal"><td><strong>Categorias com meta</strong></td>{% for v in budget.month_totals_with_goal %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|money(private="transactions") }}</td>{% endfor %}
+        <td class="num" data-label="Média"><strong>{{ budget.average_with_goal_cents|money(private="transactions") }}</strong></td><td class="num" data-label="Meta">{{ budget.goal_total_cents|money(private="transactions") }}</td>
+        <td class="num" data-label="Média − meta"><strong class="{{ 'neg' if budget.diff_total_cents > 0 else 'pos' }}">{{ budget.diff_total_cents|money(sign="always", private="transactions") }}</strong></td>
         <td class="dv-cell" aria-hidden="true"><span class="dv"><i class="{{ 'up' if budget.diff_total_cents > 0 else 'dn' }}" style="width: {{ (budget.diff_total_cents|abs * 50 / ns.top)|round(1) }}%"></i></span></td></tr>
       <tr><td><strong>Sem meta</strong><br><small>{% for r in budget.without_goal %}{{ category_by_id[r.category_id].name }}{{ ', ' if not loop.last }}{% else %}nenhuma categoria{% endfor %}</small></td>
-        {% for v in budget.month_totals_without_goal %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|brl }}</td>{% endfor %}<td class="num" data-label="Média">—</td><td class="num" data-label="Meta"><a href="/budget?edit=1">Definir</a></td><td></td><td class="dv-cell"></td></tr>
-      <tr class="subtotal"><td><strong>Total das despesas</strong></td>{% for v in budget.month_totals_all %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|brl }}</td>{% endfor %}
-        <td class="num" data-label="Média"><strong>{{ budget.average_all_cents|brl }}</strong></td><td></td><td></td><td class="dv-cell"></td></tr>
+        {% for v in budget.month_totals_without_goal %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|money(private="transactions") }}</td>{% endfor %}<td class="num" data-label="Média">—</td><td class="num" data-label="Meta"><a href="/budget?edit=1">Definir</a></td><td></td><td class="dv-cell"></td></tr>
+      <tr class="subtotal"><td><strong>Total das despesas</strong></td>{% for v in budget.month_totals_all %}<td class="num" data-label="{{ budget.months[loop.index0]|month_short }}">{{ v|money(private="transactions") }}</td>{% endfor %}
+        <td class="num" data-label="Média"><strong>{{ budget.average_all_cents|money(private="transactions") }}</strong></td><td></td><td></td><td class="dv-cell"></td></tr>
     </tbody>
   </table>
   </div>

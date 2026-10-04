@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% from "_ui.html" import state_empty %}
-{% from "_charts.html" import net_worth_card, pace_card, flow_card, donut_card, month_stepper %}
+{% from "patrimonio.html" import patrimonio %}
+{% from "_charts.html" import pace_card, flow_card, donut_card, month_stepper %}
 {% block title %}Análises{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="/static/charts.css">
-  <script type="module" src="/static/charts.js"></script>
+  <link rel="stylesheet" href="/static/fin-charts.css">
+  <script type="module" src="/static/fin-charts.js"></script>
 {% endblock %}
 {% block content %}
 <header class="page-head">
@@ -16,7 +17,8 @@
   <div class="head-tools">{{ month_stepper(month_nav) }}</div>
 </header>
 
-{{ net_worth_card('nw-an') }}
+{{ patrimonio(points=nw_island.points, badge=nw_island.badge, footnote=nw_island.footnote,
+                  empty_href="/accounts", empty_label="Registrar um saldo", private="networth", id="nw-an") }}
 
 <div class="pn-pair pn-pair-wide">
   {{ pace_card(month_key, month_name, 'pace-an') }}

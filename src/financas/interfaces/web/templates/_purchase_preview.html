@@ -5,7 +5,7 @@
 <div class="receipt">
   <div class="receipt-top">
     <span class="eyebrow">Total da compra</span>
-    <span class="receipt-total">{{ odometer(preview.total_cents, size=44, flat=True) }}</span>
+    <span class="receipt-total">{{ odometer(preview.total_cents, size=44, flat=True, private="cards") }}</span>
     <small>{% if preview.lines|length > 1 %}em {{ preview.lines|length }} parcelas{% else %}à vista{% endif %}</small>
   </div>
   <div class="explain">
@@ -21,18 +21,18 @@
       <span>{{ l.number }}/{{ l.installment_total }}</span>
       <span class="c-st">{{ l.statement_month|month_short }}{% if l.statement_exists %}<small class="soft">fatura já existe</small>{% endif %}</span>
       <span class="soft">{{ l.closing_date|date_short }}</span><span class="soft">{{ l.due_date|date_short }}</span>
-      <span class="num"><strong>{{ l.amount_cents|brl }}</strong></span>
+      <span class="num"><strong>{{ l.amount_cents|money(private="cards") }}</strong></span>
     </div>
     {% endfor %}
   </div>
-  <div class="sched-total"><span>Total · {{ preview.lines|length }} parcela(s){% if preview.lines|length > 1 %} <small>(a 1ª absorve o resto dos centavos)</small>{% endif %}</span><strong>{{ preview.total_cents|brl }}</strong></div>
+  <div class="sched-total"><span>Total · {{ preview.lines|length }} parcela(s){% if preview.lines|length > 1 %} <small>(a 1ª absorve o resto dos centavos)</small>{% endif %}</span><strong>{{ preview.total_cents|money(private="cards") }}</strong></div>
 </div>
 {% if usage %}
 <div class="limit-card">
   <h3>Limite do cartão</h3>
   {% if usage.limit_cents %}
   {{ stroke_gauge(usage.percent or 0, add=(preview.total_cents * 100 / usage.limit_cents), height=12, label='Comprometido ' ~ ((usage.percent or 0) / 100)|percent ~ ' do limite; com esta compra ' ~ (((usage.percent or 0) + preview.total_cents * 100 / usage.limit_cents) / 100)|percent) }}
-  <div class="sg-caption"><span>Hoje <strong>{{ ((usage.percent or 0) / 100)|percent }}</strong> · com esta compra <strong>{{ (((usage.percent or 0) + preview.total_cents * 100 / usage.limit_cents) / 100)|percent }}</strong></span><span>Limite {{ usage.limit_cents|brl }}</span></div>
+  <div class="sg-caption"><span>Hoje <strong>{{ ((usage.percent or 0) / 100)|percent }}</strong> · com esta compra <strong>{{ (((usage.percent or 0) + preview.total_cents * 100 / usage.limit_cents) / 100)|percent }}</strong></span><span>Limite {{ usage.limit_cents|money(private="cards") }}</span></div>
   {% else %}
   {{ stroke_gauge(0, unset=True, height=12) }}
   <div class="sg-caption"><strong>Limite não informado</strong></div>

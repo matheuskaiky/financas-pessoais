@@ -1,0 +1,49 @@
+{#- snippets/privacy-dialog.html — «Ajustes de Privacidade». A native <dialog>: showModal() brings the focus trap, Esc to close and an inert page behind it.
+    Include ONCE per page, anywhere in <body>. Opened by the gear button (privacy-eye-toggle.html) or by FP.privacy.openSettings().
+    Needs the `money` filter: the five amounts are decorative samples (aria-hidden) that preview each group's blur, even while the master switch is off.
+    Hooks: [data-fp-privacy="dialog|master|done|reset"] and input[data-fp-privacy-group="<id>"] (the five group ids). Choices apply live and persist on change
+    (localStorage fp_privacy_settings). «Concluir» only closes; «Restaurar padrão» re-selects the five groups and leaves the on/off state as it is. -#}
+{%- set grupos = [
+  {"id": "networth", "nome": "Saldo do patrimônio", "ajuda": "Patrimônio líquido e a sua evolução", "amostra": 14872341},
+  {"id": "accounts", "nome": "Contas correntes", "ajuda": "Saldo de cada conta e de cada carteira", "amostra": 523009},
+  {"id": "investments", "nome": "Investimentos", "ajuda": "Posições, rendimentos e o total da carteira", "amostra": 8620000},
+  {"id": "cards", "nome": "Faturas e limites de cartão", "ajuda": "Fatura aberta, limite usado e disponível", "amostra": 312055},
+  {"id": "transactions", "nome": "Extrato e lançamentos", "ajuda": "O valor de cada lançamento e os totais do extrato", "amostra": -18643},
+] -%}
+<dialog class="fp-priv-panel fp-priv-dialog" data-fp-privacy="dialog" aria-labelledby="fp-priv-title" aria-describedby="fp-priv-sub">
+  <div class="fp-priv-head">
+    <div>
+      <h2 class="fp-priv-title" id="fp-priv-title">Ajustes de Privacidade</h2>
+      <p class="fp-priv-sub" id="fp-priv-sub">Escolha o que fica desfocado quando você oculta os valores. Nada disso sai deste navegador.</p>
+    </div>
+    <button type="button" class="fp-priv-btn fp-priv-x" data-fp-privacy="done" aria-label="Fechar">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>
+    </button>
+  </div>
+  <div class="fp-priv-scroll">
+    <button type="button" class="fp-priv-switch" role="switch" aria-checked="false" data-fp-privacy="master" aria-labelledby="fp-priv-m-n" aria-describedby="fp-priv-m-h" autofocus>
+      <span class="fp-priv-text"><span class="fp-priv-name" id="fp-priv-m-n">Ocultar valores</span><span class="fp-priv-help" id="fp-priv-m-h">Desfoca agora, em toda a tela. Atalho: <kbd class="fp-priv-kbd">P</kbd></span></span>
+      <span class="fp-priv-track" aria-hidden="true"><i></i></span>
+    </button>
+    <p class="fp-priv-label" id="fp-priv-groups">O que desfocar</p>
+    <div role="group" aria-labelledby="fp-priv-groups">
+      <ul class="fp-priv-list">
+        {%- for g in grupos %}
+        <li>
+          <label class="fp-priv-row">
+            <input class="fp-priv-check" type="checkbox" data-fp-privacy-group="{{ g.id }}" checked aria-labelledby="fp-priv-n-{{ g.id }}" aria-describedby="fp-priv-h-{{ g.id }}">
+            <span class="fp-priv-box" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+            <span class="fp-priv-text"><span class="fp-priv-name" id="fp-priv-n-{{ g.id }}">{{ g.nome }}</span><span class="fp-priv-help" id="fp-priv-h-{{ g.id }}">{{ g.ajuda }}</span></span>
+            <span class="fp-priv-sample" aria-hidden="true">{{ g.amostra | money(private=g.id) }}</span>
+          </label>
+        </li>
+        {%- endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="fp-priv-foot">
+    <p class="fp-priv-note">As escolhas ficam só neste navegador e valem na hora.</p>
+    <button type="button" class="fp-priv-btn-quiet" data-fp-privacy="reset">Restaurar padrão</button>
+    <button type="button" class="fp-priv-btn-primary" data-fp-privacy="done">Concluir</button>
+  </div>
+</dialog>

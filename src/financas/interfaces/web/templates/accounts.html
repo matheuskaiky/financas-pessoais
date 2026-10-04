@@ -47,12 +47,12 @@
         <td data-label="Tipo">{{ account_kind_labels[a.kind] }}</td>
         <td class="num balance" data-label="Saldo hoje">
           {% if b.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>
-          {% else %}<strong class="{{ 'neg' if b.balance_cents < 0 else '' }}">{{ b.balance_cents|brl }}</strong><br><small>informado em {{ b.last_anchor_date|date }}</small>{% endif %}
+          {% else %}<strong class="{{ 'neg' if b.balance_cents < 0 else '' }}">{{ b.balance_cents|money(private="accounts") }}</strong><br><small>informado em {{ b.last_anchor_date|date }}</small>{% endif %}
         </td>
         <td data-label="Informar saldo">
           <form method="post" action="/accounts/{{ a.id }}/balance" class="row-form balance-form">
             <input type="date" name="date" value="{{ today }}" required aria-label="Data do saldo">
-            <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required aria-label="Saldo informado"></span>
+            <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" placeholder="0,00" required aria-label="Saldo informado"></span>
             <button type="submit" class="secondary">Salvar</button>
           </form>
         </td>
@@ -79,7 +79,7 @@
         <select name="institution_id" required>{% for i in institutions.values() %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
       <label class="field"><span>Tipo</span>
         <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ account_kind_labels[k] }}</option>{% endfor %}</select></label>
-      <label class="field"><span>Saldo inicial (opcional)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="opening_balance" inputmode="decimal" placeholder="0,00" autocomplete="off"></span></label>
+      <label class="field"><span>Saldo inicial (opcional)</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="opening_balance" inputmode="decimal" placeholder="0,00" autocomplete="off"></span></label>
       <label class="field"><span>Data do saldo inicial</span><input type="date" name="opening_date"></label>
       {{ color_fields() }}
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>

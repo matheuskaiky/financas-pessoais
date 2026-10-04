@@ -10,6 +10,7 @@ from financas.container import Container
 from financas.infrastructure.db.seed import seed_categories
 from financas.infrastructure.settings import Settings
 from financas.interfaces.web.app import create_app
+from html_text import visible
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 HEADERS = {"host": "localhost", "origin": "http://localhost"}
@@ -114,9 +115,9 @@ def test_entry_flow_and_dashboard(client: TestClient, container: Container) -> N
     )
     entries = client.get("/entries?ok=entry")
     assert "Café São João" in entries.text and "Lançamento salvo." in entries.text
-    assert "− R$ 1.234,56" in entries.text
+    assert "−R$ 1.234,56" in visible(entries)
     home = client.get("/")
-    assert "R$ 5.000,00" in home.text and "R$ 1.234,56" in home.text
+    assert "R$ 5.000,00" in visible(home) and "R$ 1.234,56" in visible(home)
     assert "Recorrentes e fixos" in home.text and "Café São João" in home.text
     assert "Nenhuma despesa recorrente" not in home.text
 
@@ -208,7 +209,7 @@ def test_balance_shows_the_difference(client: TestClient, container: Container) 
         f"/accounts/{checking}/balance", data={"date": "2026-07-10", "amount": "850"}
     )
     page = client.get(second.headers["location"])
-    assert "O sistema esperava R$ 900,00" in page.text and "-R$ 50,00" in page.text
+    assert "O sistema esperava R$ 900,00" in visible(page) and "-R$ 50,00" in visible(page)
     assert "Saldo indisponível" in page.text  # the savings account has no anchor
 
 
@@ -306,17 +307,29 @@ def test_unified_quick_form_creates_transfers(client: TestClient, container: Con
 
 def test_design_shell_and_font_are_served_locally(client: TestClient) -> None:
     home = client.get("/")
-    assert 'class="sidebar"' in home.text and 'class="tabbar"' in home.text
+    assert 'class="sidebar ink"' in home.text and 'class="tabbar"' in home.text
     assert "Dados guardados só neste computador" in home.text and "Nenhum backup ainda" in home.text
-    css = client.get("/static/app.css")
-    assert (
-        "Libre Franklin" in css.text
-        and "Source Serif 4" in css.text
-        and "fonts.googleapis" not in css.text
-    )
-    for name in ("LibreFranklin-latin", "SourceSerif4-latin"):
+    # Families are declared once, in fonts/fonts.css (Public Sans, Source Serif 4).
+    fonts_css = client.get("/static/fonts/fonts.css")
+    assert fonts_css.status_code == 200
+    assert "'Public Sans'" in fonts_css.text and "'Source Serif 4'" in fonts_css.text
+    app_css = client.get("/static/app.css").text
+    assert "@font-face" not in app_css and "Libre Franklin" not in app_css
+    assert "fonts.googleapis" not in app_css + fonts_css.text + home.text
+    tokens = client.get("/static/tokens.css").text
+    assert "--sans:'Public Sans'" in tokens and "--serif:'Source Serif 4'" in tokens
+    for name in (
+        "public-sans-latin-wght-normal",
+        "public-sans-latin-ext-wght-normal",
+        "source-serif-4-latin-opsz-normal",
+        "source-serif-4-latin-ext-opsz-normal",
+    ):
         font = client.get(f"/static/fonts/{name}.woff2")
         assert font.status_code == 200 and font.content[:4] == b"wOF2"
+        assert font.headers["content-type"] == "font/woff2"
+    for licence in ("OFL-Public-Sans", "OFL-Source-Serif-4"):
+        assert client.get(f"/static/fonts/{licence}.txt").status_code == 200
+    assert client.get("/static/fonts/LibreFranklin-latin.woff2").status_code == 404
     assert client.get("/static/..%2f..%2fapp.py").status_code in {400, 404}
 
 
@@ -384,7 +397,7 @@ def test_purchase_preview_explains_the_statement_and_shows_the_schedule(
     text = response.text
     assert "Compra em 26/07/2026, depois do fechamento em 25/07" in text
     assert "fatura de ago/2026 (fecha 25/08 · vence 05/09)" in text
-    assert "R$ 100,34" in text and "R$ 100,33" in text and "R$ 301,00" in text
+    assert all(v in visible(text) for v in ("R$ 100,34", "R$ 100,33", "R$ 301,00"))
     assert "Melhor dia de compra neste cartão: 25/08/2026" in text
     with container.uow as work:
         assert work.transactions.list_by_account(card) == []  # a preview writes nothing
@@ -427,7 +440,7 @@ def test_purchase_save_creates_every_installment_and_the_statement_page(
     assert (
         "Compra salva" in page.text and "Fatura ago/2026 · fecha 25/08 · vence 05/09" in page.text
     )
-    assert "Fone de ouvido" in page.text and "1/3" in page.text and "R$ 100,34" in page.text
+    assert "Fone de ouvido" in page.text and "1/3" in page.text and "R$ 100,34" in visible(page)
     assert "Parcelas ativas" in page.text and "Parcelas por mês" in page.text
     with container.uow as work:
         assert len(work.transactions.list_by_account(card)) == 3
@@ -497,7 +510,7 @@ def test_statement_payment_reconciliation_and_dates(
         ).text
     )
     page = client.get(f"/cards?card={card}&month=2026-07")
-    assert "Conferência com o banco" in page.text and "R$ 103,80" in page.text
+    assert "Conferência com o banco" in page.text and "R$ 103,80" in visible(page)
     assert "Lançar diferença como “Não categorizado”" in page.text
     client.post(f"/statements/{sid}/difference")
     with container.uow as work:
@@ -557,12 +570,12 @@ def test_cards_overview_limit_and_dashboard(client: TestClient, container: Conta
         },
     )
     page = client.get(f"/cards?card={card}")
-    assert "Atenção · 80%+" in page.text and "Comprometido R$ 850,00" in page.text
-    assert "Limite R$ 1.000,00" in page.text
+    assert "Atenção · 80%+" in page.text and "Comprometido R$ 850,00" in visible(page)
+    assert "Limite R$ 1.000,00" in visible(page)
     home = client.get("/")
     assert "Compras do mês" in home.text and "Notebook" in home.text
     assert "do limite comprometido" in home.text  # the attention panel
-    assert "R$ 850,00" in home.text  # card expense counts in its statement month
+    assert "R$ 850,00" in visible(home)  # card expense counts in its statement month
     client.post(
         f"/cards/{card}/settings",
         data={"closing_days_before_due": "7", "due_day": "17", "limit": ""},
@@ -658,11 +671,13 @@ def test_valuation_flow_yield_and_year_position(client: TestClient, container: C
     )
     assert "ok=valuation_yield" in second.headers["location"]
     notice = client.get(second.headers["location"])
-    assert "Rendimento desde a avaliação anterior" in notice.text and "+ R$ 200,00" in notice.text
+    assert "Rendimento desde a avaliação anterior" in notice.text and "+ R$ 200,00" in visible(
+        notice
+    )
     assert "não é renda" in notice.text
     page = client.get("/investments?year=2026")
-    assert "R$ 10.700,00" in page.text  # current value
-    assert "Aportes líquidos em 2026" in page.text and "R$ 500,00" in page.text
+    assert "R$ 10.700,00" in visible(page)  # current value
+    assert "Aportes líquidos em 2026" in page.text and "R$ 500,00" in visible(page)
     assert "Rendimento capitalizado em 2026" in page.text and "retorno simples" in page.text
     assert "Posição em 31/12/2026" in page.text
     assert 'value="other" selected' in page.text  # default class of a new investment account
@@ -717,9 +732,9 @@ def test_net_worth_page_is_partial_until_everything_is_informed(
     client.post(f"/accounts/{checking}/balance", data={"date": "2026-01-01", "amount": "1.000,00"})
     client.post(f"/investments/{savings}/valuation", data={"date": "2026-01-01", "net": "9.000,00"})
     page = client.get("/networth")
-    assert "R$ 10.000,00" in page.text and "Parcial" not in page.text
+    assert "R$ 10.000,00" in visible(page) and "Parcial" not in page.text
     home = client.get("/")
-    assert "Patrimônio líquido" in home.text and "R$ 10.000,00" in home.text
+    assert "Patrimônio líquido" in home.text and "R$ 10.000,00" in visible(home)
     assert "Aportes líquidos" in home.text
 
 
@@ -731,8 +746,8 @@ def test_net_worth_subtracts_card_statements(client: TestClient, container: Cont
         data={"account_id": card, "date": "2026-02-10", "description": "TV", "amount": "1.200,00"},
     )
     page = client.get("/networth")
-    assert "R$ 3.800,00" in page.text  # 5.000 - 1.200 (closed statement, long past)
-    assert "Faturas fechadas a pagar" in page.text and "− R$ 1.200,00" in page.text
+    assert "R$ 3.800,00" in visible(page)  # 5.000 - 1.200 (closed statement, long past)
+    assert "Faturas fechadas a pagar" in page.text and "− R$ 1.200,00" in visible(page)
 
 
 # --- fixed-income holdings (Phase 3b) ---
@@ -835,7 +850,7 @@ def test_holding_valuation_flow_flags_and_redemption(
     assert "ok=valuation_yield" in second.headers["location"]
     assert "+ R$ 100,00" in client.get(second.headers["location"]).text
     page = client.get("/investments")
-    assert "R$ 11.100,00" in page.text  # holdings-level account value = sum of holdings
+    assert "R$ 11.100,00" in visible(page)  # holdings-level account value = sum of holdings
     blocked = client.post(
         f"/investments/{savings}/valuation", data={"date": "2026-10-31", "net": "1,00"}
     )
@@ -892,9 +907,11 @@ def test_brazilian_views_on_the_page(client: TestClient, container: Container) -
     assert "não projeta valor no vencimento" in page.text
     assert "Disponível hoje" in page.text and "Mais tarde" in page.text
     assert "Exposição ao FGC por grupo" in page.text and "fgc.org.br" in page.text
-    assert "R$ 21.320,00" in page.text  # the covered CDB (the Treasury is not covered) + checking
+    assert "R$ 21.320,00" in visible(
+        page
+    )  # the covered CDB (the Treasury is not covered) + checking
     assert "IPCA + 6,50%" in page.text
-    assert "R$ 20.000,00 marcados como reserva" in page.text
+    assert "R$ 20.000,00 marcados como reserva" in visible(page)
     assert "Sem gasto essencial nos últimos 3 meses fechados" in page.text
 
 
@@ -1122,11 +1139,12 @@ def test_budget_goals_matrix_and_editing(client: TestClient, container: Containe
     assert "Metas atualizadas." in client.get(saved.headers["location"]).text
     matrix = body.split('id="h-matrix"', 1)[1]
     row = matrix.split("Alimentação", 1)[1].split("</tr>", 1)[0]  # the Alimentação row only
-    assert "R$ 910,00" in row and "R$ 788,20" in row and "R$ 842,30" in row and "R$ 700,00" in row
+    amounts = visible(row)
+    assert all(v in amounts for v in ("R$ 910,00", "R$ 788,20", "R$ 842,30", "R$ 700,00"))
     assert row.count('class="num over"') == 3  # all three months are above the 700 goal
     assert "acima da meta</small>" in row and "neg" in row
     sem_meta = body.split("<strong>Sem meta</strong>", 1)[1].split("</tr>", 1)[0]
-    assert "Saúde" in sem_meta and "R$ 200,00" in sem_meta
+    assert "Saúde" in sem_meta and "R$ 200,00" in visible(sem_meta)
     assert "R$ 999,00" not in body  # the month in progress is not part of the average
     cleared = client.post("/budget/goals", data={f"goal_{food}": ""})
     assert cleared.status_code == 303
@@ -1256,7 +1274,8 @@ def test_daily_flow_page(client: TestClient, container: Container) -> None:
     page = client.get(f"/accounts/{checking}/flow?month=2026-07")
     body = body_of(page.text)
     assert "Fluxo diário · Conta Corrente" in body and "05/07/2026" in body
-    assert "R$ 5.880,00" in body and "R$ 5.380,00" in body and "R$ 1.000,00" in body
+    amounts = visible(body)
+    assert all(v in amounts for v in ("R$ 5.880,00", "R$ 5.380,00", "R$ 1.000,00"))
     other = client.get(f"/accounts/{savings}/flow?month=2026-07")
     assert "Saldo indisponível" in other.text
     assert client.get(f"/accounts/{checking}/flow?month=zzz").status_code == 200
@@ -1371,7 +1390,7 @@ def test_new_account_form_records_the_opening_balance(
         (anchor,) = work.anchors.list_for_account(account.id)
     assert (anchor.balance_cents, anchor.on_date) == (118_367, dt.date(2026, 9, 8))
     page = client.get("/accounts")
-    assert "R$ 1.183,67" in page.text and "Saldo inicial" in page.text
+    assert "R$ 1.183,67" in visible(page) and "Saldo inicial" in page.text
     half = client.post(
         "/accounts",
         data={"nickname": "Outra", "institution_id": inst.id, "opening_balance": "10,00"},

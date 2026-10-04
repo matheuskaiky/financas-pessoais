@@ -34,7 +34,7 @@
       <label class="opt"><input type="radio" name="amount_mode" value="installment" {{ 'checked' if form.amount_mode == 'installment' }}><span class="rd" aria-hidden="true"></span><span><strong>Valor da parcela</strong><small>Como aparece na fatura do banco.</small></span></label>
     </div>
     <label class="field"><span>Valor</span>
-      <span class="money big"><span class="cur" aria-hidden="true">R$</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span></label>
+      <span class="money-field big"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span></label>
 
     <details {{ 'open' if form.statement_month or form.current_installment != '1' }}>
       <summary>Compra já em andamento ou fatura diferente</summary>

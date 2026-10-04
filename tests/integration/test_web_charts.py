@@ -258,21 +258,30 @@ def test_card_entries_count_in_the_statement_month_in_the_pace(
 
 def test_dashboard_and_analyses_render_the_chart_islands(client: TestClient) -> None:
     for path, charts in (
-        ("/", ("networth", "pace", "flow")),
-        ("/analises", ("networth", "pace", "flow")),
+        ("/", ("pace", "flow")),
+        ("/analises", ("pace", "flow")),
     ):
         response = client.get(path)
         assert response.status_code == 200, path
         text = response.text
         body = body_of(text)
-        assert '<script type="module" src="/static/charts.js">' in text
-        assert re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", text) == [], "no inline scripts (CSP)"
+        assert '<script type="module" src="/static/fin-charts.js">' in text  # pace, flow, donut
+        assert '<script type="module" src="/static/charts.js"></script>' in text  # <fp-patrimonio>
+        inline = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", text)
+        assert all('type="application/json"' in tag for tag in inline), "only data blocks (CSP)"
         assert not re.search(r"\son\w+=", text)
         for kind in charts:
             assert f'data-chart="{kind}"' in body, (path, kind)
+        assert (
+            "<fp-patrimonio" in body
+            and 'private="networth"' in body
+            and 'data-chart="networth"' not in body
+        )
         for state in ("skeleton", "sparse", "error"):
             assert f'data-tpl="{state}"' in body
-        assert 'role="radiogroup"' in body and "Registrar um saldo" in body
+        assert (
+            'empty-label="Registrar um saldo"' in body
+        )  # the range selector is drawn by the island
         assert "Chart(" not in text and "chart.umd" not in text
     assert 'data-chart="donut"' not in client.get("/analises").text  # no spending: empty state
     assert "Nenhuma despesa neste período" in client.get("/analises").text
@@ -339,10 +348,14 @@ def test_letter_pill_only_while_the_carta_entry_exists(container: Container) -> 
 def test_chart_js_library_is_gone_and_the_assets_are_local(client: TestClient) -> None:
     assert client.get("/static/chart.umd.min.js").status_code == 404
     assert client.get("/static/dashboard.js").status_code == 404
-    for asset in ("charts.js", "charts.css"):
+    for asset in ("fin-charts.js", "fin-charts.css", "charts.js", "charts.css", "fp-money.js"):
         assert client.get(f"/static/{asset}").status_code == 200
-    js = client.get("/static/charts.js").text
-    assert "https://" not in js and "FinCharts" in js
+    js = client.get("/static/fin-charts.js").text
+    assert "https://" not in js and "FinCharts" in js and 'from "./fp-money.js"' in js
     assert "http://" not in js.replace("http://www.w3.org/2000/svg", "")  # the SVG namespace only
-    css = client.get("/static/charts.css").text
-    assert "http://" not in css and "https://" not in css
+    island = client.get("/static/charts.js").text
+    assert "fp-patrimonio" in island and "https://" not in island
+    assert 'from "./fp-money.js"' in island  # same directory, same URL as the head loads
+    for sheet in ("fin-charts.css", "charts.css"):
+        css = client.get(f"/static/{sheet}").text
+        assert "http://" not in css and "https://" not in css

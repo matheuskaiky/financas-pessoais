@@ -18,11 +18,11 @@
 {% endif %}
 {% if overview.cards %}
 <section class="statstrip totals4" aria-label="Totais dos cartões">
-  <div><span class="label">Faturas a pagar (fechadas)</span><span class="fig">{{ odometer(overview.closed_to_pay_cents, size=30, flat=True) }}</span></div>
-  <div><span class="label">Faturas abertas</span><span class="fig">{{ odometer(overview.open_total_cents, size=30, flat=True) }}</span></div>
-  <div><span class="label">Parcelas futuras</span><span class="fig">{{ odometer(overview.future_installments_cents, size=30, flat=True) }}</span></div>
+  <div><span class="label">Faturas a pagar (fechadas)</span><span class="fig">{{ odometer(overview.closed_to_pay_cents, size=30, flat=True, private="cards") }}</span></div>
+  <div><span class="label">Faturas abertas</span><span class="fig">{{ odometer(overview.open_total_cents, size=30, flat=True, private="cards") }}</span></div>
+  <div><span class="label">Parcelas futuras</span><span class="fig">{{ odometer(overview.future_installments_cents, size=30, flat=True, private="cards") }}</span></div>
   <div><span class="label">Limite disponível (cartões com limite)</span>
-    {% if overview.available_cents is not none %}<span class="fig pos">{{ odometer(overview.available_cents, size=30, flat=True) }}</span>
+    {% if overview.available_cents is not none %}<span class="fig pos">{{ odometer(overview.available_cents, size=30, flat=True, private="cards") }}</span>
     {% else %}<span class="fig">—</span><small>Nenhum cartão com limite informado</small>{% endif %}</div>
 </section>
 
@@ -40,10 +40,10 @@
     {% if v.usage.alert.value == 'not_informed' %}
     {{ stroke_gauge(0, unset=True, height=12) }}
     <div class="sg-caption"><strong>{{ limit_labels[v.usage.alert] }}</strong><a href="/cards?card={{ v.account.id }}#cfg">informar</a></div>
-    <small class="sr-only">Comprometido {{ v.usage.committed_cents|brl }}</small>
+    <small class="sr-only">Comprometido {{ v.usage.committed_cents|money(private="cards") }}</small>
     {% else %}
     {{ stroke_gauge(v.usage.percent, height=12, label='Comprometido ' ~ ((v.usage.percent / 100)|percent) ~ (', ' ~ limit_labels[v.usage.alert] if v.usage.alert.value != 'none' else '')) }}
-    <div class="sg-caption"><span><strong>Comprometido {{ v.usage.committed_cents|brl }}</strong> · {{ (v.usage.percent / 100)|percent }}</span><span>Limite {{ v.usage.limit_cents|brl }}</span></div>
+    <div class="sg-caption"><span><strong>Comprometido {{ v.usage.committed_cents|money(private="cards") }}</strong> · {{ (v.usage.percent / 100)|percent }}</span><span>Limite {{ v.usage.limit_cents|money(private="cards") }}</span></div>
     {% if v.usage.alert.value != 'none' %}<div class="limit-note {{ 'bad' if v.usage.alert.value == 'exceeded' else 'warn' }}">{{ limit_labels[v.usage.alert] }}</div>{% endif %}
     {% endif %}
   </div>
@@ -78,11 +78,11 @@
         <div class="c-desc"><span>{{ t.description or kind_labels[t.kind] }}{% if t.transfer_id %} <span class="tag">pagamento</span>{% endif %}</span></div>
         <span class="c-cat with-dot soft">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
         <span class="c-inst soft">{% if t.plan_id %}{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}{% else %}—{% endif %}</span>
-        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|signed }}</span>
+        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|money(sign="always", private="cards") }}</span>
         {% if t.plan_id and statement.status.value != 'paid' %}
         <details class="c-adjust"><summary>Ajustar valor</summary>
           <form method="post" action="/entries/{{ t.id }}/amount" class="row-form">
-            <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(-t.amount_cents) }}" aria-label="Novo valor da parcela"></span>
+            <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(-t.amount_cents) }}" aria-label="Novo valor da parcela"></span>
             <button type="submit" class="secondary">Salvar</button></form></details>
         {% endif %}
       </div>
@@ -91,9 +91,9 @@
     </div>
 
     <div class="ledger" aria-label="Resumo da fatura">
-      <div class="ledger-line"><span>Total lançado</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.total_cents, size=16, flat=True, prefix=False) }}</span></div>
-      <div class="ledger-line"><span>Pago</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.paid_cents, size=16, flat=True, prefix=False) }}</span></div>
-      <div class="ledger-line due"><span>A pagar</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.outstanding_cents, size=34, flat=True) }}</span></div>
+      <div class="ledger-line"><span>Total lançado</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.total_cents, size=16, flat=True, prefix=False, private="cards") }}</span></div>
+      <div class="ledger-line"><span>Pago</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.paid_cents, size=16, flat=True, prefix=False, private="cards") }}</span></div>
+      <div class="ledger-line due"><span>A pagar</span><i aria-hidden="true"></i><span class="v">{{ odometer(statement.outstanding_cents, size=34, flat=True, private="cards") }}</span></div>
     </div>
 
     <details class="pay-box" {{ 'open' if statement.outstanding_cents > 0 and statement.status.value == 'closed' }}>
@@ -103,7 +103,7 @@
         <label class="field"><span>Pagar com</span>
           <select name="from_account">{% for a in checking_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
         <label class="field"><span>Valor (vazio = o que falta)</span>
-          <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(statement.outstanding_cents) if statement.outstanding_cents > 0 }}"></span></label>
+          <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(statement.outstanding_cents) if statement.outstanding_cents > 0 }}"></span></label>
         <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
         <button type="submit">Registrar pagamento</button>
       </form>
@@ -118,15 +118,15 @@
         <p class="hint">Informe o total que o banco mostra para comparar com os lançamentos.</p>
       {% else %}
         <div class="recon-figs">
-          <span><span class="label">Lançado</span><strong class="fig-sm">{{ rec.entered_cents|brl }}</strong></span>
-          <span><span class="label">Informado pelo banco</span><strong class="fig-sm">{{ rec.informed_cents|brl }}</strong></span>
+          <span><span class="label">Lançado</span><strong class="fig-sm">{{ rec.entered_cents|money(private="cards") }}</strong></span>
+          <span><span class="label">Informado pelo banco</span><strong class="fig-sm">{{ rec.informed_cents|money(private="cards") }}</strong></span>
           <span><span class="label">Diferença</span>
-            {% if rec.difference_cents != 0 %}{{ delta_chip(rec.difference_cents|signed, 'warn') }}{% else %}{{ delta_chip('R$ 0,00 · confere', 'pos') }}{% endif %}</span>
+            {% if rec.difference_cents != 0 %}{{ delta_chip(rec.difference_cents|signed, 'warn', private='cards') }}{% else %}{{ delta_chip((0|currency) ~ ' · confere', 'pos', private='cards') }}{% endif %}</span>
         </div>
       {% endif %}
       <form method="post" action="/statements/{{ statement.statement.id }}/informed" class="row-form">
         <label class="field"><span>Total do banco</span>
-          <span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(rec.informed_cents) if rec.informed_cents is not none }}" placeholder="0,00"></span></label>
+          <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(rec.informed_cents) if rec.informed_cents is not none }}" placeholder="0,00"></span></label>
         <button type="submit" class="secondary">Salvar total</button>
       </form>
       {% if rec.difference_cents and rec.difference_cents > 0 %}
@@ -149,12 +149,12 @@
 
   <div class="stack">
     <section class="panel" aria-labelledby="h-inst">
-      <header><h2 id="h-inst">Parcelas ativas</h2>{% if installments %}<small>a pagar <strong>{{ installments|sum(attribute='to_pay_cents')|brl }}</strong></small>{% endif %}</header>
+      <header><h2 id="h-inst">Parcelas ativas</h2>{% if installments %}<small>a pagar <strong>{{ installments|sum(attribute='to_pay_cents')|money(private="cards") }}</strong></small>{% endif %}</header>
       {% if installments %}
       <ul class="plans">
         {% for p in installments %}
         <li>
-          <div class="plan-top"><strong>{{ p.plan.description }}</strong><span class="num"><strong>{{ p.to_pay_cents|brl }}</strong> <small>a pagar</small></span></div>
+          <div class="plan-top"><strong>{{ p.plan.description }}</strong><span class="num"><strong>{{ p.to_pay_cents|money(private="cards") }}</strong> <small>a pagar</small></span></div>
           <div class="plan-steps" role="img" aria-label="{{ p.paid_count }} de {{ p.paid_count + p.remaining_count }} parcelas pagas">
             {% for i in range(p.paid_count + p.remaining_count) %}<i class="{{ 'paid' if i < p.paid_count else ('next' if i == p.paid_count else '') }}"></i>{% endfor %}
           </div>
@@ -186,7 +186,7 @@
         <form method="post" action="/cards/{{ chosen.account.id }}/settings" class="grid-form">
           <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" value="{{ chosen.account.due_day }}" required></label>
           <label class="field"><span>Fecha quantos dias antes do vencimento</span><input type="text" name="closing_days_before_due" inputmode="numeric" value="{{ chosen.account.closing_days_before_due }}" required></label>
-          <label class="field"><span>Limite (vazio = não informado)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="limit" inputmode="decimal" value="{{ decimal(chosen.account.credit_limit_cents) if chosen.account.credit_limit_cents is not none }}"></span></label>
+          <label class="field"><span>Limite (vazio = não informado)</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="limit" inputmode="decimal" value="{{ decimal(chosen.account.credit_limit_cents) if chosen.account.credit_limit_cents is not none }}"></span></label>
           <button type="submit" class="secondary">Salvar</button>
         </form>
         <p class="hint">Mudanças valem só para faturas criadas depois: as já cadastradas mantêm o fechamento e o vencimento. Se uma fatura já criada estiver errada, corrija as datas nela.</p>
@@ -210,7 +210,7 @@
         <select name="institution_id" required>{% for i in institution_choices %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
       <label class="field"><span>Dia de vencimento</span><input type="text" name="due_day" inputmode="numeric" required></label>
       <label class="field"><span>Fecha quantos dias antes do vencimento</span><input type="text" name="closing_days_before_due" inputmode="numeric" required><small>De 1 a 27 (ex.: 7)</small></label>
-      <label class="field"><span>Limite (opcional)</span><span class="money"><span class="cur" aria-hidden="true">R$</span><input type="text" name="limit" inputmode="decimal" placeholder="0,00"></span></label>
+      <label class="field"><span>Limite (opcional)</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="limit" inputmode="decimal" placeholder="0,00"></span></label>
       {{ color_fields() }}
       <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
       <button type="submit">Salvar cartão</button>

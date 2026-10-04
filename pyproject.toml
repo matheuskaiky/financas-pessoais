@@ -59,6 +59,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/financas/infrastructure/db/migrations/versions/*" = ["E501", "I", "UP", "RUF"]
+# Vendored from the front v3 handoff (CLDR tables and long pt-BR docstrings); format only.
+"src/financas/interfaces/web/fp_money.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]

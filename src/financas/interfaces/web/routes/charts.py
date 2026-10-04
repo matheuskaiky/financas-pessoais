@@ -310,6 +310,19 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     )
         return items
 
+    def net_worth_island() -> dict[str, Any]:
+        """Arguments of the ``patrimonio`` macro (``<fp-patrimonio>``): cents and pt-BR notes."""
+        series = GetNetWorthSeries(c.uow, c.clock).execute()
+        note = "Caixa mais investimentos, menos as faturas a pagar. As parcelas futuras não entram."
+        if series.partial:
+            names = ", ".join(p.name for p in series.pending)
+            note = f"Parcial: faltam saldos ou avaliações de {names}. {note}"
+        return {
+            "points": [[p.on.isoformat(), p.cents] for p in series.points],
+            "badge": "parcial" if series.partial else None,
+            "footnote": note,
+        }
+
     def month_nav(month: YearMonth, path: str) -> dict[str, Any]:
         newest = current_month()
         previous, following = month.add_months(-1), month.add_months(1)
@@ -401,6 +414,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "recurring_count": len(recurring),
             "attention": attention_items(),
             "group_colors": _GROUP_COLORS,
+            "nw_island": net_worth_island(),
         }
         return ctx.render(request, "dashboard.html", context)
 
@@ -416,6 +430,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "year": chosen.year,
             "month_nav": month_nav(chosen, "/analises"),
             "summary": summary,
+            "nw_island": net_worth_island(),
             **donut_context(summary, data),
         }
         return ctx.render(request, "analises.html", context)

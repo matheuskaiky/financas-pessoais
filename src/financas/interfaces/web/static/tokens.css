@@ -1,54 +1,199 @@
 /* tokens.css — finanças pessoais
- * Molas (massa 1): stiffness / damping → duração de assentamento
- *   press  700 / 42  toque e hover          ζ 0,79   ~310 ms
- *   ui     420 / 36  estados, painéis       ζ 0,88   ~380 ms
- *   soft   180 / 27  entradas               ζ 1,01   ~650 ms (sem overshoot)
- *   pop     520 / 33  selos e marcas         ζ 0,72   ~340 ms (overshoot 3,7%)
- *   roll     90 / 19  dígitos e medidores    ζ 1,00   ~900 ms (sem overshoot)
- * As curvas abaixo são `linear()` amostradas da equação da mola; navegadores
- * sem suporte caem para cubic-bezier equivalente.
- * Equivalências Tailwind: border-neutral-200/80 → var(--line); rounded-2xl +
- * corner-shape → .sq; active:scale-[0.98] → button:active; tabular-nums
- * e tracking-tight → .nums / .tight; backdrop-blur-md → .glass.
- * Dados: --dv-* guardam os papéis das cores dos gráficos; .dv-tip é a dica de vidro.
+ *
+ * MOLAS (massa 1; stiffness / damping → assentamento). Os mesmos números alimentam o CSS (curvas `linear()`
+ * geradas da equação da mola) e o JS das ilhas (--k-* e --c-* são lidos com getComputedStyle):
+ *   press   700 / 42    toque e hover            ζ 0,79   ~310 ms
+ *   ui      420 / 36    estados, painéis         ζ 0,88   ~380 ms
+ *   soft    180 / 27    entradas                 ζ 1,01   ~650 ms (sem overshoot)
+ *   pop     520 / 33    selos e marcas           ζ 0,72   ~340 ms (overshoot 3,7 %)
+ *   roll     90 / 19    entrada de dígitos       ζ 1,00   ~900 ms (sem overshoot)
+ *   scrub   576 / 48    dígitos vivos no scrub   ζ 1,00   ~360 ms (sem overshoot)
+ *   morph   121 / 19,4  troca de período         ζ 0,88   ~700 ms (99 % em ~0,5 s)
+ * Navegadores sem `linear()` caem para cubic-bezier equivalente; `prefers-reduced-motion` zera as durações.
+ *
+ * TEMAS. Claro é o padrão. Escuro: <html data-theme="dark"> (ou nada, e segue prefers-color-scheme;
+ * <html data-theme="light"> força o claro). `.dk` re-escopa um trecho para o escuro dentro de uma página clara; `.ink` faz o
+ * mesmo e pinta o fundo de tinta da marca (barra lateral, cartão de saldo). O tema troca TODAS as variáveis de superfície e de
+ * texto na raiz: o texto escuro nunca cai sobre fundo escuro, porque nenhum quadro, template ou componente escreve cor de texto
+ * à mão: usam só os tokens abaixo.
+ *
+ * TEXTO SEMÂNTICO (três degraus; contraste medido sobre as superfícies do tema):
+ *   --text-primary    leitura principal e números em destaque    claro #14211B (16,6:1 no branco)  escuro #E9F1EC (15,1:1 no nível 1 · 13,5:1 no 2)
+ *   --text-secondary  rótulos, metadados e cabeçalhos auxiliares claro #4A5D53 (7,0:1)             escuro #B7C7BD (9,8:1 · 8,8:1)
+ *   --text-tertiary   marcas temporais, eixos e texto desativado claro #586A60 (5,8:1)             escuro #A1B4A9 (8,0:1 · 7,1:1)
+ *   (--text, --muted e --axis continuam existindo, como apelidos dos três.) Acento e status também são papéis, não cores:
+ *   --accent (links, botões) · --pos-fg / --neg-fg / --warn-fg / --brass-ink / --info-fg (variação e alerta) · --on-accent e
+ *   --on-brass (texto sobre fundo de acento e de latão). Utilitários: .t1 .t2 .t3. Tudo ≥ 4,5:1 sobre as superfícies; no escuro,
+ *   os três degraus passam de 5,0:1 sobre qualquer fundo do sistema (o principal passa de 7:1). Escopos que mudam os degraus:
+ *   `.dk` e `.ink` (escuro), `.on-acc` e `.on-brass` (texto sobre preenchimento de acento e de latão). Em `.ink` (tinta da marca,
+ *   cartões de banco, barra lateral) o secundário e o terciário sobem um passo (#C0CFC5, #B0C2B8): os brilhos e as texturas
+ *   passam por trás do texto. tests/symbol-contrast.test.js mede cada degrau sobre cada superfície, nos dois temas, em pixels;
+ *   tools/audit-text-contrast.js faz o mesmo com todo o texto de uma página real, nos dois temas (URL como argumento).
+ *
+ * ELEVAÇÃO (a hierarquia é luminância, não sombra preta):
+ *   claro   sombra em duas camadas: contato `0 1px 2px` a 4 % + dispersão `0 8px 24px` a 3 %
+ *   escuro  nível 0 (tela)    --bg #08100D, quase preto com um fio de verde
+ *           nível 1 (cartões) branco a 5 % (--surface-1) + borda de 1 px a 8 % (--line)         → .card
+ *           nível 2 (popovers, menus, diálogos) branco a 9 % (--surface-2) + backdrop-filter: blur() → .card-2 / .glass
+ *   Os fundos de cartão são em camadas e opacos (--solid-1/2 são os mesmos níveis já compostos), então o nível não acumula ao
+ *   aninhar. --fill-1…4 são preenchimentos internos (campos, trilhas, chips): translúcidos no escuro, opacos no claro.
+ *   `.s1/.s2` dão só o fundo. `.card-3` é apelido do nível 2 (com sombra maior no claro).
+ *
+ * COR. Papéis semânticos em sRGB com sobrescrita Display-P3 em `@supports (color: color(display-p3 1 1 1))`:
+ *   --accent --leaf --mint --brass | --dv-ink (patrimônio) | --superavit --deficit --dv-out (gráficos e indicadores)
+ *   --pos-fg --neg-fg (texto de variação). A versão P3 mantém matiz e luminosidade (OKLCH) e só eleva o croma,
+ *   então o contraste é o mesmo nas duas. Textos ≥ 4,5:1; elementos gráficos ≥ 3:1 sobre as superfícies.
+ *   --cat-* é a paleta categórica (séries e marcadores de categoria); no escuro, o mesmo matiz com a luminosidade levantada
+ *   onde a cor clara reprovaria 3:1. --line / --line-2 / --line-3 são divisórias (a 8 / 14 / 26 % no escuro); --sh-ink e
+ *   --sh-accent dão a cor das sombras ambientes (verde-tinta no claro, preto no escuro).
+ *
+ * TIPOGRAFIA. Public Sans (interface) e Source Serif 4 (números de destaque e títulos), autohospedadas em fonts/.
+ * `font-variant-numeric: lining-nums tabular-nums` no body e nos controles de formulário: todo valor monetário alinha
+ * em coluna e não "pula". Só funciona porque as duas fontes têm a feature `tnum` (tests/fonts.test.js confere; a
+ * Libre Franklin, usada antes, não tem). `.tight` / `.display`: números grandes com tracking -0,025em.
+ * `.overline` (11 px) e `.overline-12`: rótulos em caixa alta com tracking +0,06em / +0,05em.
+ *
+ * MOEDA. O símbolo vem sempre de fp-money.js / fp_money.py, nunca escrito à mão (<span data-cents>, filtro `money`).
+ * `.money` envolve o valor e não quebra nem encolhe (nowrap, flex:none); `.currency-symbol` recua (peso 500 e cor mais perto
+ * do fundo); `.money--display` (corpo ≥ 24 px) reduz o símbolo a 0,5 em e recua menos. `.num` e `.pct` valem para o resto dos números.
+ * O recuo NÃO é opacidade fixa: a cor do símbolo é a do número com a luminosidade (OKLCH) deslocada em direção ao fundo
+ * (--sym-k, 0,5; --sym-k-lg, 0,3), mas parando no limite em que o contraste ainda é folgado: --sym-bl (0,46, número escuro
+ * sobre fundo claro) e --sym-bd (0,74 no claro, 0,85 no escuro, número claro sobre fundo escuro). O recuo é proporcional à
+ * opacidade do número (palavra-chave `alpha` da relative color syntax: pleno em α = 1, nulo em α ≤ 0,7): texto que já é
+ * translúcido (os degraus de .on-acc e .on-brass) já recua pela transparência, e recuar de novo tiraria o símbolo do piso.
+ * Quem decide o lado é o próprio número (luminosidade
+ * acima de --sym-mid, 0,62, é "claro"), então vale igual nos dois temas e em cartões escuros dentro de página clara. Texto
+ * cinza (--muted) tem pouca folga e quase não recua; texto grafite recua bastante. Sobre superfície sólida de meio-tom (botão
+ * primário) use `.on-solid` (`.on-acc` e `.on-brass` já o incluem): recuo curto e limites 0,30 / 0,90. Sem relative color syntax (navegadores antigos) cai
+ * para opacidade 0,8 (0,86 no destaque). tests/symbol-contrast.test.js confere cada cor de texto sobre cada superfície.
+ *
+ * TABELAS E EXTRATOS. `.sx` é a área de rolagem horizontal: `-webkit-overflow-scrolling:touch`, barra fina e uma
+ * máscara que esmaece só a borda com mais conteúdo (CSS puro onde há scroll-driven animations; fp-ui.js nos demais).
+ * `.sx-col` esmaece só a direita; `.sx-y` rola na vertical (altura máxima em --sx-h). Dentro: `.tbl` (largura mínima em
+ * --tbl-min: abaixo disso rola, acima disso a tabela se ajusta), `.tr` (grade em --cols), `.th` (cabeçalho fixo com blur),
+ * `.grp` (cabeçalho de grupo, como o dia: fixo logo abaixo do cabeçalho) e `.col-s` (primeira coluna fixa, com divisória e
+ * sombra que só aparecem quando há conteúdo escondido atrás). Células: `.td` (respiro de --cell-py / --cell-px), `.td-f`
+ * (conteúdo em linha), `.td-w` (a etiqueta desce para a linha de baixo quando falta espaço), `.td-2` (nome + subtexto),
+ * `.td-r` (à direita: valores). A macro Jinja templates/macros/tabela.html escreve tudo isso.
+ *
+ * TEXTO DEFENSIVO. Todo filho de flex ou grade pode encolher (`min-width:0`), exceto números e botões. `.trunc`
+ * (reticências; escreva sempre o `title`), `.trunc-2` / `.trunc-3` (linhas), `.brk`, `.nw`. `text-wrap:balance` nos
+ * títulos e em `.bal`; `text-wrap:pretty` nos parágrafos. Quando falta espaço, encolhe a descrição, nunca o valor.
+ *
+ * CASCA E PÁGINA. `.shell`: barra lateral (--side-w: 232 px; 76 px, só ícones, de 1100 px para baixo) + conteúdo, com altura
+ * mínima da janela. `.page` é o <main>: respiro --page-px / --page-py, espaço --page-gap entre blocos, e é o contêiner de
+ * consulta «page» (container: page / inline-size): o que muda por espaço decide pela largura do CONTEÚDO, não da janela.
+ * `.split` + <aside>: coluna principal e lateral (--aside-w); com menos de 960 px de conteúdo a lateral vira uma linha
+ * abaixo (`.split-m` mantém as duas colunas até 800 px). `.kpis`: faixa de indicadores, colunas auto-fit com mínimo --kpi-min
+ * e divisórias de 1 px. `.pad` / `.pad-s`: respiro interno de cartões (--pad-x/y e --pad-s-x/y).
+ *
+ * BENTO. `.bento` é auto-fit com mínimo --bento-min (o cartão nunca fica mais estreito que isso); --tile-h dá a altura
+ * mínima dos cartões. `.span-2` ocupa duas colunas só quando o contêiner «page» tem 1000 px ou mais; antes disso é a
+ * linha inteira (nunca cria coluna fantasma). `.span-all` é sempre a linha inteira.
+ *
+ * COMPACTO (laptops, 1024 a 1366 px). Os tokens mudam com a janela, em dois degraus; nenhum quadro repete os números:
+ *   ≤ 1280 px   --cell-py/px 10/12 (antes 14/24) · --cell-gap 12 · --page-px/py 28 · --page-gap 20 · --bento-min 300 ·
+ *               --bento-gap 16 · --pad-x/y 22/20 · --pad-s-x/y 16/14 · --aside-w 340 · --th-h 36 · --kpi-min 184
+ *   ≤ 1100 px   --page-px 20 · --bento-min 280 · barra lateral em trilho (--side-w 76)
+ * `.cmp` aplica o conjunto compacto a um pedaço da página, sem depender da janela (demonstrações e testes).
+ * Conferência: `node tools/audit-compact.js URL…` abre a página em 1024, 1180, 1280, 1366 e 1440 px e procura estouro
+ * lateral, texto sobreposto ou cortado, valor truncado ou quebrado e cartão espremido.
+ *
+ * SUPERFÍCIES. Cantos contínuos (squircle) por `corner-shape` onde há suporte; senão, raio circular comum.
+ * `.pill` e `.circle` ficam de fora (pílulas e círculos continuam círculos).
+ * Equivalências Tailwind: border-neutral-200/80 → var(--line); rounded-2xl + corner-shape → .sq; active:scale-[0.98] →
+ * button:active; tabular-nums / tracking-tight → .nums / .tight; backdrop-blur-md → .glass.
+ * Fontes: autohospedadas (fonts/fonts.css). Nenhuma requisição externa.
+ *
+ * PRIVACY MODE (opt-in, 100 % client-side; the default is every value crisp). Frosted blur masking: `filter: blur()`, never
+ * placeholder characters. Controller: fp-privacy.js. Controls (eye, gear, settings sheet): fp-privacy.css. Tokens:
+ *   --privacy-blur: blur(8px);               mask radius for body text; tesseract digit recall through it is 7 % at most up to 44 px
+ *   --privacy-blur-lg: blur(max(8px, .3em)); radius that grows with the type: .display, .money--display, [data-private-size="lg"].
+ *                                            An 84 px amount stays 96-97 % legible through blur(8px) and at 7 % or less through this one
+ *   --privacy-peek-opacity: 0.15;            opacity a value starts from when it un-blurs on a peek (180 ms micro-feedback)
+ *   --privacy-ms: 180ms;  --privacy-intent: 120ms;   transition length · hover-intent delay before a peek starts
+ *   state    <html data-privacy-mask="networth accounts …"> (fp-privacy.js writes it from localStorage `fp_privacy_settings` before
+ *            first paint). Groups: networth · accounts · investments · cards · transactions. Absent or empty = nothing masked.
+ *   target   data-private="<group>" on the value, an inline element (never a <td> or a <tr>). A `.money` keeps its currency
+ *            symbol crisp in --text-secondary and blurs sign + amount; any other element blurs as a whole. Do not nest targets.
+ *   peek     :hover on the value or on its nearest [data-peek-scope] (CSS only, after --privacy-intent) · keyboard focus
+ *            (:focus-visible on the value, :has(:focus-visible) on the scope) · tap-and-hold (fp-privacy.js sets data-peek="true").
+ *   layout   `filter` does not touch the layout box: CLS = 0, the tabular-nums advance widths, the line height and the symbol
+ *            position are identical masked and unmasked. The blurred value keeps the exact pixel box of the crisp one.
+ *   limits   a visual deterrent (shoulder-surfing, screen sharing), not a security boundary: the value stays in the DOM.
  */
+
 :root{
+color-scheme:light;
 --ease:cubic-bezier(.22,1,.36,1);
 --sp-press:cubic-bezier(.2,.9,.3,1.02);--d-press:310ms;
 --sp-ui:cubic-bezier(.22,1,.36,1);--d-ui:380ms;
 --sp-soft:cubic-bezier(.22,1,.36,1);--d-soft:650ms;
 --sp-pop:cubic-bezier(.34,1.4,.64,1);--d-pop:340ms;
 --sp-roll:cubic-bezier(.16,1,.3,1);--d-roll:900ms;
+--sp-scrub:cubic-bezier(.22,1,.36,1);--d-scrub:360ms;
+--sp-morph:cubic-bezier(.22,1,.36,1);--d-morph:710ms;
+--k-press:700;--c-press:42;--k-ui:420;--c-ui:36;--k-soft:180;--c-soft:27;
+--k-pop:520;--c-pop:33;--k-roll:90;--c-roll:19;--k-scrub:576;--c-scrub:48;--k-morph:121;--c-morph:19.36;
+--serif:'Source Serif 4',Georgia,serif;--sans:'Public Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+--track-display:-.025em;--track-title:-.015em;--track-label:.06em;--track-label-12:.05em;
+color:var(--text-primary);
+--bg:#F3F6F2;--surface-0:var(--bg);--surface-1:#FFFFFF;--surface-2:#FFFFFF;--surface-3:var(--surface-2);
+--solid-1:#FFFFFF;--solid-2:#FFFFFF;
+--fill-1:#F3F6F2;--fill-2:#EEF2EF;--fill-3:#E7EDE8;--fill-4:#E3EAE5;--wash:rgba(255,255,255,.5);
+--text-primary:#14211B;--text-secondary:#4A5D53;--text-tertiary:#586A60;
+--text:var(--text-primary);--muted:var(--text-secondary);--axis:var(--text-tertiary);
+--on-accent:#FFFFFF;--on-accent-2:rgba(255,255,255,.82);--on-accent-3:rgba(255,255,255,.72);
+--on-brass:#0A2E24;--on-brass-2:rgba(10,46,36,.90);--on-brass-3:rgba(10,46,36,.84);
+--ink:#0A2E24;--ink-2:#12503F;--face-forest:#0B4A3A;--face-teal:#164452;--face-slate:#34403A;
+--accent:#0F5C45;--leaf:#2F8F6B;--mint:#4FB08A;--dv-ink:#0A2E24;--superavit:#3F9C79;--deficit:#A94A58;--dv-out:#C47F3C;--brass:#C9A24D;--pos-fg:#1B6148;--neg-fg:#8F2A39;
+--cat-forest:var(--accent);--cat-green:#3A9A74;--cat-amber:#D08A3C;--cat-teal:#2B7A8C;--cat-rose:#B5546F;--cat-violet:#6E5FA8;--cat-brown:#7C5C46;--cat-grey:#8C9A92;--cat-brass:var(--brass);--cat-blue:#4F76B0;--cat-magenta:#A0517F;--cat-steel:#3F5E78;--cat-coral:#C0576B;--cat-orchid:#B0709A;--cat-sky:#4C7FB5;--cat-sand:#8A7A55;--cat-copper:#A67C52;--cat-olive:#7A8F5A;--cat-mist:#BFCBC3;--cat-pink:#C98A9B;
+--brass-ink:#7A5A12;--brass-hi:#D9B25F;--info-fg:#1F6A7C;--dv-in:var(--superavit);--dv-cap:var(--deficit);
 --line:rgba(10,46,36,.10);--line-2:rgba(10,46,36,.20);--line-d:rgba(255,255,255,.10);
---sh-1:0 0 0 1px rgba(10,46,36,.06),0 1px 1px rgba(10,46,36,.03),0 2px 8px -2px rgba(10,46,36,.05);
---sh-2:0 0 0 1px rgba(10,46,36,.08),0 1px 2px rgba(10,46,36,.04),0 8px 20px -8px rgba(10,46,36,.12),0 20px 40px -24px rgba(10,46,36,.16);
---sh-3:0 0 0 1px rgba(10,46,36,.10),0 2px 4px rgba(10,46,36,.05),0 16px 32px -12px rgba(10,46,36,.16),0 48px 96px -32px rgba(10,46,36,.28);
---pos-bg:#E7F1EB;--pos-fg:#1B6148;--neg-bg:#F7E8EB;--neg-fg:#8F2A39;--warn-bg:#FBF3DC;--warn-fg:#7A5A12;--neu-bg:#EEF2EF;--neu-fg:#56685E;
---ring:rgba(15,92,69,.7)}
+--sh-c:0,0,0;
+--sh-1:0 1px 2px rgba(var(--sh-c),.04),0 8px 24px rgba(var(--sh-c),.03);
+--sh-2:0 2px 4px rgba(var(--sh-c),.05),0 12px 32px rgba(var(--sh-c),.06);
+--sh-3:0 4px 8px rgba(var(--sh-c),.06),0 24px 56px rgba(var(--sh-c),.10);
+--pos-bg:#E7F1EB;--neg-bg:#F7E8EB;--warn-bg:#FBF3DC;--warn-tint:#FBF7EA;--warn-fg:#7A5A12;--neu-bg:#EEF2EF;--neu-fg:var(--text-secondary);
+--line-3:#A9B8AF;--knob-off:#C4CEC8;--warn-line:#E5D3A2;--sh-ink:10,46,36;--sh-accent:15,92,69;
+--ring:rgba(15,92,69,.7);
+--under-2:transparent;--glass-bg:rgba(255,255,255,.86);--glass-bg-hi:rgba(255,255,255,.92);--tip-bg:rgba(255,255,255,.86);--glass-line:rgba(10,46,36,.08);--scrim:rgba(8,36,28,.52);
+--tip-sh:0 0 0 1px rgba(10,46,36,.04),0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+--seg-bg:#E7EDE8;--seg-pill:#FFFFFF;--seg-pill-sh:0 0 0 .5px rgba(10,46,36,.10),0 1px 2px rgba(0,0,0,.08),0 4px 10px -4px rgba(0,0,0,.10);
+--sk-a:#E7EDE8;--sk-b:#F6F9F5;
+--dv-grid:#B8C6BD;--dv-avg:#6B7D73;--dv-guide:rgba(10,46,36,.42);--dv-halo:rgba(10,46,36,.16);
+--dv-stroke:2.5px;--dv-stroke-2:2px;--dv-ref-stroke:1.5px;--dv-fill-from:.12;--dv-fill-to:0;
+--dv-marker:10px;--dv-marker-ring:1.5px;--dv-halo-pad:3.5px;--dv-dot-bg:#FFFFFF;
+--cell-py:14px;--cell-px:24px;--cell-gap:16px;--page-px:44px;--page-py:34px;--page-gap:26px;--bento-min:320px;--bento-gap:20px;--pad-x:28px;--pad-y:24px;--pad-s-x:24px;--pad-s-y:18px;--side-w:232px;--aside-w:380px;--th-h:40px;--sx-bar:12px;--kpi-min:200px;--sx-fade:28px;--sx-sh:rgba(10,46,36,.09);--th-bg:rgba(243,246,242,.82);--row-hover:rgba(15,92,69,.045);--z-sticky:2;--z-head:3;--z-pop:30;--z-modal:60;--sym-k:.5;--sym-k-lg:.3;--sym-mid:.62;--sym-bl:.46;--sym-bd:.74}
 @supports (transition-timing-function:linear(0,1)){:root{
 --sp-press:linear(0, 0.0157, 0.057, 0.1159, 0.1863, 0.263, 0.3422, 0.4208, 0.4967, 0.5682, 0.6344, 0.6945, 0.7485, 0.7961, 0.8377, 0.8735, 0.9039, 0.9294, 0.9505, 0.9676, 0.9814, 0.9922, 1.0004, 1.0066, 1.0109, 1.0138, 1.0156, 1.0164, 1.0166, 1.0162, 1.0154, 1.0143, 1.0131, 1.0118, 1.0105, 1.0092, 1.008, 1.0068, 1.0058, 1.0048, 1.0039, 1.0032, 1.0025, 1.0019, 1);
 --sp-ui:linear(0, 0.0141, 0.0509, 0.1034, 0.1659, 0.2342, 0.3047, 0.3751, 0.4434, 0.5085, 0.5693, 0.6255, 0.6767, 0.7229, 0.7642, 0.8008, 0.833, 0.861, 0.8853, 0.9062, 0.924, 0.9391, 0.9518, 0.9624, 0.9712, 0.9784, 0.9843, 0.989, 0.9927, 0.9957, 0.9979, 0.9997, 1.0009, 1.0018, 1.0025, 1.0028, 1.003, 1.0031, 1.0031, 1.003, 1.0028, 1.0026, 1.0024, 1.0022, 1);
 --sp-soft:linear(0, 0.0172, 0.0605, 0.1199, 0.1882, 0.2602, 0.3324, 0.4024, 0.4687, 0.5303, 0.5869, 0.6381, 0.6842, 0.7254, 0.7618, 0.794, 0.8222, 0.8469, 0.8684, 0.8871, 0.9033, 0.9173, 0.9293, 0.9397, 0.9486, 0.9562, 0.9628, 0.9684, 0.9731, 0.9772, 0.9807, 0.9836, 0.9861, 0.9883, 0.9901, 0.9916, 0.9929, 0.994, 0.9949, 0.9957, 0.9964, 0.997, 0.9974, 0.9978, 1);
 --sp-pop:linear(0, 0.0142, 0.0522, 0.1076, 0.1749, 0.2496, 0.328, 0.4071, 0.4846, 0.5588, 0.6283, 0.6923, 0.7504, 0.8022, 0.8477, 0.8872, 0.9208, 0.9491, 0.9724, 0.9912, 1.006, 1.0173, 1.0256, 1.0313, 1.0349, 1.0367, 1.0371, 1.0364, 1.0349, 1.0327, 1.0302, 1.0274, 1.0245, 1.0215, 1.0187, 1.0159, 1.0134, 1.011, 1.0089, 1.007, 1.0054, 1.004, 1.0027, 1.0017, 1);
---sp-roll:linear(0, 0.0166, 0.0584, 0.116, 0.1826, 0.2531, 0.3242, 0.3934, 0.4592, 0.5206, 0.5772, 0.6287, 0.6751, 0.7167, 0.7537, 0.7865, 0.8153, 0.8406, 0.8628, 0.882, 0.8987, 0.9132, 0.9258, 0.9366, 0.9459, 0.9538, 0.9607, 0.9666, 0.9716, 0.9759, 0.9795, 0.9826, 0.9853, 0.9875, 0.9895, 0.9911, 0.9925, 0.9936, 0.9946, 0.9955, 0.9962, 0.9968, 0.9973, 0.9977, 1)}}
-:root{
---dv-ink:#0A2E24;--dv-in:#3F9C79;--dv-out:#C47F3C;--dv-cap:#A94A58;--dv-avg:#6B7D73;
---dv-grid:#B8C6BD;--dv-axis:#5F7167;--dv-guide:rgba(10,46,36,.30);--dv-halo:rgba(10,46,36,.12);
---dv-stroke:2.5px;--dv-stroke-2:2px;--dv-ref-stroke:1.5px;--dv-fill-from:.12;--dv-fill-to:0;
---dv-marker:13px;--dv-marker-ring:2.5px;--dv-halo-size:30px}
-.dv-tip{background:rgba(255,255,255,.80);-webkit-backdrop-filter:saturate(180%) blur(14px);backdrop-filter:saturate(180%) blur(14px);border:1px solid rgba(10,46,36,.08);border-radius:12px;box-shadow:0 0 0 1px rgba(10,46,36,.04),0 1px 2px rgba(10,46,36,.06),0 8px 20px -8px rgba(10,46,36,.20)}
-.card{background:#FFFFFF;border:1px solid var(--line);border-radius:20px;box-shadow:var(--sh-1);min-width:0}
+--sp-roll:linear(0, 0.0166, 0.0584, 0.116, 0.1826, 0.2531, 0.3242, 0.3934, 0.4592, 0.5206, 0.5772, 0.6287, 0.6751, 0.7167, 0.7537, 0.7865, 0.8153, 0.8406, 0.8628, 0.882, 0.8987, 0.9132, 0.9258, 0.9366, 0.9459, 0.9538, 0.9607, 0.9666, 0.9716, 0.9759, 0.9795, 0.9826, 0.9853, 0.9875, 0.9895, 0.9911, 0.9925, 0.9936, 0.9946, 0.9955, 0.9962, 0.9968, 0.9973, 0.9977, 1);
+--sp-scrub:linear(0, 0.0169, 0.0596, 0.1183, 0.186, 0.2576, 0.3295, 0.3993, 0.4656, 0.5274, 0.5841, 0.6356, 0.6819, 0.7234, 0.7601, 0.7926, 0.8211, 0.846, 0.8677, 0.8866, 0.9029, 0.9171, 0.9292, 0.9397, 0.9487, 0.9564, 0.963, 0.9686, 0.9734, 0.9775, 0.981, 0.9839, 0.9864, 0.9885, 0.9903, 0.9918, 0.9931, 0.9942, 0.9951, 0.9959, 0.9966, 0.9971, 0.9976, 0.998, 1);
+--sp-morph:linear(0, 0.0142, 0.0512, 0.1039, 0.1666, 0.235, 0.3057, 0.3761, 0.4445, 0.5096, 0.5704, 0.6265, 0.6776, 0.7237, 0.7649, 0.8014, 0.8334, 0.8614, 0.8856, 0.9064, 0.9241, 0.9391, 0.9518, 0.9623, 0.9711, 0.9782, 0.9841, 0.9888, 0.9925, 0.9955, 0.9977, 0.9995, 1.0007, 1.0016, 1.0023, 1.0027, 1.0029, 1.003, 1.0029, 1.0028, 1.0027, 1.0025, 1.0023, 1.0021, 1)}}
+@supports (color:color(display-p3 1 1 1)){:root{--accent:color(display-p3 0.1173 0.3638 0.27);--leaf:color(display-p3 0.2429 0.5651 0.4177);--mint:color(display-p3 0.3539 0.6963 0.5382);--dv-ink:color(display-p3 0.0603 0.1819 0.1414);--superavit:color(display-p3 0.292 0.6174 0.4719);--deficit:color(display-p3 0.6462 0.2823 0.3356);--dv-out:color(display-p3 0.7566 0.4955 0.214);--brass:color(display-p3 0.7793 0.6365 0.2959);--pos-fg:color(display-p3 0.1674 0.3801 0.2843);--neg-fg:color(display-p3 0.5364 0.1678 0.2186)}}
+
+:root[data-theme="dark"],.dk,.ink,.glass-d{color-scheme:dark;color:var(--text-primary);--bg:#08100D;--surface-0:var(--bg);--surface-1:rgba(255,255,255,.05);--surface-2:rgba(255,255,255,.09);--surface-3:var(--surface-2);--solid-1:#141C19;--solid-2:#1E2623;--fill-1:rgba(255,255,255,.05);--fill-2:rgba(255,255,255,.07);--fill-3:rgba(255,255,255,.10);--fill-4:rgba(255,255,255,.12);--wash:rgba(255,255,255,.03);--text-primary:#E9F1EC;--text-secondary:#B7C7BD;--text-tertiary:#A1B4A9;--text:var(--text-primary);--muted:var(--text-secondary);--axis:var(--text-tertiary);--on-accent:#06140F;--on-accent-2:rgba(6,20,15,.82);--on-accent-3:rgba(6,20,15,.74);--on-brass:#0A2E24;--on-brass-2:rgba(10,46,36,.90);--on-brass-3:rgba(10,46,36,.84);--ink:#0A2E24;--ink-2:#12503F;--face-forest:#0B4A3A;--face-teal:#164452;--face-slate:#34403A;--accent:#5CC49B;--leaf:#4FB08A;--mint:#7FD3B0;--dv-ink:#DDF0E6;--superavit:#5BC49B;--deficit:#E0707F;--dv-out:#E09A57;--brass:#D9B25F;--pos-fg:#7FD3B0;--neg-fg:#F0A0AB;--cat-forest:var(--accent);--cat-green:#4FB08A;--cat-amber:#D08A3C;--cat-teal:#3F96A8;--cat-rose:#C8627F;--cat-violet:#8B7DC6;--cat-brown:#A88063;--cat-grey:#8C9A92;--cat-brass:var(--brass);--cat-blue:#6A92CC;--cat-magenta:#BD6C9B;--cat-steel:#6C8CA8;--cat-coral:#D06A7E;--cat-orchid:#B0709A;--cat-sky:#5F96CB;--cat-sand:#A2916A;--cat-copper:#A67C52;--cat-olive:#7A8F5A;--cat-mist:#7F8D85;--cat-pink:#D49AAA;--brass-ink:#E6C77F;--brass-hi:#D9B25F;--info-fg:#7CC4D4;--dv-in:var(--superavit);--dv-cap:var(--deficit);--line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.14);--line-d:rgba(255,255,255,.10);--sh-c:0,0,0;--sh-1:inset 0 1px 0 rgba(255,255,255,.05);--sh-2:inset 0 1px 0 rgba(255,255,255,.07);--sh-3:inset 0 1px 0 rgba(255,255,255,.09);--pos-bg:rgba(91,196,155,.16);--neg-bg:rgba(224,112,127,.16);--warn-bg:rgba(217,178,95,.16);--warn-tint:rgba(217,178,95,.10);--warn-fg:#E6C77F;--neu-bg:rgba(255,255,255,.07);--neu-fg:var(--text-secondary);--line-3:rgba(255,255,255,.26);--knob-off:#7C8A83;--warn-line:rgba(217,178,95,.32);--sh-ink:0,0,0;--sh-accent:92,196,155;--ring:rgba(127,211,176,.75);--under-2:rgba(8,16,13,.86);--glass-bg:rgba(30,38,35,.86);--glass-bg-hi:rgba(30,38,35,.92);--tip-bg:rgba(30,38,35,.88);--glass-line:rgba(255,255,255,.12);--scrim:rgba(2,8,6,.72);--tip-sh:inset 0 1px 0 rgba(255,255,255,.08);--seg-bg:rgba(255,255,255,.07);--seg-pill:rgba(255,255,255,.16);--seg-pill-sh:inset 0 1px 0 rgba(255,255,255,.10);--sk-a:rgba(255,255,255,.06);--sk-b:rgba(255,255,255,.13);--dv-grid:rgba(255,255,255,.18);--dv-avg:#8FA399;--dv-guide:rgba(221,240,230,.45);--dv-halo:rgba(221,240,230,.20);--dv-dot-bg:#08100D;--sx-sh:rgba(255,255,255,.06);--th-bg:rgba(8,16,13,.78);--row-hover:rgba(255,255,255,.04);--sym-bd:.85}
+@supports (color:color(display-p3 1 1 1)){:root[data-theme="dark"],.dk,.ink,.glass-d{--accent:color(display-p3 0.4188 0.7724 0.6072);--leaf:color(display-p3 0.3652 0.6937 0.5405);--mint:color(display-p3 0.5441 0.829 0.6912);--dv-ink:color(display-p3 0.8765 0.9407 0.9028);--superavit:color(display-p3 0.4098 0.7739 0.606);--deficit:color(display-p3 0.8518 0.4367 0.4898);--dv-out:color(display-p3 0.8613 0.6044 0.3321);--brass:color(display-p3 0.8389 0.7004 0.3773);--pos-fg:color(display-p3 0.5505 0.827 0.6927);--neg-fg:color(display-p3 0.9111 0.6313 0.668)}}
+@media (prefers-color-scheme:dark){
+:root:not([data-theme="light"]){color-scheme:dark;color:var(--text-primary);--bg:#08100D;--surface-0:var(--bg);--surface-1:rgba(255,255,255,.05);--surface-2:rgba(255,255,255,.09);--surface-3:var(--surface-2);--solid-1:#141C19;--solid-2:#1E2623;--fill-1:rgba(255,255,255,.05);--fill-2:rgba(255,255,255,.07);--fill-3:rgba(255,255,255,.10);--fill-4:rgba(255,255,255,.12);--wash:rgba(255,255,255,.03);--text-primary:#E9F1EC;--text-secondary:#B7C7BD;--text-tertiary:#A1B4A9;--text:var(--text-primary);--muted:var(--text-secondary);--axis:var(--text-tertiary);--on-accent:#06140F;--on-accent-2:rgba(6,20,15,.82);--on-accent-3:rgba(6,20,15,.74);--on-brass:#0A2E24;--on-brass-2:rgba(10,46,36,.90);--on-brass-3:rgba(10,46,36,.84);--ink:#0A2E24;--ink-2:#12503F;--face-forest:#0B4A3A;--face-teal:#164452;--face-slate:#34403A;--accent:#5CC49B;--leaf:#4FB08A;--mint:#7FD3B0;--dv-ink:#DDF0E6;--superavit:#5BC49B;--deficit:#E0707F;--dv-out:#E09A57;--brass:#D9B25F;--pos-fg:#7FD3B0;--neg-fg:#F0A0AB;--cat-forest:var(--accent);--cat-green:#4FB08A;--cat-amber:#D08A3C;--cat-teal:#3F96A8;--cat-rose:#C8627F;--cat-violet:#8B7DC6;--cat-brown:#A88063;--cat-grey:#8C9A92;--cat-brass:var(--brass);--cat-blue:#6A92CC;--cat-magenta:#BD6C9B;--cat-steel:#6C8CA8;--cat-coral:#D06A7E;--cat-orchid:#B0709A;--cat-sky:#5F96CB;--cat-sand:#A2916A;--cat-copper:#A67C52;--cat-olive:#7A8F5A;--cat-mist:#7F8D85;--cat-pink:#D49AAA;--brass-ink:#E6C77F;--brass-hi:#D9B25F;--info-fg:#7CC4D4;--dv-in:var(--superavit);--dv-cap:var(--deficit);--line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.14);--line-d:rgba(255,255,255,.10);--sh-c:0,0,0;--sh-1:inset 0 1px 0 rgba(255,255,255,.05);--sh-2:inset 0 1px 0 rgba(255,255,255,.07);--sh-3:inset 0 1px 0 rgba(255,255,255,.09);--pos-bg:rgba(91,196,155,.16);--neg-bg:rgba(224,112,127,.16);--warn-bg:rgba(217,178,95,.16);--warn-tint:rgba(217,178,95,.10);--warn-fg:#E6C77F;--neu-bg:rgba(255,255,255,.07);--neu-fg:var(--text-secondary);--line-3:rgba(255,255,255,.26);--knob-off:#7C8A83;--warn-line:rgba(217,178,95,.32);--sh-ink:0,0,0;--sh-accent:92,196,155;--ring:rgba(127,211,176,.75);--under-2:rgba(8,16,13,.86);--glass-bg:rgba(30,38,35,.86);--glass-bg-hi:rgba(30,38,35,.92);--tip-bg:rgba(30,38,35,.88);--glass-line:rgba(255,255,255,.12);--scrim:rgba(2,8,6,.72);--tip-sh:inset 0 1px 0 rgba(255,255,255,.08);--seg-bg:rgba(255,255,255,.07);--seg-pill:rgba(255,255,255,.16);--seg-pill-sh:inset 0 1px 0 rgba(255,255,255,.10);--sk-a:rgba(255,255,255,.06);--sk-b:rgba(255,255,255,.13);--dv-grid:rgba(255,255,255,.18);--dv-avg:#8FA399;--dv-guide:rgba(221,240,230,.45);--dv-halo:rgba(221,240,230,.20);--dv-dot-bg:#08100D;--sx-sh:rgba(255,255,255,.06);--th-bg:rgba(8,16,13,.78);--row-hover:rgba(255,255,255,.04);--sym-bd:.85}
+@supports (color:color(display-p3 1 1 1)){:root:not([data-theme="light"]){--accent:color(display-p3 0.4188 0.7724 0.6072);--leaf:color(display-p3 0.3652 0.6937 0.5405);--mint:color(display-p3 0.5441 0.829 0.6912);--dv-ink:color(display-p3 0.8765 0.9407 0.9028);--superavit:color(display-p3 0.4098 0.7739 0.606);--deficit:color(display-p3 0.8518 0.4367 0.4898);--dv-out:color(display-p3 0.8613 0.6044 0.3321);--brass:color(display-p3 0.8389 0.7004 0.3773);--pos-fg:color(display-p3 0.5505 0.827 0.6927);--neg-fg:color(display-p3 0.9111 0.6313 0.668)}}
+}
 body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-variant-numeric:lining-nums tabular-nums}
+button,input,select,textarea{font-variant-numeric:lining-nums tabular-nums}
 a,button,input,textarea,select{outline:2px solid transparent;outline-offset:0;transition:background-color .2s var(--ease),color .2s var(--ease),border-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui),transform var(--d-press) var(--sp-press),opacity .2s var(--ease),outline-color .2s var(--ease),outline-offset var(--d-ui) var(--sp-ui)}
 :focus-visible{outline-color:var(--ring);outline-offset:3px}
 button{cursor:pointer}
 button:not(:disabled):active,.press:active,a[style*="display: flex"]:active,a[style*="display: inline-flex"]:active{transform:scale(.98);transition-duration:.12s}
-.lift{box-shadow:var(--sh-1);transition:transform var(--d-ui) var(--sp-ui),box-shadow var(--d-ui) var(--sp-ui),border-color .2s var(--ease)}
+.lift{box-shadow:var(--sh-1);transition:transform var(--d-ui) var(--sp-ui),box-shadow var(--d-ui) var(--sp-ui),border-color .2s var(--ease),background-color var(--d-ui) var(--sp-ui)}
 .lift:hover{transform:translateY(-2px);box-shadow:var(--sh-2)}
 .row{transition:background-color .16s var(--ease)}
 .row:hover{background-color:rgba(15,92,69,.045)}
-section[style*="border-radius: 16px"]:not([style*="border-bottom: 0"]){box-shadow:0 1px 1px rgba(10,46,36,.03),0 4px 14px -6px rgba(10,46,36,.07);border-color:var(--line)!important}
-.glass{background:rgba(255,255,255,.74);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px)}
+.dk .row:hover,[data-theme="dark"] .row:hover{background-color:rgba(255,255,255,.04)}
+section[style*="border-radius: 16px"]:not([style*="border-bottom: 0"]){box-shadow:var(--sh-1);border-color:var(--line)!important}
+.glass{background:var(--glass-bg);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px)}
 .glass-d{background:rgba(10,46,36,.70);-webkit-backdrop-filter:saturate(160%) blur(20px);backdrop-filter:saturate(160%) blur(20px)}
 .dl{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:12.5px;font-weight:500;line-height:1.55;letter-spacing:0;white-space:nowrap}
 .dl-pos{background:var(--pos-bg);color:var(--pos-fg)}
@@ -134,12 +279,12 @@ section[style*="border-radius: 16px"]:not([style*="border-bottom: 0"]){box-shado
 .bars>*:nth-child(13){animation-delay:600ms}
 .bars>*:nth-child(14){animation-delay:645ms}
 .bars>* .grow{animation-delay:inherit}
-.ul{background:linear-gradient(#0F5C45,#0F5C45) 0 100%/100% 2px no-repeat;animation:ul-draw var(--d-roll) var(--sp-roll) backwards}
-.ulb{background:linear-gradient(#C9A24D,#C9A24D) 0 100%/100% 2px no-repeat;animation:ul-draw var(--d-roll) var(--sp-roll) backwards}
+.ul{background:linear-gradient(var(--accent),var(--accent)) 0 100%/100% 2px no-repeat;animation:ul-draw var(--d-roll) var(--sp-roll) backwards}
+.ulb{background:linear-gradient(var(--brass),var(--brass)) 0 100%/100% 2px no-repeat;animation:ul-draw var(--d-roll) var(--sp-roll) backwards}
 .draw{stroke-dasharray:100;animation:stroke-draw var(--d-roll) var(--sp-roll) backwards}
 .live{border-radius:50%;animation:ripple 2.4s ease-out infinite}
-.caret{display:inline-block;width:2px;height:1em;margin-left:2px;background:#0F5C45;vertical-align:text-bottom;animation:caret 1s steps(1) infinite}
-.sk{background:linear-gradient(90deg,#E7EDE8 25%,#F6F9F5 50%,#E7EDE8 75%) 0 0/200% 100%;animation:shimmer 1.7s linear infinite;border-radius:6px}
+.caret{display:inline-block;width:2px;height:1em;margin-left:2px;background:var(--accent);vertical-align:text-bottom;animation:caret 1s steps(1) infinite}
+.sk{background:linear-gradient(90deg,var(--sk-a) 25%,var(--sk-b) 50%,var(--sk-a) 75%) 0 0/200% 100%;animation:shimmer 1.7s linear infinite;border-radius:6px}
 .sk-d{background:linear-gradient(90deg,rgba(255,255,255,.07) 25%,rgba(255,255,255,.16) 50%,rgba(255,255,255,.07) 75%) 0 0/200% 100%;animation:shimmer 1.7s linear infinite;border-radius:6px}
 .sheen{position:relative;overflow:hidden}
 .sheen::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.26) 50%,transparent 65%);transform:translateX(-130%);pointer-events:none}
@@ -148,8 +293,210 @@ section[style*="border-radius: 16px"]:not([style*="border-bottom: 0"]){box-shado
 .od-s{position:absolute;left:0;top:0;display:block;transition:transform var(--d-roll) var(--sp-roll);animation:od-roll calc(var(--d-roll) + 500ms) var(--sp-roll) backwards}
 .od-s i{display:block;height:1em;line-height:1;font-style:normal}
 @supports (animation-timeline:view()){.sr{animation:rise linear both;animation-timeline:view();animation-range:entry 4% entry 42%}}
-@supports (corner-shape:squircle){[style*="border-radius: 14px"],[style*="border-radius: 16px"],[style*="border-radius: 18px"],[style*="border-radius: 20px"],.sq,.card,.sw8,.seg,.seg i,.btnp,.btng,.btns,.btnb,.chipb,.in,.tip{corner-shape:squircle}}
+@supports (corner-shape:squircle){[style*="border-radius: 10px"],[style*="border-radius: 11px"],[style*="border-radius: 12px"],[style*="border-radius: 13px"],[style*="border-radius: 14px"],[style*="border-radius: 15px"],[style*="border-radius: 16px"],[style*="border-radius: 18px"],[style*="border-radius: 20px"],[style*="border-radius: 22px"],[style*="border-radius: 24px"],[style*="border-radius: 28px"],.sq,.card,.card-2,.card-3,.s1,.s2,.s3,.sw8,.seg,.seg i,.btnp,.btng,.btns,.btnb,.chipb,.in,.tip,.dv-tip,.fp-range,.fp-range button,.fp-card,.fp-sheet{corner-shape:squircle}.pill,.circle{corner-shape:round}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-delay:0ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}.sr{animation:none!important}}
+.s1{background:linear-gradient(var(--surface-1),var(--surface-1)) var(--bg)}
+.s2{background:linear-gradient(var(--surface-2),var(--surface-2)) var(--bg)}
+.s3{background:linear-gradient(var(--surface-2),var(--surface-2)) var(--bg)}
+.card{background:linear-gradient(var(--surface-1),var(--surface-1)) var(--bg);border:1px solid var(--line);border-radius:20px;box-shadow:var(--sh-1);min-width:0}
+.card-2,.card-3{background:linear-gradient(var(--surface-2),var(--surface-2)) var(--under-2);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border:1px solid var(--glass-line);border-radius:20px;box-shadow:var(--sh-2);min-width:0}
+.card-3{border-radius:22px;box-shadow:var(--sh-3)}
+@supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.card-2,.card-3{background:linear-gradient(var(--surface-2),var(--surface-2)) var(--bg)}}
+/* anel de seleção: resolve na raiz (ou no .dk), então uma face .ink (que religa --bg e --accent ao escuro) herda a cor da PÁGINA em vez de usar a sua */
+:root,.dk{--sel-gap:var(--bg);--sel-ring:var(--accent)}
+.ink{background-color:var(--ink);color:var(--text-primary);--text-secondary:#C0CFC5;--text-tertiary:#B0C2B8}
+.on-acc{color:var(--on-accent);--text-primary:var(--on-accent);--text-secondary:var(--on-accent-2);--text-tertiary:var(--on-accent-3);--text:var(--text-primary);--muted:var(--text-secondary);--axis:var(--text-tertiary)}
+.on-brass{color:var(--on-brass);--text-primary:var(--on-brass);--text-secondary:var(--on-brass-2);--text-tertiary:var(--on-brass-3);--text:var(--text-primary);--muted:var(--text-secondary);--axis:var(--text-tertiary)}
+.t1{color:var(--text-primary)}.t2{color:var(--text-secondary)}.t3{color:var(--text-tertiary)}
+::placeholder{color:var(--text-tertiary);opacity:1}
+@media (max-width:1280px){:root{--cell-py:10px;--cell-px:12px;--cell-gap:12px;--page-px:28px;--page-py:28px;--page-gap:20px;--bento-min:300px;--bento-gap:16px;--pad-x:22px;--pad-y:20px;--pad-s-x:16px;--pad-s-y:14px;--aside-w:340px;--th-h:36px;--kpi-min:184px}}
+@media (max-width:1100px){:root{--page-px:20px;--bento-min:280px}}
+@media (min-width:400px) and (max-width:1100px){:root{--side-w:76px}}
+.cmp{--cell-py:10px;--cell-px:12px;--cell-gap:12px;--page-px:28px;--page-py:28px;--page-gap:20px;--bento-min:300px;--bento-gap:16px;--pad-x:22px;--pad-y:20px;--pad-s-x:16px;--pad-s-y:14px;--aside-w:340px;--th-h:36px;--kpi-min:184px}
+/* moeda: números nunca quebram nem encolhem; o símbolo recua para o número mandar */
+.money,.num,.pct{white-space:nowrap;flex:none;font-variant-numeric:lining-nums tabular-nums}
+.num{text-align:right}
+.money .currency-symbol{font-weight:500;opacity:.8}
+.money--display .currency-symbol{font-size:.5em;opacity:.86;letter-spacing:0}
+@supports (color:oklch(from red l c h)){
+.money .currency-symbol{--_k:var(--sym-k);--_up:clamp(0,(l - var(--sym-mid))*1000,1);--_lim:calc(var(--sym-bl) + (var(--sym-bd) - var(--sym-bl))*var(--_up));--_a:clamp(0,(alpha - .7)*3.4,1);opacity:1;color:oklch(from currentColor calc(l + (clamp(min(l,var(--_lim)),calc(l + ((1 - var(--_up)) - l)*var(--_k)),max(l,var(--_lim))) - l)*var(--_a)) c h)}
+.money--display .currency-symbol{--_k:var(--sym-k-lg)}
+}
+/* valor sobre superfície sólida de meio-tom (botão primário, selo cheio): o recuo é curto e o limite acompanha o fundo (claro: número branco, escuro: número escuro) */
+.on-solid,.on-acc,.on-brass{--sym-k:.15;--sym-k-lg:.15;--sym-bl:.30;--sym-bd:.90}
+.money--empty{color:var(--text-tertiary)}
+/* nós flexíveis e de grade: o filho pode encolher abaixo do conteúdo (o texto longo não estufa o pai); números e botões não encolhem */
+[style*="display: flex"]>*,[style*="display: inline-flex"]>*,[style*="display: grid"]>*,.fx>*,.gd>*{min-width:0}
+:is(.money,.num,.pct,.dl,.nw){min-width:max-content}
+.nw{white-space:nowrap}
+.trunc{display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trunc-2,.trunc-3{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;min-width:0;overflow-wrap:anywhere}
+.trunc-2{-webkit-line-clamp:2;line-clamp:2}.trunc-3{-webkit-line-clamp:3;line-clamp:3}
+.brk{overflow-wrap:anywhere;word-break:normal}
+h1,h2,h3,h4,.bal{text-wrap:balance}
+p,li,dd,figcaption,.pre{text-wrap:pretty}
+/* página e bento: ajustam com o viewport; o cartão nunca fica mais estreito que --bento-min */
+.page{box-sizing:border-box;min-width:0;padding:var(--page-py) var(--page-px) 64px;display:flex;flex-direction:column;gap:var(--page-gap)}
+.bento{display:grid;gap:var(--bento-gap);grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--bento-min)),1fr));align-items:stretch}
+.bento>*{min-width:0;min-height:var(--tile-h,0px)}
+.bento>.span-2,.bento>.span-all{grid-column:1/-1}
+@container page (min-width:1000px){.bento>.span-2{grid-column:span 2}}
+/* rolagem horizontal graciosa: esmaece só a borda que tem mais conteúdo (CSS puro onde há scroll-driven animations; fp-ui.js nos demais) */
+@property --fade-l{syntax:"<length>";inherits:true;initial-value:0px}
+@property --fade-r{syntax:"<length>";inherits:true;initial-value:0px}
+@property --sx-on{syntax:"<number>";inherits:true;initial-value:0}
+@keyframes sx-l{from{--fade-l:0px;--sx-on:0}to{--fade-l:var(--sx-fade);--sx-on:1}}
+@keyframes sx-r{from{--fade-r:var(--sx-fade)}to{--fade-r:0px}}
+.sx{position:relative;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent;transition:--fade-l .2s var(--ease),--fade-r .2s var(--ease),--sx-on .2s var(--ease);-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 var(--fade-l),#000 calc(100% - var(--fade-r)),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 var(--fade-l),#000 calc(100% - var(--fade-r)),transparent 100%)}
+.sx-col{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - var(--fade-r)),transparent 100%);mask-image:linear-gradient(90deg,#000 calc(100% - var(--fade-r)),transparent 100%)}
+.sx:focus-visible{outline-offset:-2px}
+.sx-y{overflow-y:auto;max-block-size:var(--sx-h,min(70vh,680px))}
+.sx[data-sx-l="1"]{--fade-l:var(--sx-fade);--sx-on:1}
+.sx[data-sx-r="1"]{--fade-r:var(--sx-fade)}
+@supports (animation-timeline:scroll()){.sx{transition:none;animation:sx-l linear both,sx-r linear both;animation-timeline:scroll(self inline),scroll(self inline);animation-range:0px var(--sx-fade),calc(100% - var(--sx-fade)) 100%}}
+/* tabela em grade: cabeçalho e primeira coluna fixos, célula com respiro vindo dos tokens.
+   --cell-px é o respiro das pontas da linha; entre colunas o espaço é --cell-gap (metade de cada lado, dentro da célula: a célula fixa cobre o que passa por baixo) */
+.tbl{min-width:var(--tbl-min,0px)}
+.tr{--hov:transparent;display:grid;grid-template-columns:var(--cols,minmax(0,1fr));align-items:center;border-bottom:1px solid var(--line);background:var(--hov)}
+.tr:hover{--hov:var(--row-hover)}
+.td{box-sizing:border-box;min-width:0;padding:var(--cell-py) calc(var(--cell-gap) / 2)}
+.tr>.td:first-child{padding-left:var(--cell-px)}
+.tr>.td:last-child{padding-right:var(--cell-px)}
+.tr>.td:nth-last-child(1 of .td){padding-right:var(--cell-px)}
+.td-f{display:flex;align-items:center;gap:calc(var(--cell-gap) * .7)}
+.td-w{display:flex;align-items:center;flex-wrap:wrap;gap:4px calc(var(--cell-gap) * .7)}
+.td-2{display:flex;flex-direction:column;justify-content:center;gap:1px}
+.td-2>small{font-size:12px;line-height:1.3;color:var(--text-secondary)}
+.td-r{text-align:right;justify-self:end}
+.th{--hov:transparent;position:sticky;top:0;z-index:var(--z-head);min-height:var(--th-h);background:var(--th-bg);-webkit-backdrop-filter:saturate(180%) blur(12px);backdrop-filter:saturate(180%) blur(12px);font-size:11.5px;font-weight:600;letter-spacing:var(--track-label);text-transform:uppercase;color:var(--text-secondary)}
+.th>.td{padding-block:0;align-self:stretch;align-content:center}
+.tr>.col-s{align-self:stretch;align-content:center}
+.th:hover{--hov:transparent}
+.grp{position:sticky;top:var(--th-h);z-index:calc(var(--z-head) - 1);padding:8px var(--cell-px);background:var(--th-bg);-webkit-backdrop-filter:saturate(180%) blur(12px);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line);font-size:11.5px;font-weight:600;letter-spacing:var(--track-label);color:var(--text-secondary)}
+.grp>*{position:sticky;left:var(--cell-px)}
+.col-s{position:sticky;left:0;z-index:var(--z-sticky);background:linear-gradient(var(--hov),var(--hov)),linear-gradient(var(--surface-1),var(--surface-1)) var(--bg)}
+.th .col-s{z-index:calc(var(--z-head) + 1);background:linear-gradient(var(--th-bg),var(--th-bg)),linear-gradient(var(--surface-1),var(--surface-1)) var(--bg)}
+.col-s::before{content:"";position:absolute;top:0;bottom:0;right:0;width:1px;background:var(--line-2);opacity:var(--sx-on,0);pointer-events:none}
+.col-s::after{content:"";position:absolute;top:0;bottom:0;left:100%;width:14px;background:linear-gradient(90deg,var(--sx-sh),transparent);opacity:var(--sx-on,0);pointer-events:none}
+/* rolagem vertical dentro da tabela (cabeçalho fixo): a faixa da barra de rolagem fica fora do esmaecimento */
+.sx-y{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 var(--fade-l),#000 calc(100% - var(--fade-r)),transparent 100%),linear-gradient(#000,#000);mask-image:linear-gradient(90deg,transparent 0,#000 var(--fade-l),#000 calc(100% - var(--fade-r)),transparent 100%),linear-gradient(#000,#000);-webkit-mask-size:calc(100% - var(--sx-bar)) 100%,var(--sx-bar) 100%;mask-size:calc(100% - var(--sx-bar)) 100%,var(--sx-bar) 100%;-webkit-mask-position:0 0,100% 0;mask-position:0 0,100% 0;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}
+.sx-y.sx-col{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - var(--fade-r)),transparent 100%),linear-gradient(#000,#000);mask-image:linear-gradient(90deg,#000 calc(100% - var(--fade-r)),transparent 100%),linear-gradient(#000,#000)}
+/* casca da página (barra lateral + conteúdo), coluna principal + lateral, faixa de indicadores e respiro de cartão.
+   .page é um contêiner de consulta: a lateral empilha quando o ESPAÇO do conteúdo acaba (960 px), não quando a janela chega a um número.
+   Atenção: @container mede a caixa de CONTEÚDO do contêiner (sem o padding): 960 px de conteúdo = janela de ~1248 px com a barra de 232 px.
+   .split-m mantém as duas colunas até 800 px (formulário + resumo). */
+.shell{display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);min-height:100vh}
+.page{container:page / inline-size}
+.split{display:grid;grid-template-columns:minmax(0,1fr) var(--aside-w);gap:var(--page-gap);align-items:start}
+.split>*{min-width:0}
+.split>aside{position:sticky;top:24px}
+@container page (max-width:959px){.split{grid-template-columns:minmax(0,1fr)}.split>aside{position:static}}
+@container page (min-width:800px) and (max-width:959px){.split.split-m{grid-template-columns:minmax(0,1fr) var(--aside-w)}.split.split-m>aside{position:sticky}}
+@container page (max-width:799px){.split.split-m{grid-template-columns:minmax(0,1fr)}.split.split-m>aside{position:static}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--kpi-min)),1fr));margin:-1px 0 0 -1px}
+.kpis>*{min-width:0;box-sizing:border-box;padding:var(--pad-s-y) var(--pad-s-x);box-shadow:inset 1px 0 0 var(--line),inset 0 1px 0 var(--line)}
+.pad{padding:var(--pad-y) var(--pad-x)}
+.pad-s{padding:var(--pad-s-y) var(--pad-s-x)}
+@media (prefers-reduced-motion:reduce){.sx{animation-duration:auto!important;animation-delay:0ms!important}}
+.dv-tip{background:var(--tip-bg);-webkit-backdrop-filter:saturate(180%) blur(14px);backdrop-filter:saturate(180%) blur(14px);border:1px solid var(--glass-line);border-radius:12px;box-shadow:var(--tip-sh)}
 .nums{font-variant-numeric:lining-nums tabular-nums}
-.tight{letter-spacing:-.02em}
-.overline{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.tight{letter-spacing:var(--track-display)}
+.display{font-family:var(--serif);font-weight:400;line-height:1.05;letter-spacing:var(--track-display);font-variant-numeric:lining-nums tabular-nums}
+.overline{font-size:11px;font-weight:600;letter-spacing:var(--track-label);text-transform:uppercase}
+.overline-12{font-size:12px;font-weight:600;letter-spacing:var(--track-label-12);text-transform:uppercase}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* privacy mode (opt-in): state = data-privacy-mask="<groups>" on any ancestor · target = data-private="<group>" · peek = hover | focus | [data-peek="true"] on the value or on its [data-peek-scope]. See the PRIVACY MODE paragraph above. */
+:root{
+  --privacy-blur: blur(8px);
+  --privacy-blur-lg: blur(max(8px, .3em));
+  --privacy-peek-opacity: 0.15;
+  --privacy-ms: 180ms;
+  --privacy-intent: 120ms;
+  --privacy-filter: var(--privacy-blur);
+}
+.display,.money--display,[data-private-size="lg"]{--privacy-filter:var(--privacy-blur-lg)}
+[data-privacy-mask~="networth"] [data-private="networth"]:not(.money),
+[data-privacy-mask~="networth"] .money[data-private="networth"]>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-private="accounts"]:not(.money),
+[data-privacy-mask~="accounts"] .money[data-private="accounts"]>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-private="investments"]:not(.money),
+[data-privacy-mask~="investments"] .money[data-private="investments"]>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-private="cards"]:not(.money),
+[data-privacy-mask~="cards"] .money[data-private="cards"]>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-private="transactions"]:not(.money),
+[data-privacy-mask~="transactions"] .money[data-private="transactions"]>:not(.currency-symbol){filter:var(--privacy-filter);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+[data-privacy-mask~="networth"] .money[data-private="networth"],
+[data-privacy-mask~="accounts"] .money[data-private="accounts"],
+[data-privacy-mask~="investments"] .money[data-private="investments"],
+[data-privacy-mask~="cards"] .money[data-private="cards"],
+[data-privacy-mask~="transactions"] .money[data-private="transactions"]{isolation:isolate}
+[data-privacy-mask~="networth"] .money[data-private="networth"]>.currency-symbol,
+[data-privacy-mask~="accounts"] .money[data-private="accounts"]>.currency-symbol,
+[data-privacy-mask~="investments"] .money[data-private="investments"]>.currency-symbol,
+[data-privacy-mask~="cards"] .money[data-private="cards"]>.currency-symbol,
+[data-privacy-mask~="transactions"] .money[data-private="transactions"]>.currency-symbol{position:relative;z-index:1;color:var(--text-secondary);opacity:1}
+@keyframes fp-peek-in{from{opacity:var(--privacy-peek-opacity)}to{opacity:1}}
+@keyframes fp-peek-hover{0%{opacity:1}40%{opacity:var(--privacy-peek-opacity)}100%{opacity:1}}
+@media (hover:hover){
+[data-privacy-mask~="networth"] [data-private="networth"]:hover:not(.money),
+[data-privacy-mask~="networth"] .money[data-private="networth"]:hover>:not(.currency-symbol),
+[data-privacy-mask~="networth"] [data-peek-scope]:hover [data-private="networth"]:not(.money),
+[data-privacy-mask~="networth"] [data-peek-scope]:hover .money[data-private="networth"]>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-private="accounts"]:hover:not(.money),
+[data-privacy-mask~="accounts"] .money[data-private="accounts"]:hover>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-peek-scope]:hover [data-private="accounts"]:not(.money),
+[data-privacy-mask~="accounts"] [data-peek-scope]:hover .money[data-private="accounts"]>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-private="investments"]:hover:not(.money),
+[data-privacy-mask~="investments"] .money[data-private="investments"]:hover>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-peek-scope]:hover [data-private="investments"]:not(.money),
+[data-privacy-mask~="investments"] [data-peek-scope]:hover .money[data-private="investments"]>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-private="cards"]:hover:not(.money),
+[data-privacy-mask~="cards"] .money[data-private="cards"]:hover>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-peek-scope]:hover [data-private="cards"]:not(.money),
+[data-privacy-mask~="cards"] [data-peek-scope]:hover .money[data-private="cards"]>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-private="transactions"]:hover:not(.money),
+[data-privacy-mask~="transactions"] .money[data-private="transactions"]:hover>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-peek-scope]:hover [data-private="transactions"]:not(.money),
+[data-privacy-mask~="transactions"] [data-peek-scope]:hover .money[data-private="transactions"]>:not(.currency-symbol){filter:none;-webkit-user-select:text;user-select:text;transition-delay:var(--privacy-intent);animation:fp-peek-hover calc(var(--privacy-intent) + var(--privacy-ms)) ease-in-out}
+}
+[data-privacy-mask~="networth"] [data-private="networth"][data-peek="true"]:not(.money),
+[data-privacy-mask~="networth"] .money[data-private="networth"][data-peek="true"]>:not(.currency-symbol),
+[data-privacy-mask~="networth"] [data-peek-scope][data-peek="true"] [data-private="networth"]:not(.money),
+[data-privacy-mask~="networth"] [data-peek-scope][data-peek="true"] .money[data-private="networth"]>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-private="accounts"][data-peek="true"]:not(.money),
+[data-privacy-mask~="accounts"] .money[data-private="accounts"][data-peek="true"]>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-peek-scope][data-peek="true"] [data-private="accounts"]:not(.money),
+[data-privacy-mask~="accounts"] [data-peek-scope][data-peek="true"] .money[data-private="accounts"]>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-private="investments"][data-peek="true"]:not(.money),
+[data-privacy-mask~="investments"] .money[data-private="investments"][data-peek="true"]>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-peek-scope][data-peek="true"] [data-private="investments"]:not(.money),
+[data-privacy-mask~="investments"] [data-peek-scope][data-peek="true"] .money[data-private="investments"]>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-private="cards"][data-peek="true"]:not(.money),
+[data-privacy-mask~="cards"] .money[data-private="cards"][data-peek="true"]>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-peek-scope][data-peek="true"] [data-private="cards"]:not(.money),
+[data-privacy-mask~="cards"] [data-peek-scope][data-peek="true"] .money[data-private="cards"]>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-private="transactions"][data-peek="true"]:not(.money),
+[data-privacy-mask~="transactions"] .money[data-private="transactions"][data-peek="true"]>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-peek-scope][data-peek="true"] [data-private="transactions"]:not(.money),
+[data-privacy-mask~="transactions"] [data-peek-scope][data-peek="true"] .money[data-private="transactions"]>:not(.currency-symbol),
+[data-privacy-mask~="networth"] [data-private="networth"]:focus-visible:not(.money),
+[data-privacy-mask~="networth"] .money[data-private="networth"]:focus-visible>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-private="accounts"]:focus-visible:not(.money),
+[data-privacy-mask~="accounts"] .money[data-private="accounts"]:focus-visible>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-private="investments"]:focus-visible:not(.money),
+[data-privacy-mask~="investments"] .money[data-private="investments"]:focus-visible>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-private="cards"]:focus-visible:not(.money),
+[data-privacy-mask~="cards"] .money[data-private="cards"]:focus-visible>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-private="transactions"]:focus-visible:not(.money),
+[data-privacy-mask~="transactions"] .money[data-private="transactions"]:focus-visible>:not(.currency-symbol){filter:none;-webkit-user-select:text;user-select:text;animation:fp-peek-in var(--privacy-ms) ease-out}
+[data-privacy-mask~="networth"] [data-peek-scope]:has(:focus-visible) [data-private="networth"]:not(.money),
+[data-privacy-mask~="networth"] [data-peek-scope]:has(:focus-visible) .money[data-private="networth"]>:not(.currency-symbol),
+[data-privacy-mask~="accounts"] [data-peek-scope]:has(:focus-visible) [data-private="accounts"]:not(.money),
+[data-privacy-mask~="accounts"] [data-peek-scope]:has(:focus-visible) .money[data-private="accounts"]>:not(.currency-symbol),
+[data-privacy-mask~="investments"] [data-peek-scope]:has(:focus-visible) [data-private="investments"]:not(.money),
+[data-privacy-mask~="investments"] [data-peek-scope]:has(:focus-visible) .money[data-private="investments"]>:not(.currency-symbol),
+[data-privacy-mask~="cards"] [data-peek-scope]:has(:focus-visible) [data-private="cards"]:not(.money),
+[data-privacy-mask~="cards"] [data-peek-scope]:has(:focus-visible) .money[data-private="cards"]>:not(.currency-symbol),
+[data-privacy-mask~="transactions"] [data-peek-scope]:has(:focus-visible) [data-private="transactions"]:not(.money),
+[data-privacy-mask~="transactions"] [data-peek-scope]:has(:focus-visible) .money[data-private="transactions"]>:not(.currency-symbol){filter:none;-webkit-user-select:text;user-select:text;animation:fp-peek-in var(--privacy-ms) ease-out}
+[data-private]:not(.money),.money[data-private]>:not(.currency-symbol){transition:filter var(--privacy-ms) ease,opacity var(--privacy-ms) ease}

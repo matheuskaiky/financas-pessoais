@@ -13,12 +13,12 @@
 <section class="statstrip totals4" aria-label="Resumo do mês">
   <div><span class="label">Saldo inicial</span>
     {% if flow.opening_balance_cents is none %}<span class="fig">—</span><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
-    {% else %}<span class="fig">{{ odometer(flow.opening_balance_cents, size=30, flat=True) }}</span>{% endif %}</div>
-  <div><span class="label">Entradas</span><span class="fig pos">{{ odometer(flow.inflow_cents, size=30, flat=True) }}</span></div>
-  <div><span class="label">Saídas</span><span class="fig">{{ odometer(flow.outflow_cents, size=30, flat=True) }}</span></div>
+    {% else %}<span class="fig">{{ odometer(flow.opening_balance_cents, size=30, flat=True, private="accounts") }}</span>{% endif %}</div>
+  <div><span class="label">Entradas</span><span class="fig pos">{{ odometer(flow.inflow_cents, size=30, flat=True, private="transactions") }}</span></div>
+  <div><span class="label">Saídas</span><span class="fig">{{ odometer(flow.outflow_cents, size=30, flat=True, private="transactions") }}</span></div>
   <div><span class="label">Saldo final</span>
     {% if flow.closing_balance_cents is none %}<span class="fig">—</span><span class="pill grey" style="align-self: flex-start">Saldo indisponível</span>
-    {% else %}<span class="fig">{{ odometer(flow.closing_balance_cents, size=30, flat=True) }}</span>{% endif %}</div>
+    {% else %}<span class="fig">{{ odometer(flow.closing_balance_cents, size=30, flat=True, private="accounts") }}</span>{% endif %}</div>
 </section>
 <section class="panel">
   {% if flow.rows %}
@@ -27,9 +27,9 @@
     <thead><tr><th>Dia</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Resultado</th><th class="num">Saldo</th></tr></thead>
     <tbody>
     {% for r in flow.rows %}
-      <tr><td>{{ r.day|date }}</td><td class="num" data-label="Entradas">{{ r.inflow_cents|brl }}</td><td class="num" data-label="Saídas">{{ r.outflow_cents|brl }}</td>
-        <td class="num {{ 'pos' if r.result_cents > 0 else 'neg' }}" data-label="Resultado">{{ r.result_cents|signed }}</td>
-        <td class="num" data-label="Saldo">{% if r.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>{% else %}<strong>{{ r.balance_cents|brl }}</strong>{% endif %}</td></tr>
+      <tr><td>{{ r.day|date }}</td><td class="num" data-label="Entradas">{{ r.inflow_cents|money(private="transactions") }}</td><td class="num" data-label="Saídas">{{ r.outflow_cents|money(private="transactions") }}</td>
+        <td class="num {{ 'pos' if r.result_cents > 0 else 'neg' }}" data-label="Resultado">{{ r.result_cents|money(sign="always", private="transactions") }}</td>
+        <td class="num" data-label="Saldo">{% if r.balance_cents is none %}<span class="pill grey">Saldo indisponível</span>{% else %}<strong>{{ r.balance_cents|money(private="transactions") }}</strong>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>

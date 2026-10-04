@@ -2,13 +2,15 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>charts.js harness</title>
+<title>fin-charts.js and fp-money.js harness</title>
 <link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/fin-charts.css">
 <link rel="stylesheet" href="../../src/financas/interfaces/web/static/charts.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/fp-privacy.css">
 <style>body{margin:0;width:800px}.fc-plot{width:700px}</style>
 </head>
 <body>
-<!-- Net worth island with the markup the Jinja macro prints (only what charts.js reads). -->
+<!-- Net worth island with the markup the Jinja macro prints (only what fin-charts.js reads). -->
 <section id="nw" class="card chart-card" data-chart="networth" data-src="/nw.json" data-default-range="1A">
   <div class="fc-head"><div>
     <span class="fc-title"><span data-fc="badge" hidden>parcial</span></span>
@@ -38,6 +40,12 @@
   <div class="fc-plot" data-fc="plot"></div><p id="flow-desc" data-fc="desc"></p>
   <template data-tpl="sparse"><div class="fc-sparse"></div></template>
 </section>
+<!-- The <fp-patrimonio> island, as templates/patrimonio.html prints it (server fallback inside). -->
+<fp-patrimonio id="fp" heading="Patrimônio" badge="parcial" range="Tudo" private="networth">
+  <script type="application/json">{"points":[["2026-01-01",1000000],["2026-02-01",1100000],["2026-03-01",1050000],["2026-04-01",1200000],["2026-05-01",1250000],["2026-06-01",1230000],["2026-07-01",1300000],["2026-08-01",1400000],["2026-09-01",1485000]]}</script>
+  <div class="fp-ssr"><p class="fp-ssr-v display"><span class="money money--display" data-cents="1485000" data-private="networth"><span class="currency-symbol">R$&nbsp;</span><span class="currency-amount">14.850,00</span></span></p></div>
+</fp-patrimonio>
+<script type="application/json" id="app-config">{"locale":"pt-BR","currency":"BRL"}</script>
 <pre id="out">running</pre>
 <script>
 const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
@@ -65,11 +73,12 @@ const payloads = {
     ceiling_cents: 300, crossed_day: 4, total_cents: 400, entry_count: 4 },
   "/flow.json": { year: 2026, months: [1, 2, 3, 4].map((m) => ({ month: "2026-0" + m, income_cents: 900000, expenses_cents: 300000 + m * 10000, refunds_cents: 0, balance_cents: 600000 - m * 10000 })) },
 };
-window.fetch = async (url) => ({ ok: true, json: async () => payloads[url] });
+const realFetch = window.fetch.bind(window);
+window.fetch = async (url) => (payloads[url] ? { ok: true, json: async () => payloads[url] } : realFetch(url));
 
 let mod;
 try {
-  mod = await import("../../src/financas/interfaces/web/static/charts.js");
+  mod = await import("../../src/financas/interfaces/web/static/fin-charts.js");
 } catch (error) {
   fail("import failed: " + error);
   throw error;
@@ -122,6 +131,28 @@ check("percent", fmt.percent(34.94) === "34,9" && fmt.percent(-5) === "5" && fmt
 check("thousands", fmt.thousands(9250000) === "92,5 mil" && fmt.thousands(500000) === "5 mil");
 check("local ISO date", new Date(fmt.toEpoch("2026-03-01")).getDate() === 1 && new Date(fmt.toEpoch("2026-03-01")).getHours() === 0);
 check("dates", fmt.shortDate(new Date(2026, 8, 5)) === "05 set" && fmt.longDate(new Date(2026, 3, 1)) === "qua, 01 abr 2026", fmt.longDate(new Date(2026, 3, 1)));
+
+// ---- fp-money.js: one currency layer, the same golden vectors as tests/unit/test_fp_money.py ----
+const money = await import("../../src/financas/interfaces/web/static/fp-money.js");
+const golden = await (await realFetch("../golden/money.json")).json();
+for (const c of golden.cases) {
+  const o = { ...(c.sign ? { sign: c.sign } : {}), ...(c.locale ? { locale: c.locale, currency: c.currency } : {}) };
+  check("golden " + c.minor + " " + (c.locale || "pt-BR") + " " + (c.sign || "auto"),
+    money.formatCurrency(c.minor, o) === c.text && money.formatAmount(c.minor, o) === c.amount,
+    JSON.stringify([money.formatCurrency(c.minor, o), money.formatAmount(c.minor, o), c.text]));
+}
+check("absent value is a dash, not zero", money.formatCurrency(null) === "—" && money.formatCurrency(undefined) === "—");
+check("moneyHTML keeps the privacy group", money.moneyHTML(-18643, { private: "transactions" }).includes('data-private="transactions"') && money.moneyHTML(-18643).includes("data-neg"));
+check("window.FP.money is the same instance fin-charts.js formats with", window.FP && window.FP.money && window.FP.money.formatAmount(123456) === fmt.cents(123456));
+
+// ---- the <fp-patrimonio> island (static/charts.js) ----
+const fpReady = new Promise((res) => document.getElementById("fp").addEventListener("fp-ready", (e) => res(e.detail), { once: true }));
+await import("../../src/financas/interfaces/web/static/charts.js");
+const detail = await Promise.race([fpReady, new Promise((r) => setTimeout(() => r(null), 3000))]);
+const fpEl = document.getElementById("fp");
+check("island upgrades and reports its points", !!detail && detail.count === 9, JSON.stringify(detail));
+check("island draws an SVG and the last balance with the currency symbol", !!fpEl.querySelector("svg") && fpEl.textContent.includes("R$\u00a014.850,00"), fpEl.textContent.slice(0, 200));
+check("island marks the figure for privacy mode", !!fpEl.querySelector('[data-private="networth"]') || fpEl.getAttribute("private") === "networth");
 
 // ---- mounted charts ----
 mountAll();

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>privacy harness</title>
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/fp-privacy.css">
+<script src="../../src/financas/interfaces/web/static/fp-privacy.js"></script>
+<style>body{margin:0;width:900px;font:15px/1.5 var(--sans)}</style>
+</head>
+<body>
+<section class="card" id="card" data-peek-scope style="padding:16px">
+  <p class="display" id="hero"><span class="money money--display" data-cents="14872341" data-private="networth"><span class="currency-symbol">R$&nbsp;</span><span class="currency-amount">148.723,41</span></span></p>
+  <p>Fatura <span class="money" data-cents="312055" data-private="cards"><span class="currency-symbol">R$&nbsp;</span><span class="currency-amount">3.120,55</span></span></p>
+  <p>Extrato <span class="money" data-neg data-cents="-18643" data-private="transactions"><span class="money-sign">−</span><span class="currency-symbol">R$&nbsp;</span><span class="currency-amount">186,43</span></span></p>
+  <table><tr><td>Conta</td><td><span class="money" data-cents="523009" data-private="accounts"><span class="currency-symbol">R$&nbsp;</span><span class="currency-amount">5.230,09</span></span></td></tr></table>
+  <p>Rendimento <span data-private="investments" id="plain">+4,2 %</span></p>
+</section>
+<div class="fp-priv" role="group" aria-label="Privacidade">
+  <button type="button" class="fp-priv-btn fp-priv-eye" data-fp-privacy="toggle" data-state="visible" aria-label="Ocultar valores" aria-keyshortcuts="P">
+    <svg class="icon-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12C4.3 7.8 7.8 5 12 5C16.2 5 19.7 7.8 22 12C19.7 16.2 16.2 19 12 19C7.8 19 4.3 16.2 2 12Z"/></svg>
+    <svg class="icon-eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 3.8L20.2 20.2"/></svg>
+    <span class="fp-priv-tip" aria-hidden="true"><span data-fp-privacy-tip>Ocultar valores</span></span>
+  </button>
+</div>
+<iframe id="frame" src="privacy_frame.html" style="width:200px;height:50px;border:0"></iframe>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+window.addEventListener("unhandledrejection", (e) => fail(String(e.reason && e.reason.stack || e.reason)));
+</script>
+<script>
+(async () => {
+const results = [];
+const check = (name, ok, detail) => results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const $$ = (s) => [...document.querySelectorAll(s)];
+const html = document.documentElement;
+const filterOf = (el) => getComputedStyle(el).filter;
+// the eye's tooltip is out of flow (absolute, opacity 0) and its icons crossfade with a transform: neither is a layout box
+const rects = () => $$("#card, #card *, .fp-priv, .fp-priv *").filter((e) => !e.closest(".fp-priv-tip, .fp-priv svg")).map((e) => { const r = e.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map((v) => Math.round(v * 100) / 100).join(","); });
+
+localStorage.removeItem("fp_privacy_settings");
+await wait(50);
+check("default is everything visible", !html.hasAttribute("data-privacy-mask") && $$("[data-private]").every((e) => filterOf(e) === "none" && !$$("*", e).length || filterOf(e.querySelector(".currency-amount") || e) === "none"));
+check("window.FP.privacy is the public API", !!(window.FP && FP.privacy && FP.privacy.toggle && FP.privacy.setGroup && FP.privacy.reset && FP.privacy.get && FP.privacy.isMasked));
+
+// ---- layout shift observer (all shifts since now) ----
+let cls = 0;
+try { new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) cls += e.value; }).observe({ type: "layout-shift", buffered: false }); } catch (e) {}
+
+const before = rects();
+const heightBefore = document.documentElement.scrollHeight;
+FP.privacy.toggle();
+await wait(500);
+const after = rects();
+check("masking sets data-privacy-mask with the five groups", (html.getAttribute("data-privacy-mask") || "").split(" ").sort().join() === "accounts,cards,investments,networth,transactions", html.getAttribute("data-privacy-mask"));
+const moved = before.map((r, i) => (r === after[i] ? null : i + ": " + r + " -> " + after[i])).filter(Boolean);
+check("no layout shift: every box keeps its exact rectangle", moved.length === 0 && before.length === after.length && document.documentElement.scrollHeight === heightBefore, moved.slice(0, 3).join(" | "));
+check("no layout shift: CLS entries stay at 0", cls === 0, cls);
+const amount = document.querySelector('[data-private="cards"] .currency-amount');
+const symbol = document.querySelector('[data-private="cards"] .currency-symbol');
+check("amount is blurred", /blur\(/.test(filterOf(amount)), filterOf(amount));
+check("symbol stays crisp", filterOf(symbol) === "none" && /blur/.test(filterOf(amount)), filterOf(symbol));
+check("a plain [data-private] value blurs as a whole", /blur\(/.test(filterOf(document.getElementById("plain"))), filterOf(document.getElementById("plain")));
+check("the display amount uses the larger radius", /blur\(/.test(filterOf(document.querySelector("#hero .currency-amount"))));
+check("text content is untouched (blur, not placeholder characters)", amount.textContent === "3.120,55");
+check("a masked value is announced as hidden, not read aloud", document.querySelector('[data-private="cards"]').getAttribute("aria-label") === "Valor oculto");
+const eye = document.querySelector('[data-fp-privacy="toggle"]');
+check("the eye reports its state", eye.getAttribute("data-state") === "masked" && /Mostrar/.test(eye.getAttribute("aria-label")), eye.outerHTML.slice(0, 160));
+
+// ---- persistence ----
+const stored = JSON.parse(localStorage.getItem("fp_privacy_settings"));
+check("state persists in localStorage", stored && stored.v === 1 && stored.on === true && Object.keys(stored.groups).length === 5, JSON.stringify(stored));
+
+// ---- groups mask independently ----
+FP.privacy.setGroup("cards", false);
+await wait(300);
+check("a group can be switched off alone", !/cards/.test(html.getAttribute("data-privacy-mask")) && filterOf(amount) === "none" && /blur/.test(filterOf(document.querySelector('[data-private="accounts"] .currency-amount'))), html.getAttribute("data-privacy-mask"));
+FP.privacy.reset();
+check("reset re-selects the groups and keeps the on state", FP.privacy.isMasked("cards") && JSON.parse(localStorage.getItem("fp_privacy_settings")).on === true);
+
+// ---- the next page is masked before its first paint ----
+const frame = document.getElementById("frame");
+frame.contentWindow.location.reload();
+await new Promise((r) => frame.addEventListener("load", r, { once: true }));
+await wait(100);
+check("applied before first paint (the blocking head script wrote the mask)", (frame.contentWindow.__maskAtHead || "").includes("cards"), frame.contentWindow.__maskAtHead);
+
+// ---- keyboard shortcut ----
+FP.privacy.toggle(false);
+await wait(100);
+check("toggle(false) shows everything again", !html.hasAttribute("data-privacy-mask"));
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
+await wait(100);
+check("P toggles the mode", html.hasAttribute("data-privacy-mask"));
+const input = document.createElement("input"); document.body.append(input); input.focus();
+input.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
+await wait(100);
+check("P is ignored while typing", html.hasAttribute("data-privacy-mask"));
+input.remove();
+eye.click();
+await wait(100);
+check("the eye button toggles by delegation", !html.hasAttribute("data-privacy-mask"));
+localStorage.removeItem("fp_privacy_settings");
+
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + results.filter((x) => x.startsWith("FAIL")).length;
+})().catch((e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + (e && e.stack || e) + "\nDONE 1"; });
+</script>
+</body>
+</html>

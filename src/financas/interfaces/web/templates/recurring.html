@@ -30,10 +30,10 @@
     {% for i in view.items %}
       <tr>
         <td><span class="with-dot">{{ dot(category_colors[i.category_id]) }}<span><strong>{{ i.label }}</strong><br><small>{{ category_by_id[i.category_id].name }}</small></span></span></td>
-        {% for m in view.months %}<td class="num" data-label="{{ m|month_short }}">{{ i.amounts[m]|brl if m in i.amounts else '—' }}</td>{% endfor %}
+        {% for m in view.months %}<td class="num" data-label="{{ m|month_short }}">{{ i.amounts[m]|money(private="transactions") if m in i.amounts else '—' }}</td>{% endfor %}
       </tr>
     {% endfor %}
-      <tr class="subtotal"><td><strong>Total</strong></td>{% for m in view.months %}<td class="num" data-label="{{ m|month_short }}"><strong>{{ view.monthly_total_cents[m]|brl }}</strong></td>{% endfor %}</tr>
+      <tr class="subtotal"><td><strong>Total</strong></td>{% for m in view.months %}<td class="num" data-label="{{ m|month_short }}"><strong>{{ view.monthly_total_cents[m]|money(private="transactions") }}</strong></td>{% endfor %}</tr>
     </tbody>
   </table>
   </div>

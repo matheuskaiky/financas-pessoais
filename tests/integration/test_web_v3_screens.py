@@ -129,7 +129,7 @@ def test_carta_is_in_the_navigation_with_its_dot(client: TestClient) -> None:
     entry = next(e for e in nav.entries() if e.id == "carta")
     assert (entry.href, entry.group, entry.order, entry.badge) == ("/carta", "main", 30, True)
     sidebar = client.get("/carta").text
-    sidebar = sidebar[sidebar.index('<nav class="sidebar"') : sidebar.index("</nav>")]
+    sidebar = sidebar[sidebar.index('<nav class="sidebar ink"') : sidebar.index("</nav>")]
     assert 'href="/carta"' in sidebar and "nav-badge" in sidebar
     assert 'aria-current="page"' in sidebar
 
@@ -174,7 +174,9 @@ def test_carta_month_parameter_is_lenient(busy: Container, client: TestClient) -
 
 def test_carta_has_no_inline_scripts_or_handlers(busy: Container, client: TestClient) -> None:
     html = client.get("/carta").text
-    assert not re.search(r"<script(?![^>]*\bsrc=)", html)
+    assert not re.search(
+        r"<script(?![^>]*\bsrc=)(?![^>]*type=\"application/json\")", html
+    )  # data blocks only
     assert not re.search(r"\son(click|change|input|mouseover)=", html)
 
 
@@ -329,7 +331,7 @@ def test_palette_script_is_a_static_file_without_inline_code(client: TestClient)
     )
     assert "http://" not in script.text and "https://" not in script.text
     page = client.get("/entries").text
-    assert not re.search(r"<script(?![^>]*\bsrc=)", page)
+    assert not re.search(r"<script(?![^>]*\bsrc=)(?![^>]*type=\"application/json\")", page)
 
 
 def test_palette_parse_empty_is_a_hint(client: TestClient) -> None:

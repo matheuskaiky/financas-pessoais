@@ -1,0 +1,99 @@
+{
+ "about": "Expected output of fp_money.format_currency / format_amount (Python) and fp-money.js formatCurrency / formatAmount (Intl in the browser). Both sides are tested against this file; U+00A0 follows the symbol and U+2212 is the minus.",
+ "cases": [
+  {
+   "minor": 0,
+   "text": "R$ 0,00",
+   "amount": "0,00"
+  },
+  {
+   "minor": 5,
+   "text": "R$ 0,05",
+   "amount": "0,05"
+  },
+  {
+   "minor": 100,
+   "text": "R$ 1,00",
+   "amount": "1,00"
+  },
+  {
+   "minor": 99999,
+   "text": "R$ 999,99",
+   "amount": "999,99"
+  },
+  {
+   "minor": 100000,
+   "text": "R$ 1.000,00",
+   "amount": "1.000,00"
+  },
+  {
+   "minor": 123456,
+   "text": "R$ 1.234,56",
+   "amount": "1.234,56"
+  },
+  {
+   "minor": 1485000,
+   "text": "R$ 14.850,00",
+   "amount": "14.850,00"
+  },
+  {
+   "minor": 100000000,
+   "text": "R$ 1.000.000,00",
+   "amount": "1.000.000,00"
+  },
+  {
+   "minor": -1,
+   "text": "−R$ 0,01",
+   "amount": "−0,01"
+  },
+  {
+   "minor": -15000,
+   "text": "−R$ 150,00",
+   "amount": "−150,00"
+  },
+  {
+   "minor": -123456789,
+   "text": "−R$ 1.234.567,89",
+   "amount": "−1.234.567,89"
+  },
+  {
+   "minor": 35000,
+   "sign": "always",
+   "text": "+R$ 350,00",
+   "amount": "+350,00"
+  },
+  {
+   "minor": 0,
+   "sign": "always",
+   "text": "R$ 0,00",
+   "amount": "0,00"
+  },
+  {
+   "minor": -15000,
+   "sign": "never",
+   "text": "R$ 150,00",
+   "amount": "150,00"
+  },
+  {
+   "minor": 1485000,
+   "locale": "en-US",
+   "currency": "USD",
+   "text": "$14,850.00",
+   "amount": "14,850.00"
+  },
+  {
+   "minor": 1485000,
+   "locale": "de-DE",
+   "currency": "EUR",
+   "text": "14.850,00 €",
+   "amount": "14.850,00"
+  },
+  {
+   "minor": 1500,
+   "locale": "en-US",
+   "currency": "JPY",
+   "text": "¥1,500",
+   "amount": "1,500"
+  }
+ ]
+}

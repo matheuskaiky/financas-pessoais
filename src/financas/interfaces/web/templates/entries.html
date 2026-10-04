@@ -41,9 +41,9 @@
     </form>
 
     <div class="statstrip totals">
-      <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True) }}</span></div>
-      <div><span class="label">Despesas</span><span class="fig neg">{{ odometer(-summary.expenses_cents, size=30, flat=True) }}</span></div>
-      <div><span class="label">Saldo</span><span class="fig {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{% if summary.balance_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.balance_cents, size=30, flat=True) }}</span></div>
+      <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True, private="transactions") }}</span></div>
+      <div><span class="label">Despesas</span><span class="fig neg">{{ odometer(-summary.expenses_cents, size=30, flat=True, private="transactions") }}</span></div>
+      <div><span class="label">Saldo</span><span class="fig {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{% if summary.balance_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.balance_cents, size=30, flat=True, private="transactions") }}</span></div>
       <div class="note"><small>Transferências ficam fora destes totais</small></div>
     </div>
 
@@ -61,7 +61,7 @@
         </div>
         <span class="c-cat with-dot">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
         <span class="c-acct">{% for a in accounts if a.id == t.account_id %}{{ a.nickname }}{% endfor %}</span>
-        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|signed }}</span>
+        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|money(sign="always", private="transactions") }}</span>
         <span class="c-act"><button class="link danger" hx-post="/entries/{{ t.id }}/delete" hx-confirm="Este lançamento será apagado. Não dá para desfazer." data-confirm-title="Apagar lançamento" data-confirm-ok="Apagar" data-confirm-danger type="button" aria-label="Apagar lançamento {{ t.description or kind_labels[t.kind] }}">Apagar</button></span>
       </div>
       {% endfor %}
@@ -95,7 +95,7 @@
       </div>
 
       <label class="field"><span>Valor</span>
-        <span class="money big"><span class="cur" aria-hidden="true">R$</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span>
+        <span class="money-field big"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span>
         <small>Aceita vírgula decimal</small></label>
 
       <label class="field"><span>Descrição</span>

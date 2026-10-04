@@ -1,5 +1,6 @@
 """Front v3 foundation: layout, navigation, route-module mechanism, tokens and shared UI macros."""
 
+import json
 import re
 import types
 from collections.abc import Iterator
@@ -74,7 +75,7 @@ def rendered(client: TestClient, source: str) -> str:
 
 def test_sidebar_is_rendered_from_the_navigation_list(client: TestClient) -> None:
     page = client.get("/entries").text
-    sidebar = page[page.index('<nav class="sidebar"') : page.index("</nav>")]
+    sidebar = page[page.index('<nav class="sidebar ink"') : page.index("</nav>")]
     expected = [e for e in nav.entries() if e.sidebar]
     for entry in expected:
         assert f'href="{entry.href}"' in sidebar, entry.id
@@ -146,6 +147,68 @@ def test_pages_have_no_inline_handlers_and_load_tokens_before_the_app_css(
         assert re.search(r'<script src="/static/ui\.js" defer>', text), path
 
 
+def test_head_follows_the_front_v3_handoff_contract(client: TestClient) -> None:
+    """snippets/base-head.html: data block, fonts, CSS, the blocking privacy script, the modules."""
+    for path in ("/", "/entries", "/more", "/missing"):
+        response = client.get(path)
+        text = response.text
+        head = text[: text.index("</head>")]
+        config = re.search(r'<script type="application/json" id="app-config">(.*?)</script>', head)
+        assert config and json.loads(config[1]) == {"locale": "pt-BR", "currency": "BRL"}, path
+        order = [
+            'id="app-config"',
+            "/static/fonts/fonts.css",
+            "/static/tokens.css",
+            "/static/charts.css",
+            "/static/fp-privacy.css",
+            '<script src="/static/fp-privacy.js"></script>',  # classic, no defer/async/module
+            '<script type="module" src="/static/fp-money.js">',
+            '<script type="module" src="/static/fp-ui.js">',
+            '<script type="module" src="/static/charts.js">',
+            "/static/app.css",
+        ]
+        positions = [head.index(item) for item in order]
+        assert positions == sorted(positions), path
+        for font in ("public-sans-latin-wght-normal", "source-serif-4-latin-opsz-normal"):
+            assert re.search(
+                rf'<link rel="preload" href="/static/fonts/{font}\.woff2"[^>]*\bcrossorigin', head
+            )
+        assert "?v=" not in head  # one URL per module: a second copy would format twice
+        assert "script-src 'self'" in response.headers["content-security-policy"]
+        assert (
+            "'unsafe-inline'"
+            not in response.headers["content-security-policy"].split("script-src")[1].split(";")[0]
+        )
+
+
+def test_privacy_controls_are_in_the_shell_and_on_the_more_page(client: TestClient) -> None:
+    home = client.get("/").text
+    side = home[home.index('class="side-actions"') : home.index('class="nav-groups"')]
+    assert 'data-fp-privacy="toggle"' in side and 'data-fp-privacy="settings"' in side
+    assert 'aria-keyshortcuts="P"' in side and 'aria-label="Ocultar valores"' in side
+    dialog = home[home.index('<dialog class="fp-priv-panel') :]
+    assert dialog.index("</dialog>") < dialog.index("</body>")
+    assert len(re.findall(r"data-fp-privacy-group=", dialog)) == 5
+    more = client.get("/more").text
+    assert 'data-fp-privacy="toggle"' in more[more.index("<main>") :]  # phones have no sidebar
+
+
+def test_static_files_have_the_mime_types_the_modules_need(client: TestClient) -> None:
+    for name, mime in (
+        ("fp-money.js", "text/javascript"),
+        ("fp-ui.js", "text/javascript"),
+        ("charts.js", "text/javascript"),
+        ("fp-privacy.js", "text/javascript"),
+        ("fp-privacy.css", "text/css"),
+        ("fonts/fonts.css", "text/css"),
+    ):
+        response = client.get(f"/static/{name}")
+        assert response.status_code == 200 and response.headers["content-type"].startswith(mime), (
+            name
+        )
+        assert response.headers["x-content-type-options"] == "nosniff", name
+
+
 def test_tokens_and_ui_script_are_served(client: TestClient) -> None:
     tokens = client.get("/static/tokens.css")
     assert tokens.status_code == 200 and "--sp-press" in tokens.text and "--sh-3" in tokens.text
@@ -154,6 +217,7 @@ def test_tokens_and_ui_script_are_served(client: TestClient) -> None:
     assert script.status_code == 200 and "FinUI" in script.text
     css = client.get("/static/app.css").text
     assert "fonts.googleapis" not in css and "--line:" not in css  # --line is owned by tokens.css
+    assert "--text:" not in css and "--sans:" not in css  # the roles are the tokens
 
 
 def test_dashboard_hero_uses_the_odometer(client: TestClient) -> None:

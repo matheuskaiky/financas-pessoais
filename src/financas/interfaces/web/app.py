@@ -118,7 +118,7 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
-from financas.interfaces.web import nav
+from financas.interfaces.web import fp_money, nav
 from financas.interfaces.web.routes import MODULES, WebContext
 from financas.interfaces.web.shared import Lookups
 from financas.interfaces.web.shared import enum_of as _enum
@@ -193,6 +193,9 @@ def create_app(c: Container) -> FastAPI:
         month_short=format_month,
         percent=format_percent,
     )
+    # `brl` stays plain text (attributes, aria-label, option labels). `money` writes the .money
+    # markup the privacy mode blurs; `currency`/`amount` are text forms; `config` feeds the head.
+    fp_money.install(templates.env, locale="pt-BR", currency="BRL")
     templates.env.globals.update(
         kind_labels=messages.TRANSACTION_KIND_LABELS,
         group_labels=messages.CATEGORY_GROUP_LABELS,

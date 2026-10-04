@@ -1,106 +1,56 @@
-// Charts (design v3, package 2): one vanilla ES module, no libraries. Port of docs/design-v3 chartMath.ts,
-// format.ts, useSpringTween.ts and useNetWorthChart.ts, plus the three sibling charts of the board
-// (month pace, cash flow, categories). The server computes every figure (integer cents, ISO dates) and
-// serves it as JSON under /api/charts/...; the browser only draws, interpolates and reads values back.
-// Jinja prints the card, the header, the skeleton and the fixed-height box (no layout shift), and the
-// <template> blocks of the states (few data, error); this file adds scrubbing, the spring morph, the glass
-// tooltip and the keyboard. Nothing is inline (CSP), nothing leaves this origin.
-//
-// Public API (also on window.FinCharts):
-//   math      pure functions: clamp, lerp, lerpArray, sameArray, sliceByDays, resampleByTime, valueAtTime,
-//             monotoneTangents, monotonePath, hermiteAt, niceDomain, niceTicks, niceStep, springProgress,
-//             xAxisStops, stepPath
-//   fmt       pt-BR: cents (1.234,56), signedCents, percent, thousands (9,3 mil), shortDate, monthYear,
-//             fullDate, longDate, toEpoch
-//   mount(root)       turns a [data-chart] element into a live chart; returns the controller
-//   mountAll()        mounts every [data-chart] not mounted yet (runs on DOMContentLoaded)
-// Chart kinds (data-chart): networth | pace | flow | donut. Text shown to the user lives in T below and in
-// the page templates (states); this file belongs to interfaces/.
-
-const MONTH_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const MONTH_FULL = [
-  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
-];
-const WEEKDAY_ABBR = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
-
-const T = {
-  today: "hoje",
-  on: "em",
-  since: "desde",
-  entriesOne: "lançamento",
-  entriesMany: "lançamentos",
-  noSpending: "sem gastos",
-  day: "dia",
-  aboveAverage: "acima da média",
-  belowAverage: "abaixo da média",
-  noAverage: "sem meses anteriores para comparar",
-  overCeiling: "passou",
-  ofCeiling: "do teto",
-  untilCeiling: "restam",
-  untilCeilingTail: "até o teto",
-  noCeiling: "sem metas de orçamento",
-  crossed: "passou do teto no dia",
-  ceiling: "Teto",
-  averageOf: "Média",
-  spentIn: "gasto em",
-  daysWord: "dias",
-  ofIncomeSaved: "da renda poupados",
-  noIncome: "sem receitas no mês",
-  firstMonth: "primeiro mês com dados",
-  versus: "em relação a",
-  balanceOf: "saldo de",
-  incomeLabel: "Entradas",
-  expenseLabel: "Saídas",
-  ofTotal: "do total",
-  biggestSum: "maiores somam",
-  rest: "Demais categorias",
-  categories: "categorias",
-  thousand: "mil",
-  loadingFailed: "falhou",
-};
-
-// ───────────────────────────── pure maths (no DOM) ─────────────────────────────
-
-export const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
-export const lerp = (a, b, t) => a + (b - a) * t;
-
-/** Interpolates two vectors; a missing slot in `a` takes the target. */
-export function lerpArray(a, b, t) {
-  const out = new Array(b.length);
-  for (let i = 0; i < b.length; i++) out[i] = lerp(i < a.length ? a[i] : b[i], b[i], t);
-  return out;
-}
-
-export function sameArray(a, b) {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
-const DAY = 86400000;
-
-/** Points of the window of `days` ending at the last point; always at least two when they exist. */
-export function sliceByDays(points, days) {
+/* charts.js — <fp-patrimonio> chart island (SVG, vanilla Web Component). GENERATED FILE: do not edit, regenerate from the verified package.
+ * Build   : esbuild 0.28.2 · bundle · format=esm · target=esnext · charset=utf8 · not minified (esbuild strips the comments of the sources).
+ * Bundled : dataviz/fp-patrimonio.js, dataviz/lib/chart-math.js, dataviz/lib/format.js, dataviz/lib/points.js, dataviz/lib/rolling-number.js, dataviz/lib/spring.js
+ * External: ./fp-money.js — serve it from the SAME directory and load it with the SAME URL as this file (module identity is the full URL:
+ *            no ?v= on only one of the two, no other host). Two URLs = two instances of the currency layer.
+ * Registers <fp-patrimonio> (customElements.define, idempotent). Exports: FpPatrimonio, parsePoints.
+ *
+ * Island contract (header of dataviz/fp-patrimonio.js, pt-BR):
+ * <fp-patrimonio> — ilha de evolução do patrimônio líquido.
+ *
+ * Web Component nativo (light DOM) + SVG, em JavaScript puro: sem React, sem TypeScript, sem etapa de build.
+ * Carrega com <script type="module"> direto do /static e funciona dentro de HTML/Jinja2/HTMX
+ * (o upgrade acontece sozinho quando o HTMX insere o elemento; não há hook de pós-swap).
+ *
+ *   <fp-patrimonio src="/api/patrimonio" heading="Patrimônio" badge="parcial" footnote="…"></fp-patrimonio>
+ *
+ * Dados (centavos inteiros): `{"points":[["2026-10-01", 9511846], …]}` ou `[{ "date": "…", "value": … }, …]`,
+ * por `src` (apenas mesma origem), por <script type="application/json"> dentro do elemento, ou por `el.points = […]`.
+ *
+ * Eventos: `fp-ready` {count} · `fp-range` {key} · `fp-scrub` {fraction,date,value,change,changePct} (null ao soltar) · `fp-error`.
+ *
+ * Moeda: símbolo, posição, separadores e sinal vêm de ../fp-money.js (window.APP_CONFIG + Intl.NumberFormat); aqui não há "R$"
+ * escrito. A ilha se refaz sozinha quando FP.money.setConfig({ locale, currency }) dispara `fp:config`.
+ *
+ * Estilo: classes e variáveis do tokens.css (--dv-*, --surface-*, molas --k-* / --c-*). Só `transform`, `opacity` e atributos
+ * SVG são escritos por quadro; nenhuma leitura de layout fora de medições pontuais (largura, retângulo ao tocar).
+ */
+// dataviz/lib/chart-math.js
+var DAY = 864e5;
+var clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+var lerp = (a, b, t) => a + (b - a) * t;
+function sliceByDays(points, days) {
   if (points.length < 3 || !Number.isFinite(days)) return points.slice();
   const since = points[points.length - 1].t - days * DAY;
-  let i = 0;
-  while (i < points.length && points[i].t < since) i++;
-  return points.slice(Math.min(i, points.length - 2));
+  let lo = 0;
+  let hi = points.length;
+  while (lo < hi) {
+    const mid = lo + hi >> 1;
+    if (points[mid].t < since) lo = mid + 1;
+    else hi = mid;
+  }
+  return points.slice(Math.min(lo, points.length - 2));
 }
-
-/** Resamples in `n` instants equally spaced IN TIME (linear between records), so any two curves interpolate. */
-export function resampleByTime(points, n) {
-  const out = new Array(n);
+function resampleByTime(points, n) {
+  const out = new Float64Array(n);
   const last = points.length - 1;
-  if (last < 0) return out.fill(0);
+  if (last < 0) return out;
   if (last === 0) return out.fill(points[0].v);
   const t0 = points[0].t;
   const span = points[last].t - t0;
   let k = 0;
   for (let j = 0; j < n; j++) {
-    const t = t0 + (span * j) / (n - 1);
+    const t = t0 + span * j / (n - 1);
     while (k < last - 1 && points[k + 1].t < t) k++;
     const a = points[k];
     const b = points[k + 1];
@@ -109,32 +59,36 @@ export function resampleByTime(points, n) {
   }
   return out;
 }
-
-/** Value of the series at any instant (linear between records, clamped at the ends). */
-export function valueAtTime(points, t) {
+function locate(points, t) {
   const last = points.length - 1;
-  if (last < 0) return 0;
-  if (t <= points[0].t) return points[0].v;
-  if (t >= points[last].t) return points[last].v;
+  if (last < 0) return { i0: 0, i1: 0, frac: 0 };
+  if (t <= points[0].t) return { i0: 0, i1: 0, frac: 0 };
+  if (t >= points[last].t) return { i0: last, i1: last, frac: 0 };
   let lo = 0;
   let hi = last;
   while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
+    const mid = lo + hi >> 1;
     if (points[mid].t <= t) lo = mid;
     else hi = mid;
   }
   const a = points[lo];
   const b = points[hi];
-  return lerp(a.v, b.v, (t - a.t) / Math.max(1, b.t - a.t));
+  return { i0: lo, i1: hi, frac: (t - a.t) / Math.max(1, b.t - a.t) };
 }
-
-/** Fritsch–Carlson monotone tangents for equidistant samples: no false waves around a step. */
-export function monotoneTangents(y) {
+function readoutAt(points, t, gapDays = 2) {
+  if (points.length === 0) return { value: 0, index: -1, estimated: false };
+  const { i0, i1, frac } = locate(points, t);
+  const value = i0 === i1 ? points[i0].v : lerp(points[i0].v, points[i1].v, frac);
+  const index = frac < 0.5 ? i0 : i1;
+  const estimated = i0 !== i1 && points[i1].t - points[i0].t > gapDays * DAY && frac > 0 && frac < 1;
+  return { value, index, estimated };
+}
+function monotoneTangents(y) {
   const n = y.length;
-  if (n < 2) return new Array(n).fill(0);
-  const d = new Array(n - 1);
+  const m = new Float64Array(n);
+  if (n < 2) return m;
+  const d = new Float64Array(n - 1);
   for (let i = 0; i < n - 1; i++) d[i] = y[i + 1] - y[i];
-  const m = new Array(n);
   m[0] = d[0];
   m[n - 1] = d[n - 2];
   for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
@@ -146,49 +100,36 @@ export function monotoneTangents(y) {
     }
     const a = m[i] / d[i];
     const b = m[i + 1] / d[i];
-    const s = a * a + b * b;
-    if (s > 9) {
-      const k = 3 / Math.sqrt(s);
+    const s2 = a * a + b * b;
+    if (s2 > 9) {
+      const k = 3 / Math.sqrt(s2);
       m[i] = k * a * d[i];
       m[i + 1] = k * b * d[i];
     }
   }
   return m;
 }
-
-/** SVG path (cubic Béziers) through the points with the given tangents. */
-export function monotonePath(xs, ys, m) {
-  if (xs.length === 0) return "";
-  let d = "M" + xs[0].toFixed(2) + " " + ys[0].toFixed(2);
-  for (let i = 0; i < xs.length - 1; i++) {
+function monotonePath(xs, ys, m) {
+  const n = xs.length;
+  if (n === 0) return "";
+  let d = `M${xs[0].toFixed(2)} ${ys[0].toFixed(2)}`;
+  for (let i = 0; i < n - 1; i++) {
     const dx = (xs[i + 1] - xs[i]) / 3;
-    d +=
-      "C" + (xs[i] + dx).toFixed(2) + " " + (ys[i] + m[i] / 3).toFixed(2) + " " +
-      (xs[i + 1] - dx).toFixed(2) + " " + (ys[i + 1] - m[i + 1] / 3).toFixed(2) + " " +
-      xs[i + 1].toFixed(2) + " " + ys[i + 1].toFixed(2);
+    d += `C${(xs[i] + dx).toFixed(2)} ${(ys[i] + m[i] / 3).toFixed(2)} ${(xs[i + 1] - dx).toFixed(2)} ${(ys[i + 1] - m[i + 1] / 3).toFixed(2)} ${xs[i + 1].toFixed(2)} ${ys[i + 1].toFixed(2)}`;
   }
   return d;
 }
-
-/** The same curve at a fractional index `p`: the scrub marker sits exactly on the stroke. */
-export function hermiteAt(y, m, p) {
+function hermiteAt(y, m, p) {
   const last = y.length - 1;
-  if (last < 1) return y.length ? y[0] : 0;
+  if (last < 1) return y[0] ?? 0;
   const k = Math.min(last - 1, Math.max(0, Math.floor(p)));
   const t = p - k;
   const t2 = t * t;
   const t3 = t2 * t;
-  return (
-    (2 * t3 - 3 * t2 + 1) * y[k] + (t3 - 2 * t2 + t) * m[k] +
-    (-2 * t3 + 3 * t2) * y[k + 1] + (t3 - t2) * m[k + 1]
-  );
+  return (2 * t3 - 3 * t2 + 1) * y[k] + (t3 - 2 * t2 + t) * m[k] + (-2 * t3 + 3 * t2) * y[k + 1] + (t3 - t2) * m[k + 1];
 }
-
-/** Candidate steps in reais; times 100 they are cents. */
-const STEPS_BRL = [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000, 20000, 25000, 50000, 100000, 250000, 500000, 1000000];
-
-/** Domain with room (10% below, 12% above) and at most `maxTicks` round reference lines. In cents. */
-export function niceDomain(values, maxTicks = 3) {
+var STEPS_BRL = [100, 200, 250, 500, 1e3, 2e3, 2500, 5e3, 1e4, 2e4, 25e3, 5e4, 1e5, 25e4, 5e5, 1e6];
+function niceDomain(values, maxTicks = 3) {
   let mn = Infinity;
   let mx = -Infinity;
   for (const v of values) {
@@ -211,1326 +152,1378 @@ export function niceDomain(values, maxTicks = 3) {
   }
   return { min: lo, max: hi, ticks: ticks.length <= maxTicks ? ticks : [] };
 }
-
-/** Zero-based axis for bars and cumulative lines: a round top and at most `maxTicks` lines below it. */
-export function niceTicks(maxCents, maxTicks = 3) {
-  const target = Math.max(maxCents, 100);
-  for (const brl of STEPS_BRL) {
-    const step = brl * 100;
-    const count = Math.ceil(target / step);
-    if (count <= maxTicks + 0.2 || brl === STEPS_BRL[STEPS_BRL.length - 1]) {
-      const top = Math.max(1, count) * step;
-      const ticks = [];
-      for (let v = step; v < top; v += step) ticks.push(v);
-      return { top, step, ticks: ticks.slice(0, maxTicks) };
-    }
-  }
-  return { top: target, step: target, ticks: [] };
-}
-
-/** The biggest round step (cents) that fits under `maxCents`: one reference line for the bars. */
-export function niceStep(maxCents) {
-  let best = STEPS_BRL[0] * 100;
-  for (const brl of STEPS_BRL) if (brl * 100 <= maxCents * 0.9) best = brl * 100;
-  return best;
-}
-
-/** Closed-form step response of a damped spring (ζ < 1): rises to ~1 without a visible bounce. */
-export function springProgress(seconds, zeta = 0.88, omega = 11) {
-  if (seconds <= 0) return 0;
-  const wd = omega * Math.sqrt(1 - zeta * zeta);
-  return (
-    1 - Math.exp(-zeta * omega * seconds) * (Math.cos(wd * seconds) + ((zeta * omega) / wd) * Math.sin(wd * seconds))
-  );
-}
-
-/** Four X labels (start, 1/3, 2/3, end) with their horizontal fraction. */
-export function xAxisStops(startT, endT) {
+function xAxisStops(startT, endT) {
   return [0, 1 / 3, 2 / 3, 1].map((fraction) => ({ fraction, t: startT + (endT - startT) * fraction }));
 }
-
-/** Step-after path: each day's spending is a jump on that day, flat until the next one. */
-export function stepPath(xs, ys, y0) {
-  if (xs.length === 0) return "";
-  let d = "M" + xs[0].toFixed(2) + " " + y0.toFixed(2) + "V" + ys[0].toFixed(2);
-  for (let i = 1; i < xs.length; i++) d += "H" + xs[i].toFixed(2) + "V" + ys[i].toFixed(2);
-  return d;
+function snapStroke(x, dpr = 1) {
+  const d = dpr > 0 ? dpr : 1;
+  return Math.round((x - 0.5) * d) / d + 0.5;
 }
 
-export const math = {
-  clamp, lerp, lerpArray, sameArray, sliceByDays, resampleByTime, valueAtTime, monotoneTangents,
-  monotonePath, hermiteAt, niceDomain, niceTicks, niceStep, springProgress, xAxisStops, stepPath,
+// dataviz/lib/format.js
+import { MINUS, affixes, formatCompact, formatCurrency, formatMoneyParts, getConfig } from "./fp-money.js";
+var MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+var WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+var two = (n) => String(n).padStart(2, "0");
+var moneyParts = (cents) => formatMoneyParts(cents);
+var formatMoney = (cents) => formatCurrency(cents);
+var formatDelta = (cents) => formatCurrency(cents, { sign: "always" });
+var formatTick = (cents) => formatCompact(cents);
+var moneyAffixes = () => affixes();
+var moneyConfigKey = () => {
+  const c = getConfig();
+  return `${c.locale}|${c.currency}`;
+};
+var percentFormatters = /* @__PURE__ */ new Map();
+function percentFormatter(locale) {
+  let f = percentFormatters.get(locale);
+  if (!f) {
+    f = new Intl.NumberFormat(locale, { style: "percent", minimumFractionDigits: 0, maximumFractionDigits: 1 });
+    percentFormatters.set(locale, f);
+  }
+  return f;
+}
+function formatPercent(x, { sign = "auto" } = {}) {
+  if (!Number.isFinite(x)) return "—";
+  const rounded = Math.round(x * 10) / 10;
+  const body = percentFormatter(getConfig().locale).format(Math.abs(rounded) / 100);
+  if (rounded < 0) return MINUS + body;
+  return sign === "always" && rounded > 0 ? `+${body}` : body;
+}
+var shortDate = (d) => `${two(d.getDate())} ${MONTHS[d.getMonth()]}`;
+var monthYear = (d) => `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
+var monthYearFull = (d) => `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+var fullDate = (d) => `${two(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+var longDate = (d) => `${WEEKDAYS[d.getDay()]}, ${fullDate(d)}`;
+function isSameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function toEpoch(date) {
+  if (date instanceof Date) return date.getTime();
+  if (typeof date === "number") return date;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date));
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime() : new Date(date).getTime();
+}
+
+// dataviz/lib/points.js
+function parsePoints(input) {
+  const list = Array.isArray(input) ? input : Array.isArray(input?.points) ? input.points : [];
+  const rows = [];
+  for (const item of list) {
+    const date = Array.isArray(item) ? item[0] : item?.date;
+    const value = Array.isArray(item) ? item[1] : item?.value;
+    if (value == null || value === "" || date == null) continue;
+    const t = toEpoch(date);
+    const v = Number(value);
+    if (Number.isFinite(t) && Number.isFinite(v)) rows.push({ t, v: Math.round(v) });
+  }
+  rows.sort((a, b) => a.t - b.t);
+  const out = [];
+  for (const r of rows) {
+    if (out.length && out[out.length - 1].t === r.t) out[out.length - 1] = r;
+    else out.push(r);
+  }
+  return out;
+}
+
+// dataviz/lib/spring.js
+function fromKC(k, c) {
+  const omega = Math.sqrt(k);
+  return { omega, zeta: c / (2 * omega) };
+}
+function springSolve(x0, v0, target, zeta, omega, t) {
+  const u0 = x0 - target;
+  if (t <= 0) return [x0, v0];
+  if (Math.abs(zeta - 1) < 1e-6) {
+    const e = Math.exp(-omega * t);
+    const b = v0 + omega * u0;
+    return [target + e * (u0 + b * t), e * (v0 - omega * b * t)];
+  }
+  if (zeta < 1) {
+    const zw = zeta * omega;
+    const wd = omega * Math.sqrt(1 - zeta * zeta);
+    const e = Math.exp(-zw * t);
+    const c = Math.cos(wd * t);
+    const s2 = Math.sin(wd * t);
+    const B = (v0 + zw * u0) / wd;
+    return [target + e * (u0 * c + B * s2), e * ((-zw * u0 + wd * B) * c + (-zw * B - wd * u0) * s2)];
+  }
+  const q = Math.sqrt(zeta * zeta - 1);
+  const r1 = -omega * (zeta - q);
+  const r2 = -omega * (zeta + q);
+  const c2 = (v0 - r1 * u0) / (r2 - r1);
+  const c1 = u0 - c2;
+  const e1 = Math.exp(r1 * t);
+  const e2 = Math.exp(r2 * t);
+  return [target + c1 * e1 + c2 * e2, c1 * r1 * e1 + c2 * r2 * e2];
+}
+function settleTime(zeta, omega) {
+  if (zeta < 1) return 8 / (zeta * omega);
+  if (Math.abs(zeta - 1) < 1e-6) return 9.3 / omega;
+  return 8 / (omega * (zeta - Math.sqrt(zeta * zeta - 1)));
+}
+var SpringField = class {
+  constructor(n, zeta, omega) {
+    this.n = n;
+    this.zeta = zeta;
+    this.omega = omega;
+    this.tSettle = settleTime(zeta, omega);
+    this.x0 = new Float64Array(n);
+    this.v0 = new Float64Array(n);
+    this.target = new Float64Array(n);
+    this.cur = new Float64Array(n);
+    this.vel = new Float64Array(n);
+    this.t0 = 0;
+    this.settled = true;
+  }
+  /** Vai direto ao alvo, sem animar (primeiro desenho, movimento reduzido). */
+  jump(target) {
+    this.x0.set(target);
+    this.target.set(target);
+    this.cur.set(target);
+    this.v0.fill(0);
+    this.vel.fill(0);
+    this.settled = true;
+  }
+  /** Novo alvo no instante `now` (ms), continuando de onde cada componente está agora. */
+  retarget(target, now) {
+    if (!this.settled) this.sample(now);
+    this.x0.set(this.cur);
+    this.v0.set(this.vel);
+    this.target.set(target);
+    this.t0 = now;
+    this.settled = false;
+  }
+  /** Estado no instante `now` (ms). Marca `settled` ao fim e crava o alvo exato. */
+  sample(now) {
+    if (this.settled) return this.cur;
+    const t = Math.max(0, (now - this.t0) / 1e3);
+    if (t >= this.tSettle) {
+      this.cur.set(this.target);
+      this.vel.fill(0);
+      this.settled = true;
+      return this.cur;
+    }
+    const { zeta, omega, n } = this;
+    const { x0, v0, target, cur, vel } = this;
+    if (Math.abs(zeta - 1) < 1e-6) {
+      const e = Math.exp(-omega * t);
+      for (let i = 0; i < n; i++) {
+        const u0 = x0[i] - target[i];
+        const b = v0[i] + omega * u0;
+        cur[i] = target[i] + e * (u0 + b * t);
+        vel[i] = e * (v0[i] - omega * b * t);
+      }
+    } else if (zeta < 1) {
+      const zw = zeta * omega;
+      const wd = omega * Math.sqrt(1 - zeta * zeta);
+      const e = Math.exp(-zw * t);
+      const c = Math.cos(wd * t);
+      const s2 = Math.sin(wd * t);
+      for (let i = 0; i < n; i++) {
+        const u0 = x0[i] - target[i];
+        const B = (v0[i] + zw * u0) / wd;
+        cur[i] = target[i] + e * (u0 * c + B * s2);
+        vel[i] = e * ((-zw * u0 + wd * B) * c + (-zw * B - wd * u0) * s2);
+      }
+    } else {
+      for (let i = 0; i < n; i++) {
+        const r = springSolve(x0[i], v0[i], target[i], zeta, omega, t);
+        cur[i] = r[0];
+        vel[i] = r[1];
+      }
+    }
+    return cur;
+  }
+};
+function readNumber(el, prop, fallback) {
+  try {
+    const raw = getComputedStyle(el).getPropertyValue(prop).trim();
+    const v = parseFloat(raw);
+    return Number.isFinite(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function readSpring(el, name, fallback) {
+  const k = readNumber(el, `--k-${name}`, fallback.k);
+  const c = readNumber(el, `--c-${name}`, fallback.c);
+  return fromKC(k, c);
+}
+var ticker = /* @__PURE__ */ (() => {
+  const subs = /* @__PURE__ */ new Set();
+  let raf = 0;
+  const loop = (now) => {
+    raf = 0;
+    for (const fn of [...subs]) if (!fn(now)) subs.delete(fn);
+    if (subs.size) raf = requestAnimationFrame(loop);
+  };
+  return {
+    add(fn) {
+      subs.add(fn);
+      if (!raf && typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
+    },
+    remove(fn) {
+      subs.delete(fn);
+    },
+    get size() {
+      return subs.size;
+    }
+  };
+})();
+
+// dataviz/lib/rolling-number.js
+var mod = (n, m) => (n % m + m) % m;
+var isDigit = (ch) => ch >= "0" && ch <= "9";
+var kindOf = (ch) => isDigit(ch) ? "d" : "c";
+function nearestEquivalent(pos, digit, bias = 0) {
+  const k = Math.round((pos - digit) / 10);
+  let target = digit + 10 * k;
+  if (bias !== 0 && Math.abs(Math.abs(target - pos) - 5) < 1e-9) target = pos + (bias > 0 ? 5 : -5);
+  return target;
+}
+function alignRight(oldKinds, chars) {
+  const plan = new Array(chars.length).fill(-1);
+  const used = /* @__PURE__ */ new Set();
+  let i = oldKinds.length - 1;
+  for (let j = chars.length - 1; j >= 0; j--) {
+    if (i >= 0 && oldKinds[i] === kindOf(chars[j])) {
+      plan[j] = i;
+      used.add(i);
+    }
+    i--;
+  }
+  const remove = [];
+  for (let k = 0; k < oldKinds.length; k++) if (!used.has(k)) remove.push(k);
+  return { plan, remove };
+}
+function makeStripTemplate() {
+  const strip = document.createElement("span");
+  strip.className = "od-s";
+  for (let k = 0; k < 30; k++) {
+    const i = document.createElement("i");
+    i.textContent = String(k % 10);
+    strip.appendChild(i);
+  }
+  return strip;
+}
+var RollingNumber = class {
+  #host;
+  #cells = [];
+  #text = "";
+  #zeta;
+  #omega;
+  #settleT;
+  #reduced;
+  #template = null;
+  /**
+   * @param {HTMLElement} host   contêiner (recebe as colunas como filhos)
+   * @param {object} [opts]
+   * @param {number} [opts.zeta=1] amortecimento
+   * @param {number} [opts.omega=24] frequência natural (rad/s)
+   * @param {() => boolean} [opts.reduced] true quando o usuário pede movimento reduzido
+   */
+  constructor(host, { zeta = 1, omega = 24, reduced = () => false } = {}) {
+    this.#host = host;
+    this.#zeta = zeta;
+    this.#omega = omega;
+    this.#settleT = settleTime(zeta, omega);
+    this.#reduced = reduced;
+  }
+  get text() {
+    return this.#text;
+  }
+  /**
+   * Mostra `text` (ex.: `95.118,46` ou `+4.483,97 · +4,4%`).
+   * @param {object} [o]
+   * @param {boolean} [o.immediate] sem animar
+   * @param {number} [o.bias] sentido preferido nos empates (+1 sobe)
+   * @param {boolean} [o.intro] primeira aparição: TODOS os dígitos voltam ao 0 e rolam até o valor, em cascata
+   * @param {number} [o.tail] fator de escala dos centavos (ex.: 0.62); 1 = sem destaque
+   * @param {string} [o.decimal] separador decimal do texto (vem de `affixes().dec` do fp-money.js: "," no pt-BR, "." no en-US).
+   *   Sem ele não há destaque dos centavos: o separador nunca é presumido.
+   */
+  set(text, { immediate = false, bias = 0, intro = false, tail = 1, decimal = "" } = {}) {
+    if (text === this.#text && !this.#needsTail(tail, decimal)) return;
+    const chars = Array.from(text);
+    const instant = immediate || this.#reduced();
+    const rollIn = intro && !instant;
+    const now = performance.now();
+    const { plan, remove } = alignRight(this.#cells.map((c) => c.kind), chars);
+    const next = chars.map((ch, j) => {
+      const reuse = plan[j] >= 0 ? this.#cells[plan[j]] : null;
+      if (isDigit(ch)) {
+        const d = ch.charCodeAt(0) - 48;
+        if (reuse) {
+          if (rollIn) this.#restart(reuse, d, now + j * 38);
+          else this.#retarget(reuse, d, bias, now, instant);
+          return reuse;
+        }
+        const cell = this.#makeDigit(rollIn ? 0 : d);
+        if (rollIn) this.#retarget(cell, d, 1, now + j * 38, false, true);
+        return cell;
+      }
+      if (reuse) {
+        if (reuse.ch !== ch) {
+          reuse.el.textContent = ch;
+          reuse.ch = ch;
+        }
+        return reuse;
+      }
+      const el = document.createElement("span");
+      el.className = "od-c";
+      el.textContent = ch;
+      return { kind: "c", el, ch };
+    });
+    const unchanged = remove.length === 0 && next.length === this.#cells.length && next.every((c, i) => c === this.#cells[i]);
+    if (!unchanged) this.#host.replaceChildren(...next.map((c) => c.el));
+    this.#cells = next;
+    this.#text = text;
+    const dec = decimal ? chars.lastIndexOf(decimal) : -1;
+    next.forEach((c, i) => c.el.classList.toggle("od-tail", tail !== 1 && dec >= 0 && i >= dec));
+    this.#tail = tail;
+    this.#decimal = decimal;
+    if (next.some((c) => c.moving)) ticker.add(this.#tick);
+  }
+  #tail = 1;
+  #decimal = "";
+  #needsTail(tail, decimal) {
+    return tail !== this.#tail || decimal !== this.#decimal;
+  }
+  destroy() {
+    ticker.remove(this.#tick);
+    this.#host.replaceChildren();
+    this.#cells = [];
+    this.#text = "";
+  }
+  #makeDigit(d) {
+    this.#template ??= makeStripTemplate();
+    const el = document.createElement("span");
+    el.className = "od-d";
+    const sp = document.createElement("span");
+    sp.className = "od-sp";
+    sp.textContent = "0";
+    const strip = this.#template.cloneNode(true);
+    el.append(sp, strip);
+    const cell = { kind: "d", el, strip, pos: d, vel: 0, p0: d, v0: 0, target: d, t0: 0, moving: false };
+    this.#write(cell);
+    return cell;
+  }
+  /** Entrada: volta a coluna ao 0 e conta para cima até o dígito, em cascata (a esquerda começa antes). */
+  #restart(c, digit, startAt) {
+    c.pos = c.p0 = c.target = 0;
+    c.vel = c.v0 = 0;
+    c.moving = false;
+    this.#write(c);
+    this.#retarget(c, digit, 1, startAt, false, true);
+  }
+  #retarget(c, digit, bias, now, instant, forceUp = false) {
+    const target = forceUp ? digit : nearestEquivalent(c.pos, digit, bias);
+    if (instant) {
+      c.pos = c.target = c.p0 = target;
+      c.vel = c.v0 = 0;
+      c.moving = false;
+      this.#write(c);
+      return;
+    }
+    if (target === c.target && c.moving) return;
+    if (target === c.pos && !c.moving) return;
+    c.p0 = c.pos;
+    c.v0 = c.vel;
+    c.target = target;
+    c.t0 = now;
+    c.moving = true;
+  }
+  #write(c) {
+    c.strip.style.transform = `translate3d(0,${(-(10 + mod(c.pos, 10))).toFixed(4)}em,0)`;
+  }
+  #tick = (now) => {
+    let alive = false;
+    for (const c of this.#cells) {
+      if (!c.moving) continue;
+      const t = (now - c.t0) / 1e3;
+      if (t < 0) {
+        alive = true;
+        continue;
+      }
+      if (t >= this.#settleT) {
+        c.pos = c.target;
+        c.vel = 0;
+        c.moving = false;
+        c.pos = mod(c.pos, 10);
+        c.target = c.pos;
+        this.#write(c);
+        continue;
+      }
+      const [x, v] = springSolve(c.p0, c.v0, c.target, this.#zeta, this.#omega, t);
+      c.pos = x;
+      c.vel = v;
+      this.#write(c);
+      alive = true;
+    }
+    return alive;
+  };
 };
 
-// ───────────────────────────── pt-BR formatting ─────────────────────────────
-
-const two = (n) => String(n).padStart(2, "0");
-const grouped = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-
-/** 9511846 → "95.118,46"; negative → "−…" (U+2212). With `sign`, positive gets "+". */
-export function cents(value, opts = {}) {
-  const v = Math.round(value);
-  const body = grouped(Math.floor(Math.abs(v) / 100)) + "," + two(Math.abs(v) % 100);
-  if (v < 0) return "−" + body;
-  return opts.sign && v > 0 ? "+" + body : body;
-}
-
-/** 4.43 → "4,4" (no "%": the caller decides). */
-export function percent(x) {
-  return (Math.round(Math.abs(x) * 10) / 10).toFixed(1).replace(".", ",").replace(/,0$/, "");
-}
-
-/** Axis label: 9250000 cents → "92,5 mil" (thousands of reais). */
-export function thousands(value) {
-  const x = Math.round((value / 100000) * 10) / 10;
-  return String(x).replace(".", ",") + " " + T.thousand;
-}
-
-export const shortDate = (d) => two(d.getDate()) + " " + MONTH_ABBR[d.getMonth()];
-export const monthYear = (d) => MONTH_ABBR[d.getMonth()] + " " + String(d.getFullYear()).slice(2);
-export const monthYearFull = (d) => MONTH_ABBR[d.getMonth()] + " " + d.getFullYear();
-export const fullDate = (d) => shortDate(d) + " " + d.getFullYear();
-export const longDate = (d) => WEEKDAY_ABBR[d.getDay()] + ", " + fullDate(d);
-const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-/** ISO "YYYY-MM-DD" as a LOCAL day (no time-zone shift). */
-export function toEpoch(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
-  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime() : new Date(iso).getTime();
-}
-
-export const fmt = { cents, signedCents: (v) => cents(v, { sign: true }), percent, thousands, shortDate, monthYear, fullDate, longDate, toEpoch };
-
-// ───────────────────────────── small DOM helpers ─────────────────────────────
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function h(tag, props, ...children) {
-  const node = document.createElement(tag);
+// dataviz/fp-patrimonio.js
+var TAG = "fp-patrimonio";
+var SVG_NS = "http://www.w3.org/2000/svg";
+var GEOM = { top: 34, bottom: 30, padX: 0, samples: 96 };
+var DEFAULT_RANGES = [
+  { key: "1M", label: "1M", days: 30, aria: "Último mês" },
+  { key: "3M", label: "3M", days: 92, aria: "Últimos 3 meses" },
+  { key: "1A", label: "1A", days: 365, aria: "Último ano" },
+  { key: "Tudo", label: "Tudo", days: Infinity, aria: "Todo o período" }
+];
+var FALLBACK = { morph: { k: 121, c: 19.36 }, scrub: { k: 576, c: 48 } };
+function h(tag, props, ...kids) {
+  const e = document.createElement(tag);
   if (props) {
-    for (const key of Object.keys(props)) {
-      const value = props[key];
-      if (value == null || value === false) continue;
-      if (key === "class") node.className = value;
-      else if (key === "text") node.textContent = value;
-      else if (key === "style") node.setAttribute("style", value);
-      else node.setAttribute(key, value === true ? "" : String(value));
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else e.setAttribute(k, v === true ? "" : String(v));
     }
   }
-  for (const child of children) if (child) node.append(child);
-  return node;
+  for (const c of kids.flat()) if (c != null) e.append(c);
+  return e;
 }
-
-function s(tag, props) {
-  const node = document.createElementNS(SVG_NS, tag);
-  if (props) for (const key of Object.keys(props)) if (props[key] != null) node.setAttribute(key, String(props[key]));
-  return node;
-}
-
-const reduced = () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-let uid = 0;
-const nextId = (prefix) => prefix + "-" + ++uid;
-
-function clear(node) {
-  while (node.firstChild) node.removeChild(node.firstChild);
-}
-
-/** Springs between two vectors. A new target starts from where the curve is now (no jump). */
-function createTween(onFrame, opts = {}) {
-  const zeta = opts.zeta || 0.88;
-  const omega = opts.omega || 11;
-  const maxSeconds = opts.maxSeconds || 0.95;
-  let from = [];
-  let to = [];
-  let p = 1;
-  let raf = 0;
-  const current = () => (p >= 1 ? to : lerpArray(from, to, p));
-  return {
-    get values() { return current(); },
-    get from() { return from; },
-    get to() { return to; },
-    get progress() { return p; },
-    get settled() { return p >= 1; },
-    set(target, immediate) {
-      if (sameArray(to, target) && p >= 1) return;
-      from = to.length === target.length ? current() : target;
-      to = target;
-      cancelAnimationFrame(raf);
-      if (immediate || reduced() || from === target) {
-        p = 1;
-        onFrame();
-        return;
-      }
-      p = 0;
-      const t0 = performance.now();
-      const tick = (now) => {
-        const t = Math.max(0, (now - t0) / 1000);
-        const e = springProgress(t, zeta, omega);
-        const done = t > maxSeconds || (t > 0.25 && Math.abs(1 - e) < 0.0008);
-        p = done ? 1 : e;
-        onFrame();
-        if (!done) raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-    },
-    stop() { cancelAnimationFrame(raf); },
-  };
-}
-
-// ───────────────────────────── base: fetch, states, size ─────────────────────────────
-
-const PLOT_TOP = 34; // band reserved for the tooltip: it never covers data
-const PLOT_PAD_X = 8;
-const MIN_POINTS = 8;
-const SAMPLES = 120;
-
-class Chart {
-  constructor(root) {
-    this.root = root;
-    this.src = root.dataset.src || "";
-    this.box = root.querySelector('[data-fc="plot"]');
-    this.data = null;
-    this.state = "loading";
-    this.width = 0;
-    this.height = 0;
-    this.observer = null;
-    root.classList.add("fc");
+function s(tag, props, ...kids) {
+  const e = document.createElementNS(SVG_NS, tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) if (v != null) e.setAttribute(k, String(v));
   }
-
-  qs(name) { return this.root.querySelector('[data-fc="' + name + '"]'); }
-
-  /** Appends a clone of <template data-tpl="name"> (the states written in Jinja) to the plot box. */
-  appendTemplate(name) {
-    const tpl = this.root.querySelector('template[data-tpl="' + name + '"]');
-    if (!tpl) return null;
-    const node = tpl.content.firstElementChild.cloneNode(true);
-    this.box.append(node);
-    return node;
+  for (const c of kids.flat()) if (c != null) e.append(c);
+  return e;
+}
+var uid = 0;
+var HttpError = class extends Error {
+  constructor(status) {
+    super(`HTTP ${status}`);
+    this.status = status;
   }
-
-  showTemplate(name) {
-    clear(this.box);
-    return this.appendTemplate(name);
+};
+var FpPatrimonio = class extends HTMLElement {
+  static observedAttributes = ["range", "status", "heading", "badge", "footnote", "plot-height", "min-points", "src"];
+  // dados e estado
+  #series = [];
+  #ranges = DEFAULT_RANGES;
+  #rangeKey = "1A";
+  #state = "loading";
+  #statusAttr = "ready";
+  #slice = [];
+  #toTicks = [];
+  #fromTicks = [];
+  #toAxis = [];
+  #fromAxis = [];
+  #width = 0;
+  #plotH = 236;
+  #minPoints = 8;
+  // geometria da curva (px)
+  #xs = new Float64Array(GEOM.samples);
+  #ys = new Float64Array(GEOM.samples);
+  #my = new Float64Array(GEOM.samples);
+  // molas
+  #field = new SpringField(2 + GEOM.samples, 0.88, 11);
+  #prog = new SpringField(1, 0.88, 11);
+  // interação
+  #fraction = null;
+  #lastFraction = 1;
+  #pressed = false;
+  #pendingX = null;
+  #rectLeft = 0;
+  #dirtyCursor = false;
+  #nearest = -1;
+  #lastValue = null;
+  // infraestrutura
+  #built = false;
+  #dom = null;
+  #roll = null;
+  #rollChip = null;
+  #ro = null;
+  #mq = null;
+  #reduced = false;
+  #abort = null;
+  #ticks = /* @__PURE__ */ new Map();
+  #xlabels = /* @__PURE__ */ new Map();
+  #desc = "";
+  #pendingProps = {};
+  #cfgKey = "";
+  // locale|divisa com que o DOM foi desenhado
+  #dec = "";
+  // separador decimal em vigor (para destacar os centavos do odômetro)
+  #snap = false;
+  // próximo quadro do cursor sem rolagem: a divisa mudou e símbolo e separadores trocaram
+  #ariaStale = false;
+  // reescrever aria-valuetext mesmo sem mudar de registro
+  #rollEmpty = true;
+  // o cabeçalho mostra "sem valor" (—), não um saldo
+  #firstReady = true;
+  #hasCurve = false;
+  #springsReady = false;
+  #id = ++uid;
+  // ───────────── API pública ─────────────
+  get points() {
+    return this.#series.map((p) => ({ date: p.t, value: p.v }));
   }
-
-  setBusy(on) { this.box.setAttribute("aria-busy", on ? "true" : "false"); }
-
-  async load() {
-    this.setBusy(true);
-    try {
-      const response = await fetch(this.src, { headers: { Accept: "application/json" }, credentials: "same-origin" });
-      if (!response.ok) throw new Error(String(response.status));
-      this.data = await response.json();
-    } catch (error) {
-      this.fail(error);
+  set points(list) {
+    if (!this.#built) {
+      this.#pendingProps.points = list;
       return;
     }
-    this.setBusy(false);
-    this.watchSize();
-    this.start();
+    this.#setSeries(parsePoints(list));
   }
-
-  fail() {
-    this.state = "error";
-    this.root.classList.remove("is-ready");
-    this.setBusy(false);
-    const node = this.showTemplate("error");
-    if (node) {
-      const retry = node.querySelector("[data-fc-retry]");
-      if (retry) retry.addEventListener("click", () => this.retry());
-    }
+  get range() {
+    return this.#rangeKey;
   }
-
-  retry() {
-    this.root.classList.remove("is-ready");
-    clear(this.box);
-    const sk = this.root.querySelector('template[data-tpl="skeleton"]');
-    if (sk) this.box.append(sk.content.cloneNode(true));
-    this.load();
-  }
-
-  /** Measures the box (its height is fixed by CSS, so measuring never moves the page). */
-  watchSize() {
-    if (this.observer || typeof ResizeObserver === "undefined") return;
-    this.observer = new ResizeObserver(() => {
-      const w = Math.round(this.box.clientWidth);
-      const hgt = Math.round(this.box.clientHeight);
-      if (w > 0 && (w !== this.width || hgt !== this.height)) {
-        this.width = w;
-        this.height = hgt;
-        this.onResize();
-      }
-    });
-    this.observer.observe(this.box);
-  }
-
-  measure() {
-    this.width = Math.round(this.box.clientWidth);
-    this.height = Math.round(this.box.clientHeight);
-  }
-
-  onResize() {}
-  start() {}
-
-  /** Pointer position as a fraction of the drawing width. */
-  fractionOf(clientX, el) {
-    const r = el.getBoundingClientRect();
-    return clamp((clientX - r.left - PLOT_PAD_X) / Math.max(1, r.width - 2 * PLOT_PAD_X), 0, 1);
-  }
-
-  /** Shared slider layer: ARIA slider over the plot, with pointer (mouse hover, touch drag) and keyboard. */
-  makeHit(label, handlers) {
-    const hit = h("div", {
-      class: "fc-hit", role: "slider", tabindex: "0", "aria-label": label, "aria-orientation": "horizontal",
-    });
-    hit.addEventListener("pointermove", (e) => handlers.move(e.clientX, hit, e));
-    hit.addEventListener("pointerdown", (e) => {
-      try { hit.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events */ }
-      handlers.press(true);
-      handlers.move(e.clientX, hit, e);
-    });
-    hit.addEventListener("pointerup", (e) => {
-      handlers.press(false);
-      if (e.pointerType !== "mouse") handlers.release();
-    });
-    hit.addEventListener("pointercancel", () => handlers.release());
-    hit.addEventListener("pointerleave", (e) => {
-      if (e.pointerType === "mouse" && !(hit.hasPointerCapture && hit.hasPointerCapture(e.pointerId))) handlers.release();
-    });
-    hit.addEventListener("blur", () => handlers.release());
-    hit.addEventListener("keydown", (e) => {
-      const many = e.shiftKey ? 7 : 1;
-      switch (e.key) {
-        case "ArrowLeft": case "ArrowDown": handlers.nudge(-many); break;
-        case "ArrowRight": case "ArrowUp": handlers.nudge(many); break;
-        case "PageDown": handlers.nudge(-30); break;
-        case "PageUp": handlers.nudge(30); break;
-        case "Home": handlers.jump(0); break;
-        case "End": handlers.jump(1); break;
-        case "Escape": handlers.release(); return;
-        default: return;
-      }
-      e.preventDefault();
-    });
-    return hit;
-  }
-
-  /** Floating glass note; `x` is the pointer abscissa in the box, `html` pieces are text nodes (no markup). */
-  placeTip(tip, x, visible) {
-    tip.style.opacity = visible ? "1" : "0";
-    const w = tip.offsetWidth || 150;
-    const left = clamp(x, w / 2 + 2, Math.max(w / 2 + 2, this.width - w / 2 - 2));
-    tip.style.left = left + "px";
-  }
-}
-
-function setChip(el, text, tone, direction) {
-  if (!el) return;
-  el.className = "dl dl-chip dl-" + tone + (direction === "up" ? " dl-up" : direction === "down" ? " dl-dn" : "");
-  el.textContent = text;
-}
-
-function setFigure(el, value, negativeRed) {
-  if (!el) return;
-  el.textContent = cents(value);
-  el.classList.toggle("is-negative", Boolean(negativeRed) && value < 0);
-  el.classList.remove("sk-inline");
-  el.style.width = "";
-  el.style.height = "";
-}
-
-function gridPath(ticks, yOf, width) {
-  return ticks.map((v) => "M" + PLOT_PAD_X + " " + yOf(v).toFixed(1) + "H" + (width - PLOT_PAD_X).toFixed(1)).join("");
-}
-
-function marker(cls) { return h("div", { class: cls, "aria-hidden": "true" }); }
-
-/** Text labels that fade between two sets (period change): keyed spans positioned by `place(key)`. */
-class LabelLayer {
-  constructor(parent, cls) {
-    this.parent = parent;
-    this.cls = cls;
-    this.nodes = new Map();
-  }
-
-  /** items: [{ key, text, left?, top?, shift? , opacity }] */
-  update(items) {
-    const seen = new Set();
-    for (const item of items) {
-      if (item.opacity < 0.002) continue;
-      seen.add(item.key);
-      let node = this.nodes.get(item.key);
-      if (!node) {
-        node = h("span", { class: this.cls, "aria-hidden": "true", text: item.text });
-        this.parent.append(node);
-        this.nodes.set(item.key, node);
-      }
-      if (item.left != null) node.style.left = item.left + "px";
-      if (item.top != null) node.style.top = item.top + "px";
-      node.style.transform = item.shift || "";
-      node.style.opacity = String(item.opacity);
-    }
-    for (const [key, node] of this.nodes) {
-      if (!seen.has(key)) {
-        node.remove();
-        this.nodes.delete(key);
-      }
-    }
-  }
-}
-
-// ───────────────────────────── net worth ─────────────────────────────
-
-const RANGE_DAYS = { "1M": 30, "3M": 92, "1A": 365, Tudo: Infinity };
-
-class NetWorthChart extends Chart {
-  constructor(root) {
-    super(root);
-    this.range = root.dataset.defaultRange || "1A";
-    this.prevRange = this.range;
-    this.fraction = null;
-    this.pressed = false;
-    this.series = [];
-    this.minPoints = Number(root.dataset.minPoints) || MIN_POINTS;
-    this.tween = createTween(() => this.draw());
-    this.bindRange();
-    this.load();
-  }
-
-  bindRange() {
-    this.rangeBox = this.qs("range");
-    if (!this.rangeBox) return;
-    this.rangeButtons = Array.from(this.rangeBox.querySelectorAll("[data-range]"));
-    this.rangeButtons.forEach((button) => {
-      button.addEventListener("click", () => this.selectRange(button.dataset.range));
-      button.addEventListener("keydown", (e) => {
-        const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-        if (!dir) return;
-        e.preventDefault();
-        const i = this.rangeButtons.indexOf(button);
-        const next = this.rangeButtons[(i + dir + this.rangeButtons.length) % this.rangeButtons.length];
-        this.selectRange(next.dataset.range);
-        next.focus();
-      });
-    });
-    this.syncRange();
-  }
-
-  syncRange() {
-    if (!this.rangeBox) return;
-    const index = Math.max(0, this.rangeButtons.findIndex((b) => b.dataset.range === this.range));
-    this.rangeBox.style.setProperty("--fc-idx", String(index));
-    this.rangeButtons.forEach((b, i) => {
-      b.setAttribute("aria-checked", i === index ? "true" : "false");
-      b.tabIndex = i === index ? 0 : -1;
-    });
-    this.rangeBox.classList.toggle("is-disabled", this.state !== "ready");
-  }
-
-  selectRange(key) {
-    if (!(key in RANGE_DAYS) || key === this.range || this.state !== "ready") return;
-    this.prevRange = this.range;
-    this.range = key;
-    this.fraction = null;
-    this.syncRange();
-    this.compute();
-    this.tween.set(this.target);
-    this.header();
-  }
-
-  start() {
-    this.series = (this.data.points || [])
-      .map((p) => ({ t: toEpoch(p.date), v: p.cents }))
-      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v))
-      .sort((a, b) => a.t - b.t);
-    this.todayEpoch = this.data.today ? toEpoch(this.data.today) : Date.now();
-    const badge = this.qs("badge");
-    if (badge) badge.hidden = !this.data.partial;
-    this.fillNote();
-    this.measure();
-    if (this.series.length < this.minPoints) {
-      this.showSparse();
+  set range(key) {
+    if (!this.#built) {
+      this.#pendingProps.range = key;
       return;
     }
-    this.state = "ready";
-    this.root.classList.add("is-ready");
-    this.syncRange();
-    this.build();
-    this.compute();
-    this.tween.set(this.target, true);
-    this.header();
+    this.#selectRange(String(key), false);
   }
-
-  fillNote() {
-    const note = this.qs("note");
-    if (!note) return;
-    const apart = note.querySelector("[data-fc-apart]");
-    if (apart) apart.textContent = cents(this.data.future_installments_cents || 0);
-    const partial = Boolean(this.data.partial);
-    note.querySelectorAll('[data-fc-if="partial"]').forEach((e) => { e.hidden = !partial; });
-    const pending = note.querySelector("[data-fc-pending]");
-    if (pending) pending.textContent = (this.data.pending || []).map((p) => p.name).join(", ");
-    note.hidden = false;
+  get status() {
+    return this.#statusAttr;
   }
-
-  showSparse() {
-    this.state = "sparse";
-    this.root.classList.add("is-ready");
-    this.syncRange();
-    const node = this.showTemplate("sparse");
-    const have = this.series.length;
-    if (node) {
-      node.querySelectorAll("[data-fc-have]").forEach((e) => (e.textContent = String(have)));
-      node.querySelectorAll("[data-fc-need]").forEach((e) => (e.textContent = String(this.minPoints)));
-      const gauge = node.querySelector(".sg");
-      if (gauge) {
-        gauge.style.setProperty("--sg-w", Math.min(100, (100 * have) / this.minPoints).toFixed(2) + "%");
-        gauge.setAttribute("aria-label", have + " de " + this.minPoints);
+  set status(v) {
+    this.setAttribute("status", v === "loading" ? "loading" : "ready");
+  }
+  /** Períodos do controle: `[{ key, label, days, aria }]`. */
+  set ranges(list) {
+    if (Array.isArray(list) && list.length) {
+      this.#ranges = list;
+      if (this.#built) {
+        this.#buildRange();
+        this.#selectRange(this.#rangeKey, false, true);
       }
     }
-    this.sparseDots();
-    this.headerSparse();
   }
-
-  sparseDots() {
-    const tail = this.series.slice(-3);
-    if (!tail.length || !this.width) return;
-    const plotH = this.height - PLOT_TOP - 30;
-    const lo = Math.min(...tail.map((q) => q.v));
-    const hi = Math.max(...tail.map((q) => q.v));
-    const stops = [0.267, 0.667, 0.967].slice(3 - tail.length);
-    const inner = this.width - 2 * PLOT_PAD_X;
-    const pts = tail.map((q, i) => ({
-      x: PLOT_PAD_X + stops[i] * inner,
-      y: PLOT_TOP + plotH * (0.8 - 0.42 * (hi === lo ? 0.5 : (q.v - lo) / (hi - lo))),
-    }));
-    const svg = s("svg", { width: this.width, height: this.height, viewBox: "0 0 " + this.width + " " + this.height, "aria-hidden": "true", class: "fc-svg" });
-    svg.append(
-      s("path", { class: "fc-ghost", d: "M" + PLOT_PAD_X + " " + pts[0].y.toFixed(1) + "H" + pts[0].x.toFixed(1) }),
-      s("path", { class: "fc-track", d: "M" + pts.map((p) => p.x.toFixed(1) + " " + p.y.toFixed(1)).join("L") }),
+  /** Lê `src` de novo. Com o gráfico já na tela a atualização é silenciosa: a curva INTERPOLA para os dados novos. */
+  reload() {
+    if (this.getAttribute("src")) this.#fetch(this.#state === "ready");
+  }
+  // ───────────── ciclo de vida ─────────────
+  connectedCallback() {
+    for (const k of ["points", "range", "status", "ranges"]) {
+      if (Object.prototype.hasOwnProperty.call(this, k)) {
+        const v = this[k];
+        delete this[k];
+        this.#pendingProps[k] = v;
+      }
+    }
+    if (this.#built) {
+      this.#attach();
+      return;
+    }
+    const inline = this.querySelector('script[type="application/json"]');
+    let inlineData = null;
+    if (inline) {
+      try {
+        inlineData = JSON.parse(inline.textContent || "null");
+      } catch {
+        this.#fail("JSON inline inválido");
+      }
+    }
+    this.#minPoints = Math.max(2, parseInt(this.getAttribute("min-points") || "8", 10) || 8);
+    this.#plotH = clamp(parseInt(this.getAttribute("plot-height") || "236", 10) || 236, 120, 600);
+    this.#rangeKey = this.getAttribute("range") || "1A";
+    this.#statusAttr = this.getAttribute("status") === "loading" ? "loading" : "ready";
+    this.#build();
+    this.#attach();
+    this.#built = true;
+    const p = this.#pendingProps;
+    if (p.ranges) this.ranges = p.ranges;
+    if (p.range) this.#rangeKey = String(p.range);
+    if (p.status) this.#statusAttr = p.status === "loading" ? "loading" : "ready";
+    if (p.points) this.#setSeries(parsePoints(p.points));
+    else if (inlineData) this.#setSeries(parsePoints(inlineData));
+    else if (this.getAttribute("src")) this.#fetch();
+    else this.#setState(this.#statusAttr === "loading" ? "loading" : "empty");
+    this.#pendingProps = {};
+  }
+  disconnectedCallback() {
+    this.#ro?.disconnect();
+    this.#mq?.removeEventListener("change", this.#onMotionPref);
+    window.removeEventListener("fp:config", this.#onConfig);
+    document.removeEventListener("fp:privacy", this.#onPrivacy);
+    this.#abort?.abort();
+    ticker.remove(this.#tick);
+  }
+  attributeChangedCallback(name, _old, value) {
+    if (!this.#built) return;
+    switch (name) {
+      case "range":
+        if (value && value !== this.#rangeKey) this.#selectRange(value, false);
+        break;
+      case "status":
+        this.#statusAttr = value === "loading" ? "loading" : "ready";
+        this.#setState(this.#decideState());
+        break;
+      case "heading":
+      case "badge":
+      case "footnote":
+        this.#renderTexts();
+        break;
+      case "plot-height":
+        this.#plotH = clamp(parseInt(value || "236", 10) || 236, 120, 600);
+        this.style.setProperty("--fp-plot-h", `${this.#plotH}px`);
+        this.#layout();
+        break;
+      case "min-points":
+        this.#minPoints = Math.max(2, parseInt(value || "8", 10) || 8);
+        this.#setState(this.#decideState());
+        break;
+      case "src":
+        this.#fetch();
+        break;
+    }
+  }
+  // ───────────── construção do DOM (uma vez) ─────────────
+  #build() {
+    this.replaceChildren();
+    this.style.setProperty("--fp-top", `${GEOM.top}px`);
+    this.style.setProperty("--fp-bottom", `${GEOM.bottom}px`);
+    this.style.setProperty("--fp-plot-h", `${this.#plotH}px`);
+    this.setAttribute("role", "group");
+    this.setAttribute("aria-label", "Evolução do patrimônio");
+    if (this.getAttribute("private") && !this.closest("[data-peek-scope]")) this.setAttribute("data-peek-scope", "");
+    const gid = `fp-fill-${this.#id}`;
+    const d = {};
+    this.#dom = d;
+    d.title = h("div", { class: "fp-title overline" });
+    d.titleText = document.createTextNode("");
+    d.badge = h("span", { class: "fp-badge" });
+    d.title.append(d.titleText, d.badge);
+    const pv = this.getAttribute("private") ? { "data-private": this.getAttribute("private") } : null;
+    d.sign = h("span", { class: "fp-sign", "aria-hidden": "true", hidden: true, ...pv });
+    d.cur = h("span", { class: "fp-cur", "aria-hidden": "true" });
+    d.num = h("span", { class: "fp-num", "aria-hidden": "true", ...pv });
+    d.value = h("div", { class: "fp-value display" });
+    d.srValue = h("span", { class: "sr-only", ...pv });
+    d.chipNum = h("span", { class: "fp-chip-num", ...pv });
+    d.chip = h("span", { class: "fp-chip dl dl-pos dl-up nums", "aria-hidden": "true" }, d.chipNum);
+    d.when = h("span", { class: "fp-when nums" });
+    d.sub = h("div", { class: "fp-sub" }, d.chip, d.when);
+    d.meta = h("div", { class: "fp-meta" }, d.title, d.value, d.srValue, d.sub);
+    d.skMeta = h("div", { class: "fp-skm", "aria-hidden": "true" }, h("div", { class: "sk fp-sk1" }), h("div", { class: "sk fp-sk2" }), h("div", { class: "fp-sk3" }, h("div", { class: "sk fp-sk3a" }), h("div", { class: "sk fp-sk3b" })));
+    d.skRange = h("div", { class: "sk fp-skr", "aria-hidden": "true" });
+    d.range = h("div", { class: "fp-range", role: "radiogroup", "aria-label": "Período do gráfico" });
+    d.head = h("div", { class: "fp-head" }, d.meta, d.skMeta, d.range, d.skRange);
+    d.fillTop = s("stop", { offset: "0" });
+    d.fillTop.setAttribute("class", "fp-g0");
+    d.fillBottom = s("stop", { offset: "1" });
+    d.fillBottom.setAttribute("class", "fp-g1");
+    d.grid = s("g", { class: "fp-grid" });
+    d.area = s("path", { class: "fp-area", fill: `url(#${gid})` });
+    d.line = s("path", { class: "fp-line", fill: "none" });
+    d.dots = s("g", { class: "fp-recs" });
+    d.guide = s("line", { class: "fp-guide" });
+    d.svg = s(
+      "svg",
+      { class: "fp-svg", width: "100%", height: "100%", "aria-hidden": "true", focusable: "false" },
+      s("defs", null, s("linearGradient", { id: gid, x1: "0", y1: "0", x2: "0", y2: "1" }, d.fillTop, d.fillBottom)),
+      d.grid,
+      d.area,
+      d.line,
+      d.dots,
+      d.guide
     );
-    this.box.prepend(svg);
-    pts.forEach((p, i) => {
-      const dot = marker("fc-dot fc-pop is-on");
-      dot.style.left = p.x + "px";
-      dot.style.top = p.y + "px";
-      dot.style.animationDelay = 200 + i * 140 + "ms";
-      this.box.append(dot);
+    d.labels = h("div", { class: "fp-labels", "aria-hidden": "true" });
+    d.draw = h("div", { class: "fp-draw wipe" }, d.svg, d.labels);
+    d.halo = h("span", { class: "fp-halo" });
+    d.dot = h("span", { class: "fp-dot" });
+    d.marker = h("div", { class: "fp-marker", "aria-hidden": "true" }, d.halo, d.dot);
+    d.tipDate = h("span", { class: "fp-tip-d" });
+    d.tipVal = h("span", { class: "fp-tip-v", ...pv });
+    d.tipEst = h("span", { class: "fp-tip-e", text: "estimado", hidden: true });
+    d.tip = h("div", { class: "fp-tip dv-tip", "aria-hidden": "true" }, d.tipDate, h("span", { class: "fp-tip-s", text: "·" }), d.tipVal, d.tipEst);
+    d.hit = h("div", {
+      class: "fp-hit",
+      role: "slider",
+      tabindex: "0",
+      "aria-label": "Patrimônio ao longo do período",
+      "aria-orientation": "horizontal",
+      "aria-valuemin": "0",
+      "aria-valuemax": "0",
+      "aria-valuenow": "0",
+      "aria-describedby": `fp-desc-${this.#id}`
     });
+    d.skPlot = h("div", { class: "fp-skp", role: "status", "aria-busy": "true", "aria-label": "Carregando o gráfico de patrimônio" }, h("div", { class: "sk fp-skp-area" }), h("div", { class: "sk fp-skp-y" }), h("div", { class: "sk fp-skp-x1" }), h("div", { class: "sk fp-skp-x2" }), h("div", { class: "sk fp-skp-x3" }));
+    d.sparse = h("div", { class: "fp-sparse" });
+    d.err = h("div", { class: "fp-err" });
+    d.plot = h("div", { class: "fp-plot" }, d.draw, d.marker, d.tip, d.hit, d.skPlot, d.sparse, d.err);
+    d.foot = h("p", { class: "fp-foot nums" });
+    d.desc = h("p", { class: "sr-only", id: `fp-desc-${this.#id}` });
+    d.live = h("p", { class: "sr-only", "aria-live": "polite" });
+    this.append(d.head, d.plot, d.foot, d.desc, d.live);
+    this.#applyCurrency();
+    this.#roll = this.#makeRoll(d.num, { zeta: 1, omega: 24 });
+    this.#rollChip = this.#makeRoll(d.chipNum, { zeta: 1, omega: 24 });
+    this.#buildRange();
+    this.#renderTexts();
+    this.#bindEvents();
   }
-
-  headerSparse() {
-    const last = this.series[this.series.length - 1];
-    setFigure(this.qs("value"), last ? last.v : 0);
-    setChip(this.qs("delta"), "—", "neu");
-    const when = this.qs("when");
-    if (when) when.textContent = "";
-    const desc = this.qs("desc");
-    if (desc) desc.textContent = this.series.length + " de " + this.minPoints;
+  #attach() {
+    this.#mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    this.#reduced = this.#mq.matches;
+    this.#mq.addEventListener("change", this.#onMotionPref);
+    window.addEventListener("fp:config", this.#onConfig);
+    document.addEventListener("fp:privacy", this.#onPrivacy);
+    this.#onConfig();
+    if (!this.#springsReady) {
+      this.#springsReady = true;
+      const morph = readSpring(this, "morph", FALLBACK.morph);
+      const scrub = readSpring(this, "scrub", FALLBACK.scrub);
+      this.#field = new SpringField(2 + GEOM.samples, morph.zeta, morph.omega);
+      this.#prog = new SpringField(1, morph.zeta, morph.omega);
+      this.#roll?.destroy();
+      this.#rollChip?.destroy();
+      this.#roll = this.#makeRoll(this.#dom.num, scrub);
+      this.#rollChip = this.#makeRoll(this.#dom.chipNum, scrub);
+    }
+    this.#ro?.disconnect();
+    this.#ro = new ResizeObserver((entries) => {
+      const w = Math.round(entries[0].contentRect.width);
+      if (w > 0 && w !== this.#width) {
+        this.#width = w;
+        this.#layout();
+      }
+    });
+    this.#ro.observe(this.#dom.plot);
   }
-
-  onResize() {
-    if (this.state === "ready") {
-      this.build();
-      this.draw();
-    } else if (this.state === "sparse") {
-      this.box.querySelectorAll(".fc-svg, .fc-pop").forEach((n) => n.remove());
-      this.sparseDots();
+  #makeRoll(host, sp) {
+    return new RollingNumber(host, { zeta: sp.zeta, omega: sp.omega, reduced: () => this.#reduced });
+  }
+  #onMotionPref = (e) => {
+    this.#reduced = e.matches;
+  };
+  // ───────────── moeda (tudo de ../fp-money.js) ─────────────
+  /** Símbolo, posição, respiro e separador decimal da divisa em vigor. Refaz a ordem sinal · símbolo · número. */
+  #applyCurrency() {
+    const d = this.#dom;
+    const a = moneyAffixes();
+    d.cur.textContent = a.symbol;
+    d.cur.dataset.pos = a.position;
+    d.cur.dataset.gap = a.gap ? "text" : "none";
+    d.value.replaceChildren(...a.position === "after" ? [d.sign, d.num, d.cur] : [d.sign, d.cur, d.num]);
+    this.#dec = a.dec;
+    this.#cfgKey = moneyConfigKey();
+  }
+  /** `fp:config`: a divisa ou o locale mudou. Eixos, cabeçalho, tooltip e textos de leitura se refazem, sem rolagem. */
+  #onConfig = () => {
+    if (!this.#dom || moneyConfigKey() === this.#cfgKey) return;
+    this.#applyCurrency();
+    for (const [val, t] of this.#ticks) t.label.textContent = formatTick(val);
+    if (this.#state === "ready") {
+      this.#renderDescription();
+      this.#snap = true;
+      this.#ariaStale = true;
+      this.#dirtyCursor = true;
+      ticker.add(this.#tick);
+    } else {
+      this.#renderHeaderIdle();
+    }
+  };
+  /** Atributo data-private dos nós de valor (vazio sem o atributo `private`: nada muda no DOM). */
+  #pv() {
+    const g = this.getAttribute("private");
+    return g ? { "data-private": g } : null;
+  }
+  /** Modo privacidade (fp-privacy.js, opcional): com o grupo desfocado, nenhum texto de leitor de tela repete o valor. */
+  #hidden() {
+    const g = this.getAttribute("private");
+    return !!g && globalThis.FP?.privacy?.isMasked?.(g) === true;
+  }
+  /** `fp:privacy`: o usuário ligou ou desligou o desfoque. Só os textos de leitura mudam (o desfoque em si é CSS). */
+  #onPrivacy = () => {
+    if (!this.#dom || !this.getAttribute("private")) return;
+    if (this.#state === "ready") {
+      this.#renderDescription();
+      this.#ariaStale = true;
+      this.#dirtyCursor = true;
+      ticker.add(this.#tick);
+    } else {
+      this.#renderHeaderIdle();
+    }
+  };
+  /** Cabeçalho: sinal e símbolo parados, número em dígitos vivos. `mp` nulo = sem valor: "—", sem símbolo (nunca um zero que pareça saldo). */
+  #setHeader(mp, opts = {}) {
+    const d = this.#dom;
+    d.value.toggleAttribute("data-empty", !mp);
+    d.sign.textContent = mp ? mp.sign : "";
+    d.sign.hidden = !mp || !mp.sign;
+    this.#roll.set(mp ? mp.amount : "—", { ...opts, tail: mp ? 0.62 : 1, decimal: this.#dec });
+    this.#rollEmpty = !mp;
+  }
+  #renderTexts() {
+    const d = this.#dom;
+    d.titleText.textContent = this.getAttribute("heading") || "Patrimônio";
+    const badge = this.getAttribute("badge");
+    d.badge.textContent = badge || "";
+    d.badge.hidden = !badge;
+    const foot = this.getAttribute("footnote");
+    d.foot.textContent = foot || "";
+    d.foot.hidden = !foot;
+  }
+  // ───────────── dados ─────────────
+  async #fetch(silent = false) {
+    const raw = this.getAttribute("src");
+    if (!raw) return;
+    let url;
+    try {
+      url = new URL(raw, location.href);
+    } catch {
+      this.#fail("Endereço de dados inválido");
+      return;
+    }
+    if (url.origin !== location.origin) {
+      this.#fail("Origem externa bloqueada: os dados vêm só deste computador");
+      return;
+    }
+    this.#abort?.abort();
+    this.#abort = new AbortController();
+    if (!silent) this.#setState("loading");
+    try {
+      const res = await fetch(url, { signal: this.#abort.signal, headers: { Accept: "application/json" }, credentials: "same-origin", cache: "no-cache", redirect: "error" });
+      if (!res.ok) throw new HttpError(res.status);
+      this.#setSeries(parsePoints(await res.json()));
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      const why = err instanceof HttpError ? `HTTP ${err.status}` : err?.name === "SyntaxError" ? "resposta que não é JSON" : "sem resposta direta do servidor local";
+      const message = `Não consegui ler os saldos (${why})`;
+      if (silent) this.dispatchEvent(new CustomEvent("fp-error", { bubbles: true, detail: { message } }));
+      else this.#fail(message);
     }
   }
-
-  compute() {
-    const def = RANGE_DAYS[this.range];
-    this.slice = sliceByDays(this.series, def);
-    this.prevSlice = sliceByDays(this.series, RANGE_DAYS[this.prevRange]);
-    const samples = resampleByTime(this.slice, SAMPLES);
-    const domain = niceDomain(samples);
-    this.target = [domain.min, domain.max].concat(samples);
+  #fail(message) {
+    this.#dom.err.replaceChildren(
+      h("span", { class: "fp-card-t", text: "Não foi possível mostrar o gráfico" }),
+      h("span", { class: "fp-card-p", text: message }),
+      h("button", { type: "button", class: "fp-link", text: "Tentar de novo" })
+    );
+    this.#dom.err.querySelector("button").addEventListener("click", () => this.reload());
+    this.#setState("error");
+    this.dispatchEvent(new CustomEvent("fp-error", { bubbles: true, detail: { message } }));
   }
-
-  build() {
-    clear(this.box);
-    this.plotH = Math.max(40, this.height - PLOT_TOP - 30);
-    const gid = nextId("fc-fill");
-    const layer = h("div", { class: "fc-layer wipe" });
-    const svg = s("svg", { width: this.width, height: this.height, viewBox: "0 0 " + this.width + " " + this.height, "aria-hidden": "true", class: "fc-svg" });
-    const defs = s("defs");
-    const grad = s("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
-    grad.append(s("stop", { offset: 0, class: "fc-stop-top" }), s("stop", { offset: 1, class: "fc-stop-bottom" }));
-    defs.append(grad);
-    this.gridBoth = s("path", { class: "fc-grid" });
-    this.gridFrom = s("path", { class: "fc-grid" });
-    this.gridTo = s("path", { class: "fc-grid" });
-    this.area = s("path", { fill: "url(#" + gid + ")", stroke: "none" });
-    this.line = s("path", { class: "fc-line" });
-    svg.append(defs, this.gridBoth, this.gridFrom, this.gridTo, this.area, this.line);
-    layer.append(svg);
-    this.yLabels = new LabelLayer(layer, "fc-ylabel");
-    this.xLabels = new LabelLayer(layer, "fc-xlabel");
-    this.box.append(layer);
-    this.guide = marker("fc-guide");
-    this.guide.style.top = PLOT_TOP + "px";
-    this.guide.style.height = this.plotH + "px";
-    this.halo = marker("fc-halo");
-    this.dotEl = marker("fc-dot");
-    this.tip = h("div", { class: "fc-tip dv-tip", "aria-hidden": "true" });
-    this.tipDate = h("span", { class: "fc-tip-soft" });
-    this.tipValue = h("span", { class: "fc-tip-value" });
-    this.tip.append(this.tipDate, h("span", { class: "fc-tip-sep", text: "·" }), this.tipValue);
-    this.hit = this.makeHit(this.root.dataset.sliderLabel || "Patrimônio ao longo do período", {
-      move: (x, el) => this.scrubTo(this.fractionOf(x, el)),
-      press: (on) => { this.pressed = on; this.cursor(); },
-      release: () => this.release(),
-      nudge: (n) => this.nudge(n),
-      jump: (f) => this.scrubTo(f),
-    });
-    const desc = this.qs("desc");
-    if (desc) this.hit.setAttribute("aria-describedby", desc.id);
-    this.box.append(this.guide, this.halo, this.dotEl, this.tip, this.hit);
+  #setSeries(series) {
+    this.#series = series;
+    this.#setState(this.#decideState());
   }
-
-  scrubTo(f) { this.fraction = clamp(f, 0, 1); this.cursor(); this.header(); }
-  release() { this.fraction = null; this.pressed = false; this.cursor(); this.header(); }
-  nudge(n) {
-    const last = Math.max(1, this.slice.length - 1);
-    this.scrubTo((this.fraction == null ? 1 : this.fraction) + n / last);
+  #decideState() {
+    if (this.#statusAttr === "loading") return "loading";
+    if (this.#series.length === 0) return "empty";
+    if (this.#series.length < this.#minPoints) return "sparse";
+    return "ready";
   }
-
-  xAxis(slice) {
-    if (!slice.length) return [];
+  #setState(state) {
+    const prev = this.#state;
+    this.#state = state;
+    this.setAttribute("data-state", state);
+    this.setAttribute("aria-busy", String(state === "loading"));
+    this.#dom.range.setAttribute("aria-disabled", String(state !== "ready"));
+    for (const b of this.#dom.range.querySelectorAll("button")) b.disabled = state !== "ready";
+    if (state === "ready") {
+      this.#selectRange(this.#rangeKey, prev !== "ready" ? false : true, true);
+      if (this.#firstReady) {
+        this.#firstReady = false;
+        this.dispatchEvent(new CustomEvent("fp-ready", { bubbles: true, detail: { count: this.#series.length } }));
+      }
+    } else {
+      this.#release(true);
+      if (state === "sparse" || state === "empty") this.#renderSparse();
+      this.#renderHeaderIdle();
+    }
+  }
+  // ───────────── período e curva ─────────────
+  #rangeDef(key) {
+    return this.#ranges.find((r) => r.key === key) ?? this.#ranges[0];
+  }
+  #selectRange(key, animate, force = false) {
+    const def = this.#rangeDef(key);
+    const changed = def.key !== this.#rangeKey;
+    if (!changed && !force) return;
+    this.#rangeKey = def.key;
+    this.#syncRangeUI();
+    if (this.#state !== "ready") return;
+    this.#release(true);
+    this.#applyRange(animate && !this.#reduced && this.#width > 0);
+    if (changed) {
+      this.dispatchEvent(new CustomEvent("fp-range", { bubbles: true, detail: { key: def.key } }));
+      const first = this.#slice[0];
+      const last = this.#slice[this.#slice.length - 1];
+      if (first && last) this.#dom.live.textContent = this.#hidden() ? `Período: ${def.aria}. Valores ocultos.` : `Período: ${def.aria}. Patrimônio de ${formatMoney(first.v)} a ${formatMoney(last.v)}.`;
+    }
+  }
+  #axisOf(slice) {
+    if (slice.length === 0) return [];
     const a = slice[0].t;
     const b = slice[slice.length - 1].t;
     const long = (b - a) / DAY > 100;
-    return xAxisStops(a, b).map((stop, i, all) => ({
+    const stops = xAxisStops(a, b);
+    return stops.map((stop, i) => ({
       fraction: stop.fraction,
-      text: i === all.length - 1 && sameDay(new Date(b), new Date(this.todayEpoch)) ? T.today : long ? monthYear(new Date(stop.t)) : shortDate(new Date(stop.t)),
+      text: i === stops.length - 1 && isSameDay(new Date(b), /* @__PURE__ */ new Date()) ? "hoje" : long ? monthYear(new Date(stop.t)) : shortDate(new Date(stop.t))
     }));
   }
-
-  draw() {
-    if (this.state !== "ready" || !this.line) return;
-    const w = this.width;
-    const v = this.tween.values;
+  #applyRange(animate) {
+    const def = this.#rangeDef(this.#rangeKey);
+    const slice = sliceByDays(this.#series, def.days);
+    const samples = resampleByTime(slice, GEOM.samples);
+    const domain = niceDomain(samples);
+    const target = new Float64Array(2 + GEOM.samples);
+    target[0] = domain.min;
+    target[1] = domain.max;
+    target.set(samples, 2);
+    const prevAxis = this.#toAxis;
+    this.#slice = slice;
+    this.#toTicks = domain.ticks;
+    this.#toAxis = this.#axisOf(slice);
+    const hadCurve = this.#hasCurve;
+    this.#hasCurve = true;
+    if (!animate || !hadCurve) {
+      this.#field.jump(target);
+      this.#prog.jump([1]);
+      this.#fromTicks = this.#toTicks;
+      this.#fromAxis = this.#toAxis;
+    } else {
+      const now = performance.now();
+      this.#fromTicks = niceDomain(Array.from(this.#field.cur.subarray(2))).ticks;
+      this.#fromAxis = prevAxis;
+      this.#field.retarget(target, now);
+      this.#prog.jump([0]);
+      this.#prog.retarget([1], now);
+    }
+    this.#renderRecords(false);
+    this.#renderDescription();
+    this.#draw();
+    this.#dirtyCursor = true;
+    ticker.add(this.#tick);
+  }
+  #renderDescription() {
+    const first = this.#slice[0];
+    const last = this.#slice[this.#slice.length - 1];
+    if (!first || !last) return;
+    const long = (last.t - first.t) / DAY > 100;
+    const since = long ? `desde ${monthYearFull(new Date(first.t))}` : `desde ${shortDate(new Date(first.t))}`;
+    this.#desc = since;
+    this.#dom.desc.textContent = this.#hidden() ? `Patrimônio ${since}: valores ocultos.` : `Patrimônio ${since}: de ${formatMoney(first.v)} a ${formatMoney(last.v)}, variação de ${formatDelta(last.v - first.v)}.`;
+  }
+  // ───────────── desenho ─────────────
+  #layout() {
+    const d = this.#dom;
+    const n = GEOM.samples;
+    const innerW = Math.max(1, this.#width - 2 * GEOM.padX);
+    for (let i = 0; i < n; i++) this.#xs[i] = GEOM.padX + i / (n - 1) * innerW;
+    d.svg.setAttribute("viewBox", `0 0 ${this.#width} ${GEOM.top + this.#plotH + GEOM.bottom}`);
+    if (this.#state === "ready") {
+      for (const [, l] of this.#xlabels) this.#placeXLabel(l);
+      this.#draw();
+      this.#renderRecords(false);
+      this.#dirtyCursor = true;
+      ticker.add(this.#tick);
+    } else if (this.#state === "sparse" || this.#state === "empty") {
+      this.#renderSparse();
+    }
+  }
+  #yOf(v, min, range) {
+    return GEOM.top + (1 - (v - min) / range) * this.#plotH;
+  }
+  #draw() {
+    if (this.#state !== "ready" || this.#width <= 0) return;
+    const d = this.#dom;
+    const n = GEOM.samples;
+    const v = this.#field.cur;
     const min = v[0];
-    const max = v[1];
-    const values = v.slice(2);
-    const n = values.length;
-    const inner = Math.max(1, w - 2 * PLOT_PAD_X);
-    const yOf = (value) => PLOT_TOP + (1 - (value - min) / (max - min || 1)) * this.plotH;
-    const xs = values.map((_, i) => PLOT_PAD_X + (i / (n - 1)) * inner);
-    const ys = values.map(yOf);
-    const my = monotoneTangents(ys);
-    const line = monotonePath(xs, ys, my);
-    const base = PLOT_TOP + this.plotH;
-    this.line.setAttribute("d", line);
-    this.area.setAttribute("d", line + "L" + xs[n - 1].toFixed(2) + " " + base + "L" + xs[0].toFixed(2) + " " + base + "Z");
-    this.ys = ys;
-    this.my = my;
-    this.xsInner = inner;
-
-    const p = clamp(this.tween.progress, 0, 1);
-    const fromTicks = niceDomain(this.tween.from.slice(2)).ticks;
-    const toTicks = niceDomain(this.tween.to.slice(2)).ticks;
-    const both = toTicks.filter((t) => fromTicks.includes(t));
-    const fromOnly = fromTicks.filter((t) => !toTicks.includes(t));
-    const toOnly = toTicks.filter((t) => !fromTicks.includes(t));
-    this.gridBoth.setAttribute("d", gridPath(both, yOf, w));
-    this.gridFrom.setAttribute("d", gridPath(fromOnly, yOf, w));
-    this.gridTo.setAttribute("d", gridPath(toOnly, yOf, w));
-    this.gridFrom.style.opacity = String(1 - p);
-    this.gridTo.style.opacity = String(p);
-    const yItems = [];
-    both.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: 1 }));
-    fromOnly.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: 1 - p }));
-    toOnly.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: p }));
-    this.yLabels.update(yItems);
-
-    const fromX = this.xAxis(this.prevSlice);
-    const toX = this.xAxis(this.slice);
-    const sameLabel = (a, b) => a.fraction === b.fraction && a.text === b.text;
-    const xItems = [];
-    const shift = (f) => "translateX(" + (f === 0 ? "0" : f === 1 ? "-100%" : "-50%") + ")";
-    const push = (label, opacity) =>
-      xItems.push({ key: label.fraction + label.text, text: label.text, left: label.fraction * w, shift: shift(label.fraction), opacity });
-    toX.forEach((l) => push(l, fromX.some((o) => sameLabel(o, l)) ? 1 : p));
-    fromX.forEach((l) => { if (!toX.some((o) => sameLabel(o, l))) push(l, 1 - p); });
-    this.xLabels.update(xItems);
-    this.cursor();
-    this.header();
+    const range = v[1] - v[0] || 1;
+    for (let i = 0; i < n; i++) this.#ys[i] = GEOM.top + (1 - (v[2 + i] - min) / range) * this.#plotH;
+    this.#my = monotoneTangents(this.#ys);
+    const line = monotonePath(this.#xs, this.#ys, this.#my);
+    const base = GEOM.top + this.#plotH;
+    d.line.setAttribute("d", line);
+    d.area.setAttribute("d", `${line}L${this.#xs[n - 1].toFixed(2)} ${base}L${this.#xs[0].toFixed(2)} ${base}Z`);
+    this.#updateTicks(min, range);
+    this.#updateXLabels();
   }
-
-  /** Current reading: the value at the scrub point (the real record when the curve rests), change and text. */
-  reading() {
-    const slice = this.slice;
-    const first = slice[0];
-    const last = slice[slice.length - 1];
-    const values = this.tween.values.slice(2);
-    const at = this.fraction == null ? 1 : this.fraction;
+  /** Linhas de referência (no máximo 3, pontilhadas): o que existe nos dois períodos fica parado; o resto faz crossfade. */
+  #updateTicks(min, range) {
+    const p = clamp(this.#prog.cur[0], 0, 1);
+    const want = /* @__PURE__ */ new Map();
+    for (const val of this.#toTicks) want.set(val, this.#fromTicks.includes(val) ? 1 : p);
+    for (const val of this.#fromTicks) if (!want.has(val)) want.set(val, 1 - p);
+    const x2 = Math.max(0, this.#width - GEOM.padX);
+    for (const [val, op] of want) {
+      let t = this.#ticks.get(val);
+      if (!t) {
+        t = { line: s("line", { class: "fp-ref" }), label: h("span", { class: "fp-tl", text: formatTick(val), ...this.#pv() }) };
+        this.#dom.grid.append(t.line);
+        this.#dom.labels.append(t.label);
+        this.#ticks.set(val, t);
+      }
+      const y = this.#yOf(val, min, range);
+      t.line.setAttribute("x1", GEOM.padX);
+      t.line.setAttribute("x2", x2.toFixed(1));
+      t.line.setAttribute("y1", y.toFixed(1));
+      t.line.setAttribute("y2", y.toFixed(1));
+      t.line.setAttribute("opacity", op.toFixed(3));
+      t.label.style.transform = `translate3d(0,${(y - 17).toFixed(1)}px,0)`;
+      t.label.style.opacity = op.toFixed(3);
+    }
+    for (const [val, t] of this.#ticks) {
+      if (!want.has(val) || want.get(val) < 2e-3) {
+        t.line.remove();
+        t.label.remove();
+        this.#ticks.delete(val);
+      }
+    }
+  }
+  #placeXLabel(l) {
+    const f = l.fraction;
+    l.el.style.left = `${(f * this.#width).toFixed(1)}px`;
+    l.el.style.translate = f === 0 ? "0 0" : f === 1 ? "-100% 0" : "-50% 0";
+  }
+  #updateXLabels() {
+    const p = clamp(this.#prog.cur[0], 0, 1);
+    const key = (l) => `${l.fraction}|${l.text}`;
+    const to = new Map(this.#toAxis.map((l) => [key(l), l]));
+    const from = new Map(this.#fromAxis.map((l) => [key(l), l]));
+    const want = /* @__PURE__ */ new Map();
+    for (const [k, l] of to) want.set(k, { l, op: from.has(k) ? 1 : p });
+    for (const [k, l] of from) if (!want.has(k)) want.set(k, { l, op: 1 - p });
+    for (const [k, { l, op }] of want) {
+      let x = this.#xlabels.get(k);
+      if (!x) {
+        x = { fraction: l.fraction, el: h("span", { class: "fp-xl", text: l.text }) };
+        this.#placeXLabel(x);
+        this.#dom.labels.append(x.el);
+        this.#xlabels.set(k, x);
+      }
+      x.el.style.opacity = op.toFixed(3);
+    }
+    for (const [k, x] of this.#xlabels) {
+      if (!want.has(k) || want.get(k).op < 2e-3) {
+        x.el.remove();
+        this.#xlabels.delete(k);
+      }
+    }
+  }
+  /** Série esparsa (≤ 45 registros no período): pontos pequenos sobre os registros reais, só quando a curva está parada. */
+  #renderRecords(show) {
+    const d = this.#dom;
+    d.dots.replaceChildren();
+    if (!show || this.#slice.length > 45 || this.#slice.length < 2) return;
+    const v = this.#field.cur;
+    const min = v[0];
+    const range = v[1] - v[0] || 1;
+    const first = this.#slice[0].t;
+    const span = this.#slice[this.#slice.length - 1].t - first || 1;
+    const innerW = Math.max(1, this.#width - 2 * GEOM.padX);
+    for (const r of this.#slice) {
+      d.dots.append(s("circle", { cx: (GEOM.padX + (r.t - first) / span * innerW).toFixed(1), cy: this.#yOf(r.v, min, range).toFixed(1), r: 2.5 }));
+    }
+  }
+  // ───────────── laço de animação ─────────────
+  #tick = (now) => {
+    let alive = false;
+    if (!this.#field.settled || !this.#prog.settled) {
+      this.#field.sample(now);
+      this.#prog.sample(now);
+      this.#draw();
+      alive = !this.#field.settled || !this.#prog.settled;
+      if (!alive) this.#renderRecords(true);
+    } else if (this.#dom.dots.childElementCount === 0 && this.#state === "ready") {
+      this.#renderRecords(true);
+    }
+    if (this.#pendingX != null) {
+      const innerW = Math.max(1, this.#width - 2 * GEOM.padX);
+      this.#fraction = clamp((this.#pendingX - this.#rectLeft - GEOM.padX) / innerW, 0, 1);
+      this.#pendingX = null;
+      this.#dirtyCursor = true;
+    }
+    if (this.#dirtyCursor) {
+      this.#dirtyCursor = false;
+      this.#renderCursor();
+    }
+    return alive;
+  };
+  // ───────────── cursor, cabeçalho e leitura ─────────────
+  #renderHeaderIdle() {
+    if (this.#state === "loading") {
+      this.#roll.destroy();
+      this.#rollChip.destroy();
+      this.#firstHeader = true;
+      this.#lastValue = null;
+      return;
+    }
+    const last = this.#series[this.#series.length - 1];
+    const mp = last ? moneyParts(last.v) : null;
+    this.#setHeader(mp, { immediate: true });
+    this.#dom.chip.hidden = true;
+    this.#dom.when.textContent = last ? `em ${fullDate(new Date(last.t))}` : "sem registros";
+    this.#dom.srValue.textContent = mp ? `Patrimônio: ${mp.text}` : "";
+  }
+  #renderCursor() {
+    if (this.#state !== "ready" || this.#slice.length === 0) return;
+    const d = this.#dom;
+    const n = GEOM.samples;
+    if (d.chip.hidden) d.chip.hidden = false;
+    const active = this.#fraction != null;
+    const f = active ? this.#fraction : this.#lastFraction;
+    if (active) this.#lastFraction = f;
+    this.#flag("data-active", active);
+    this.#flag("data-pressed", active && this.#pressed);
+    const innerW = Math.max(1, this.#width - 2 * GEOM.padX);
+    const x = GEOM.padX + f * innerW;
+    const y = hermiteAt(this.#ys, this.#my, f * (n - 1));
+    d.marker.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0)`;
+    const gx = snapStroke(x, window.devicePixelRatio || 1);
+    d.guide.setAttribute("x1", gx.toFixed(2));
+    d.guide.setAttribute("x2", gx.toFixed(2));
+    d.guide.setAttribute("y1", GEOM.top);
+    d.guide.setAttribute("y2", GEOM.top + this.#plotH);
+    const first = this.#slice[0];
+    const last = this.#slice[this.#slice.length - 1];
+    const at = active ? f : 1;
     const t = first.t + (last.t - first.t) * at;
-    const curveValue = hermiteAt(values, monotoneTangents(values), at * (values.length - 1));
-    const value = this.tween.settled ? valueAtTime(slice, t) : curveValue;
-    const start = this.tween.settled ? first.v : values[0];
-    return { first, last, at, t, value, change: value - start, pct: start ? ((value - start) / Math.abs(start)) * 100 : 0 };
-  }
-
-  header() {
-    if (this.state !== "ready") return;
-    const r = this.reading();
-    setFigure(this.qs("value"), r.value);
-    const span = (r.last.t - r.first.t) / DAY;
-    const since = T.since + " " + (span > 100 ? monthYearFull(new Date(r.first.t)) : shortDate(new Date(r.first.t)));
-    const date = new Date(r.t);
-    const lastDate = new Date(r.last.t);
-    const when = this.fraction != null
-      ? longDate(date) + " · " + since
-      : (sameDay(lastDate, new Date(this.todayEpoch)) ? T.today : T.on) + " " + fullDate(lastDate) + " · " + since;
-    setChip(this.qs("delta"), cents(r.change, { sign: true }) + " · " + (r.change >= 0 ? "+" : "−") + percent(r.pct) + "%", r.change >= 0 ? "pos" : "neg");
-    const whenEl = this.qs("when");
-    if (whenEl) whenEl.textContent = when;
-    const desc = this.qs("desc");
-    if (desc) {
-      const pre = desc.dataset.prefix || "";
-      desc.textContent = pre + " " + since + ": R$ " + cents(r.first.v) + " → R$ " + cents(r.last.v) + " (" + cents(r.last.v - r.first.v, { sign: true }) + ").";
-    }
-    const lastIndex = Math.max(0, this.slice.length - 1);
-    this.hit.setAttribute("aria-valuemin", "0");
-    this.hit.setAttribute("aria-valuemax", String(lastIndex));
-    this.hit.setAttribute("aria-valuenow", String(this.fraction == null ? lastIndex : Math.round(this.fraction * lastIndex)));
-    this.hit.setAttribute("aria-valuetext", longDate(date) + ": R$ " + cents(r.value));
-  }
-
-  cursor() {
-    if (this.state !== "ready" || !this.ys) return;
-    const active = this.fraction != null;
-    const shown = this.fraction == null ? (this.lastFraction == null ? 1 : this.lastFraction) : this.fraction;
-    if (active) this.lastFraction = this.fraction;
-    const x = PLOT_PAD_X + shown * this.xsInner;
-    const y = hermiteAt(this.ys, this.my, shown * (this.ys.length - 1));
-    this.guide.style.left = x - 0.5 + "px";
-    this.guide.style.opacity = active ? "1" : "0";
-    for (const el of [this.halo, this.dotEl]) {
-      el.style.transform = "translate3d(" + x + "px," + y + "px,0) scale(" + (this.pressed ? 1.15 : active ? 1 : 0.4) + ")";
-      el.style.opacity = active ? "1" : "0";
-    }
-    if (active) {
-      const r = this.reading();
-      const date = new Date(r.t);
-      this.tipDate.textContent = shortDate(date) + " " + String(date.getFullYear()).slice(2);
-      this.tipValue.textContent = cents(r.value);
-    }
-    this.placeTip(this.tip, x, active);
-  }
-}
-
-// ───────────────────────────── month pace ─────────────────────────────
-
-class PaceChart extends Chart {
-  constructor(root) {
-    super(root);
-    this.idx = null;
-    this.pressed = false;
-    this.load();
-  }
-
-  start() {
-    const d = this.data;
-    this.monthIndex = Number(d.month.slice(5, 7)) - 1;
-    this.year = Number(d.month.slice(0, 4));
-    const title = this.qs("title");
-    if (title) title.textContent = (title.dataset.prefix || "") + " " + MONTH_FULL[this.monthIndex];
-    this.measure();
-    this.root.classList.add("is-ready");
-    this.fillLegend();
-    if (d.total_cents === 0 || d.elapsed_days === 0) {
-      this.state = "sparse";
-      this.build(true);
-    } else {
-      this.state = "ready";
-      this.build(false);
-    }
-    this.header();
-  }
-
-  fillLegend() {
-    const d = this.data;
-    const set = (name, text, show) => {
-      const el = this.qs(name);
-      if (!el) return;
-      el.hidden = !show;
-      const target = el.querySelector("[data-fc-text]");
-      if (target && text != null) target.textContent = text;
-    };
-    set("legend-month", MONTH_FULL[this.monthIndex][0].toUpperCase() + MONTH_FULL[this.monthIndex].slice(1), true);
-    const months = (d.average_months || []).map((m) => MONTH_ABBR[Number(m.slice(5, 7)) - 1]);
-    set("legend-average", months.length ? (months.length > 1 ? months[0] + "–" + months[months.length - 1] : months[0]) : null, Boolean(d.average_cents && d.average_cents.length));
-    set("legend-ceiling", d.ceiling_cents != null ? cents(d.ceiling_cents) : null, d.ceiling_cents != null);
-  }
-
-  onResize() {
-    if (this.state === "loading" || this.state === "error") return;
-    this.build(this.state === "sparse");
-    this.header();
-  }
-
-  build(sparse) {
-    const d = this.data;
-    const w = this.width;
-    if (!w) return;
-    clear(this.box);
-    this.plotH = Math.max(40, this.height - PLOT_TOP - 30);
-    const days = d.days;
-    const cum = d.cumulative_cents;
-    const avg = d.average_cents && d.average_cents.length ? d.average_cents : null;
-    const ceiling = d.ceiling_cents;
-    const maxVal = Math.max(cum.length ? cum[cum.length - 1] : 0, avg ? avg[avg.length - 1] : 0, ceiling || 0, 1);
-    const axis = niceTicks(maxVal * 1.04, 3);
-    this.axisTop = axis.top;
-    const inner = w - 2 * PLOT_PAD_X;
-    const xOf = (i) => PLOT_PAD_X + (i / Math.max(1, days - 1)) * inner;
-    const yOf = (v) => PLOT_TOP + (1 - v / axis.top) * this.plotH;
-    this.xOf = xOf;
-    this.yOf = yOf;
-    this.avgYs = avg ? avg.map(yOf) : [];
-    this.cumYs = cum.map(yOf);
-    const layer = h("div", { class: "fc-layer " + (sparse ? "fade" : "wipe") });
-    const gid = nextId("fc-fill");
-    const svg = s("svg", { width: w, height: this.height, viewBox: "0 0 " + w + " " + this.height, "aria-hidden": "true", class: "fc-svg" });
-    const defs = s("defs");
-    const grad = s("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
-    grad.append(s("stop", { offset: 0, class: "fc-stop-top fc-stop-out" }), s("stop", { offset: 1, class: "fc-stop-bottom" }));
-    defs.append(grad);
-    svg.append(defs, s("path", { class: "fc-grid", d: gridPath(axis.ticks, yOf, w) }));
-    if (ceiling != null) svg.append(s("path", { class: "fc-ceiling", d: "M" + PLOT_PAD_X + " " + yOf(ceiling).toFixed(1) + "H" + (w - PLOT_PAD_X) }));
-    if (cum.length && !sparse) {
-      const xs = cum.map((_, i) => xOf(i));
-      const step = stepPath(xs, this.cumYs, yOf(0));
-      svg.append(s("path", { fill: "url(#" + gid + ")", stroke: "none", d: step + "L" + xs[xs.length - 1].toFixed(2) + " " + yOf(0).toFixed(2) + "L" + xs[0].toFixed(2) + " " + yOf(0).toFixed(2) + "Z" }));
-    }
-    if (avg) svg.append(s("path", { class: "fc-avg", d: monotonePath(avg.map((_, i) => xOf(i)), this.avgYs, monotoneTangents(this.avgYs)) }));
-    if (cum.length && !sparse) svg.append(s("path", { class: "fc-line fc-line-out", d: stepPath(cum.map((_, i) => xOf(i)), this.cumYs, yOf(0)) }));
-    layer.append(svg);
-    const ylabels = new LabelLayer(layer, "fc-ylabel");
-    ylabels.update(axis.ticks.map((v) => ({ key: "y" + v, text: thousands(v), top: yOf(v) - 17, opacity: 1 })));
-    const xlabels = new LabelLayer(layer, "fc-xlabel");
-    xlabels.update(
-      [0, 9, 19, days - 1].filter((n, k, all) => all.indexOf(n) === k).map((n, k, all) => ({
-        key: "x" + n, text: k === 0 ? T.day + " 1" : String(n + 1), left: (n / Math.max(1, days - 1)) * w,
-        shift: k === 0 ? "translateX(0)" : k === all.length - 1 ? "translateX(-100%)" : "translateX(-50%)", opacity: 1,
-      })),
-    );
-    if (ceiling != null) {
-      layer.append(h("span", { class: "fc-ceil-label", "aria-hidden": "true", text: T.ceiling, style: "top:" + (yOf(ceiling) - 18) + "px" }));
-    }
-    this.box.append(layer);
-    if (sparse) {
-      this.guide = this.halo = this.dotEl = this.avgDot = this.tip = null;
-      const live = h("div", { class: "fc-dot is-on live", "aria-hidden": "true" });
-      live.style.transform = "translate(" + (xOf(0) - 6.5) + "px," + (yOf(0) - 6.5) + "px)";
-      this.box.append(live);
-      const node = this.appendTemplate("sparse");
-      if (node) {
-        const hint = node.querySelector("[data-fc-avg-hint]");
-        if (hint) hint.hidden = !avg;
+    const r = readoutAt(this.#slice, t);
+    const date = new Date(active ? t : last.t);
+    const value = active ? r.value : last.v;
+    const change = value - first.v;
+    const pct = first.v ? change / Math.abs(first.v) * 100 : 0;
+    const bias = this.#lastValue == null ? 0 : Math.sign(value - this.#lastValue);
+    this.#lastValue = value;
+    d.tip.style.setProperty("--tx", `${x.toFixed(1)}px`);
+    const tipDate = `${shortDate(date)} ${String(date.getFullYear()).slice(2)}`;
+    if (d.tipDate.textContent !== tipDate) d.tipDate.textContent = tipDate;
+    const mp = moneyParts(value);
+    const money = mp.text;
+    if (d.tipVal.textContent !== money) d.tipVal.textContent = money;
+    d.tipEst.hidden = !(active && r.estimated);
+    const intro = this.#firstHeader && (!this.#roll.text || this.#rollEmpty);
+    const immediate = this.#snap;
+    this.#snap = false;
+    this.#setHeader(mp, { bias, intro, immediate });
+    this.#firstHeader = false;
+    const deltaText = `${formatDelta(change)} · ${formatPercent(pct, { sign: "always" })}`;
+    this.#rollChip.set(deltaText, { bias, intro, immediate });
+    const pos = change >= 0;
+    const cls = `fp-chip dl ${pos ? "dl-pos dl-up" : "dl-neg dl-dn"} nums`;
+    if (d.chip.className !== cls) d.chip.className = cls;
+    const spanDays = (last.t - first.t) / DAY;
+    const since = spanDays > 100 ? `desde ${monthYearFull(new Date(first.t))}` : `desde ${shortDate(new Date(first.t))}`;
+    const when = active ? `${longDate(date)} · ${since}` : `${isSameDay(new Date(last.t), /* @__PURE__ */ new Date()) ? "hoje" : "em"} ${fullDate(new Date(last.t))} · ${since}`;
+    if (d.when.textContent !== when) d.when.textContent = when;
+    d.srValue.textContent = `Patrimônio: ${money}, ${when}`;
+    const idx = active ? r.index : -1;
+    const moved = idx !== this.#nearest;
+    if (moved || this.#ariaStale) {
+      this.#nearest = idx;
+      this.#ariaStale = false;
+      d.hit.setAttribute("aria-valuemax", String(Math.max(0, this.#slice.length - 1)));
+      d.hit.setAttribute("aria-valuenow", String(idx < 0 ? this.#slice.length - 1 : idx));
+      d.hit.setAttribute("aria-valuetext", this.#hidden() ? `${longDate(date)}: valor oculto` : `${longDate(date)}: ${money}`);
+      if (moved) {
+        this.dispatchEvent(
+          new CustomEvent("fp-scrub", { bubbles: true, detail: active ? { fraction: f, date, value, change, changePct: pct } : null })
+        );
       }
+    }
+  }
+  #firstHeader = true;
+  /** Atributo de estado booleano no traçado (o CSS cuida do resto), só quando muda. */
+  #flag(name, on) {
+    const v = String(on);
+    if (this.#dom.plot.getAttribute(name) !== v) this.#dom.plot.setAttribute(name, v);
+  }
+  // ───────────── interação ─────────────
+  #bindEvents() {
+    const hit = this.#dom.hit;
+    hit.addEventListener("pointerenter", this.#measure);
+    hit.addEventListener("pointerdown", this.#onDown);
+    hit.addEventListener("pointermove", this.#onMove);
+    hit.addEventListener("pointerup", this.#onUp);
+    hit.addEventListener("pointercancel", () => this.#release());
+    hit.addEventListener("pointerleave", (e) => {
+      if (e.pointerType === "mouse" && !this.#pressed) this.#release();
+    });
+    hit.addEventListener("keydown", this.#onKey);
+    hit.addEventListener("blur", () => this.#release());
+    hit.addEventListener("lostpointercapture", () => {
+      this.#pressed = false;
+      this.#dirtyCursor = true;
+      ticker.add(this.#tick);
+    });
+  }
+  #measure = () => {
+    this.#rectLeft = this.#dom.hit.getBoundingClientRect().left;
+  };
+  #onDown = (e) => {
+    if (this.#state !== "ready" || e.pointerType === "mouse" && e.button !== 0) return;
+    this.#measure();
+    try {
+      this.#dom.hit.setPointerCapture(e.pointerId);
+    } catch {
+    }
+    this.#pressed = true;
+    this.#flag("data-pressed", true);
+    this.#pendingX = e.clientX;
+    ticker.add(this.#tick);
+  };
+  #onMove = (e) => {
+    if (this.#state !== "ready") return;
+    if (e.pointerType === "mouse" || this.#pressed) {
+      this.#pendingX = e.clientX;
+      ticker.add(this.#tick);
+    }
+  };
+  #onUp = (e) => {
+    this.#pressed = false;
+    this.#flag("data-pressed", false);
+    if (e.pointerType !== "mouse") {
+      this.#release();
       return;
     }
-    if (d.crossed_day != null && ceiling != null) {
-      const i = d.crossed_day - 1;
-      const x = xOf(i);
-      const y = this.cumYs[i];
-      const dot = h("div", { class: "fc-cross-dot pop", "aria-hidden": "true" });
-      dot.style.left = x + "px";
-      dot.style.top = y + "px";
-      const label = h("span", { class: "fc-cross-label fade", "aria-hidden": "true", text: T.crossed + " " + d.crossed_day });
-      label.style.left = x + "px";
-      label.style.top = y + "px";
-      this.box.append(dot, label);
+    const r = this.#dom.hit.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside) this.#release();
+    else {
+      this.#dirtyCursor = true;
+      ticker.add(this.#tick);
     }
-    this.guide = marker("fc-guide");
-    this.guide.style.top = PLOT_TOP + "px";
-    this.guide.style.height = this.plotH + "px";
-    this.avgDot = marker("fc-dot fc-dot-avg");
-    this.halo = marker("fc-halo fc-halo-out");
-    this.dotEl = marker("fc-dot fc-dot-out");
-    this.tip = h("div", { class: "fc-tip dv-tip", "aria-hidden": "true" });
-    this.tipDate = h("span", { class: "fc-tip-soft" });
-    this.tipValue = h("span");
-    this.tip.append(this.tipDate, h("span", { class: "fc-tip-sep", text: "·" }), this.tipValue);
-    this.hit = this.makeHit(this.root.dataset.sliderLabel || "Gasto acumulado no mês", {
-      move: (x, el) => this.scrubTo(Math.round(this.fractionOf(x, el) * (days - 1))),
-      press: (on) => { this.pressed = on; this.cursor(); },
-      release: () => { this.idx = null; this.pressed = false; this.cursor(); this.header(); },
-      nudge: (n) => this.scrubTo((this.idx == null ? this.lastIndex() : this.idx) + n),
-      jump: (f) => this.scrubTo(f === 0 ? 0 : this.lastIndex()),
-    });
-    const desc = this.qs("desc");
-    if (desc) this.hit.setAttribute("aria-describedby", desc.id);
-    this.box.append(this.guide, this.avgDot, this.halo, this.dotEl, this.tip, this.hit);
-    this.cursor();
+  };
+  #release(silent = false) {
+    this.#pressed = false;
+    this.#flag("data-pressed", false);
+    this.#pendingX = null;
+    if (this.#fraction == null && silent) return;
+    this.#fraction = null;
+    this.#dirtyCursor = true;
+    if (!silent) ticker.add(this.#tick);
+    else if (this.#state === "ready") this.#renderCursor();
   }
-
-  lastIndex() { return Math.max(0, this.data.elapsed_days - 1); }
-
-  scrubTo(i) {
-    this.idx = clamp(i, 0, this.lastIndex());
-    this.cursor();
-    this.header();
-  }
-
-  dateOf(i) { return new Date(this.year, this.monthIndex, i + 1); }
-
-  header() {
-    const d = this.data;
-    if (!d) return;
-    const last = this.lastIndex();
-    const i = this.idx != null ? Math.min(this.idx, last) : last;
-    const cum = d.cumulative_cents;
-    const value = cum.length ? cum[i] : 0;
-    const avg = d.average_cents && d.average_cents.length ? d.average_cents : null;
-    setFigure(this.qs("value"), value);
-    const sub = this.qs("sub");
-    const date = this.dateOf(i);
-    if (sub) {
-      if (this.state === "sparse") sub.textContent = T.noSpending;
-      else if (this.idx != null) sub.textContent = T.day + " " + (i + 1) + " · " + WEEKDAY_ABBR[date.getDay()] + ", " + shortDate(date);
-      else sub.textContent = T.spentIn + " " + d.elapsed_days + " " + T.daysWord + " · " + d.entry_count + " " + (d.entry_count === 1 ? T.entriesOne : T.entriesMany);
+  #onKey = (e) => {
+    if (this.#state !== "ready") return;
+    const last = Math.max(1, this.#slice.length - 1);
+    const mult = e.shiftKey ? 7 : 1;
+    let f = this.#fraction ?? 1;
+    switch (e.key) {
+      case "ArrowLeft":
+      case "ArrowDown":
+        f -= mult / last;
+        break;
+      case "ArrowRight":
+      case "ArrowUp":
+        f += mult / last;
+        break;
+      case "PageDown":
+        f -= 30 / last;
+        break;
+      case "PageUp":
+        f += 30 / last;
+        break;
+      case "Home":
+        f = 0;
+        break;
+      case "End":
+        f = 1;
+        break;
+      case "Escape":
+        this.#release();
+        return;
+      default:
+        return;
     }
-    if (this.state === "sparse") {
-      setChip(this.qs("chip-average"), T.day + " " + Math.max(1, d.elapsed_days) + " de " + d.days, "neu");
-    } else if (avg) {
-      const diff = value - avg[Math.min(i, avg.length - 1)];
-      setChip(this.qs("chip-average"), cents(Math.abs(diff)) + " " + (diff > 0 ? T.aboveAverage : T.belowAverage), diff > 0 ? "neg" : "pos", diff > 0 ? "up" : "down");
-    } else {
-      setChip(this.qs("chip-average"), T.noAverage, "neu");
-    }
-    if (d.ceiling_cents != null) {
-      const diff = value - d.ceiling_cents;
-      setChip(
-        this.qs("chip-ceiling"),
-        diff > 0 ? T.overCeiling + " " + cents(diff) + " " + T.ofCeiling : T.untilCeiling + " " + cents(-diff) + " " + T.untilCeilingTail,
-        diff > 0 ? "neg" : "neu", diff > 0 ? "up" : null,
-      );
-    } else {
-      setChip(this.qs("chip-ceiling"), T.noCeiling, "neu");
-    }
-    const desc = this.qs("desc");
-    if (desc) {
-      const pre = desc.dataset.prefix || "";
-      desc.textContent = pre + " " + MONTH_FULL[this.monthIndex] + ": R$ " + cents(d.total_cents) +
-        (avg ? ". " + T.averageOf + ": R$ " + cents(avg[avg.length - 1]) : "") +
-        (d.ceiling_cents != null ? ". " + T.ceiling + ": R$ " + cents(d.ceiling_cents) + (d.crossed_day ? ", " + T.crossed + " " + d.crossed_day : "") : "") + ".";
-    }
-    if (this.hit) {
-      this.hit.setAttribute("aria-valuemin", "0");
-      this.hit.setAttribute("aria-valuemax", String(last));
-      this.hit.setAttribute("aria-valuenow", String(i));
-      this.hit.setAttribute("aria-valuetext", T.day + " " + (i + 1) + ", " + WEEKDAY_ABBR[date.getDay()] + " " + shortDate(date) + ": R$ " + cents(value));
-    }
-  }
-
-  cursor() {
-    if (this.state !== "ready" || !this.guide) return;
-    const d = this.data;
-    const active = this.idx != null;
-    const i = active ? this.idx : this.lastIndex();
-    const x = this.xOf(i);
-    const y = this.cumYs[i];
-    this.guide.style.left = x - 0.5 + "px";
-    this.guide.style.opacity = active ? "1" : "0";
-    const scale = this.pressed ? 1.15 : 1;
-    this.halo.style.transform = "translate3d(" + x + "px," + y + "px,0) scale(" + (active ? scale : 0.4) + ")";
-    this.dotEl.style.transform = "translate3d(" + x + "px," + y + "px,0) scale(" + (active ? (this.pressed ? 1.18 : 1) : 0.4) + ")";
-    this.halo.style.opacity = this.dotEl.style.opacity = active ? "1" : "0";
-    const avg = d.average_cents && d.average_cents.length ? this.avgYs : null;
-    if (avg) {
-      this.avgDot.style.transform = "translate3d(" + x + "px," + avg[Math.min(i, avg.length - 1)] + "px,0)";
-      this.avgDot.style.opacity = active ? "1" : "0";
-    } else {
-      this.avgDot.style.opacity = "0";
-    }
-    if (active) {
-      const date = this.dateOf(i);
-      this.tipDate.textContent = WEEKDAY_ABBR[date.getDay()] + " " + shortDate(date);
-      const n = d.daily_counts[i];
-      this.tipValue.textContent = d.daily_cents[i] ? cents(d.daily_cents[i]) + " em " + n + " " + (n === 1 ? T.entriesOne : T.entriesMany) : T.noSpending;
-    }
-    this.placeTip(this.tip, x, active);
-  }
-}
-
-// ───────────────────────────── cash flow ─────────────────────────────
-
-class FlowChart extends Chart {
-  constructor(root) {
-    super(root);
-    this.idx = null;
-    this.load();
-  }
-
-  start() {
-    const d = this.data;
-    this.months = d.months;
-    this.year = d.year;
-    this.n = Math.max(1, d.months.length);
-    this.first = d.months.findIndex((m) => m.income_cents || m.expenses_cents);
-    if (this.first < 0) this.first = this.n;
-    const real = this.n - this.first;
-    this.measure();
-    this.root.classList.add("is-ready");
-    if (!d.months.length || real < 3) {
-      this.state = "sparse";
-    } else {
-      this.state = "ready";
-    }
-    this.build();
-    this.header();
-  }
-
-  onResize() {
-    if (this.state === "loading" || this.state === "error") return;
-    this.build();
-    this.header();
-  }
-
-  selected() {
-    if (this.idx != null && this.idx >= this.first) return this.idx;
-    return this.n - 1;
-  }
-
-  build() {
-    const w = this.width;
-    if (!w || !this.months.length) {
-      clear(this.box);
-      if (this.state === "sparse") this.showSparseOnly();
-      return;
-    }
-    clear(this.box);
-    const BOT = 46;
-    const plotH = Math.max(60, this.height - PLOT_TOP - BOT);
-    const hup = Math.round(plotH * 0.56);
-    const hdn = plotH - hup;
-    const maxIncome = Math.max(...this.months.map((m) => m.income_cents), 1);
-    const maxExpense = Math.max(...this.months.map((m) => Math.max(m.expenses_cents, 0)), 1);
-    const scale = Math.min(hup / (maxIncome * 1.08), hdn / (maxExpense * 1.08));
-    this.scale = scale;
-    const n = this.n;
-    const gap = 8;
-    const y0 = PLOT_TOP + hup;
-    const top = niceStep(Math.floor(hup / scale));
-    const grid = h("div", { class: "fc-flow" });
-    grid.style.top = PLOT_TOP + "px";
-    grid.style.height = plotH + "px";
-    grid.style.gridTemplateColumns = "repeat(" + n + ", minmax(0, 1fr))";
-    grid.style.gap = gap + "px";
-    this.band = h("div", { class: "fc-band", "aria-hidden": "true" });
-    this.band.style.top = PLOT_TOP + "px";
-    this.band.style.height = plotH + "px";
-    this.box.append(
-      h("div", { class: "fc-flow-line", style: "top:" + (y0 - top * scale) + "px", "aria-hidden": "true" }),
-      h("div", { class: "fc-flow-line", style: "top:" + (y0 + top * scale) + "px", "aria-hidden": "true" }),
-      this.band,
-    );
-    this.cols = [];
-    this.labels = [];
-    const labelRow = h("div", { class: "fc-flow-labels" });
-    labelRow.style.height = BOT + "px";
-    labelRow.style.gridTemplateColumns = "repeat(" + n + ", minmax(0, 1fr))";
-    labelRow.style.gap = gap + "px";
-    this.months.forEach((m, i) => {
-      const realCol = i >= this.first;
-      const col = h("div", { class: "fc-col" });
-      if (realCol) {
-        const up = h("div", { class: "fc-bar fc-bar-in grow" });
-        const dn = h("div", { class: "fc-bar fc-bar-out grow" });
-        up.style.height = Math.max(0, m.income_cents * scale) + "px";
-        up.style.bottom = hdn + 1 + "px";
-        dn.style.height = Math.max(0, m.expenses_cents * scale) + "px";
-        dn.style.top = hup + 1 + "px";
-        up.style.animationDelay = dn.style.animationDelay = 60 + (i - this.first) * 55 + "ms";
-        col.append(up, dn);
-      } else {
-        const up = h("div", { class: "fc-ghost-bar fc-ghost-up" });
-        const dn = h("div", { class: "fc-ghost-bar fc-ghost-dn" });
-        up.style.height = Math.round(hup * 0.36) + "px";
-        up.style.bottom = hdn + 1 + "px";
-        dn.style.height = Math.round(hdn * 0.26) + "px";
-        dn.style.top = hup + 1 + "px";
-        col.append(up, dn);
-      }
-      grid.append(col);
-      this.cols.push(col);
-      const net = m.income_cents - m.expenses_cents;
-      const label = h("div", { class: "fc-flow-label" },
-        h("span", { class: "fc-flow-month", text: MONTH_ABBR[Number(m.month.slice(5, 7)) - 1] }),
-        h("span", { class: "fc-flow-net " + (net >= 0 ? "is-pos" : "is-neg"), text: realCol ? (net >= 0 ? "+" : "−") + (Math.round(Math.abs(net) / 10000) / 10).toFixed(1).replace(".", ",") : "" }));
-      labelRow.append(label);
-      this.labels.push(label);
-    });
-    this.box.append(grid, h("div", { class: "fc-flow-zero", style: "top:" + y0 + "px", "aria-hidden": "true" }));
-    this.box.append(
-      h("span", { class: "fc-ylabel", "aria-hidden": "true", style: "top:" + (y0 - top * scale - 16) + "px", text: thousands(top) }),
-      h("span", { class: "fc-ylabel", "aria-hidden": "true", style: "top:" + (y0 + top * scale + 4) + "px", text: thousands(top) })
-    );
-    this.box.append(labelRow);
-    this.colW = (w - (n - 1) * gap) / n;
-    this.gap = gap;
-    this.tip = h("div", { class: "fc-tip dv-tip", "aria-hidden": "true" });
-    this.tipDate = h("span", { class: "fc-tip-soft" });
-    this.tipValue = h("span");
-    this.tip.append(this.tipDate, h("span", { class: "fc-tip-sep", text: "·" }), this.tipValue);
-    this.hit = null;
-    if (this.state === "sparse") {
-      const node = this.appendTemplate("sparse");
-      if (node) node.style.zIndex = "2";
-    }
-    this.hit = this.makeHit(this.root.dataset.sliderLabel || "Fluxo de caixa por mês", {
-      move: (x, el) => {
-        const r = el.getBoundingClientRect();
-        this.pick(Math.floor(((x - r.left) / Math.max(1, r.width)) * n));
-      },
-      press: () => {},
-      release: () => { this.idx = null; this.refresh(); },
-      nudge: (k) => this.pick((this.idx == null ? n - 1 : this.idx) + k),
-      jump: (f) => this.pick(f === 0 ? this.first : n - 1),
-    });
-    if (this.state === "sparse") this.hit.style.display = "none";
-    const desc = this.qs("desc");
-    if (desc) this.hit.setAttribute("aria-describedby", desc.id);
-    this.box.append(this.tip, this.hit);
-    this.refresh();
-  }
-
-  showSparseOnly() {
-    clear(this.box);
-    this.appendTemplate("sparse");
-  }
-
-  pick(i) {
-    this.idx = clamp(i, this.first, this.n - 1);
-    this.refresh();
-  }
-
-  refresh() {
-    this.header();
-    if (!this.cols) return;
-    const hovering = this.idx != null && this.state === "ready";
-    this.cols.forEach((col, i) => { col.style.opacity = hovering && i !== this.idx ? "0.5" : "1"; });
-    this.labels.forEach((l, i) => {
-      l.style.opacity = hovering && i !== this.idx ? "0.55" : "1";
-      l.classList.toggle("is-selected", i === this.selected() && this.state !== "sparse");
-    });
-    if (this.band) {
-      const i = this.idx != null ? this.idx : 0;
-      this.band.style.width = this.colW + "px";
-      this.band.style.transform = "translateX(" + i * (this.colW + this.gap) + "px)";
-      this.band.style.opacity = hovering ? "1" : "0";
-    }
-    if (this.tip) {
-      const sel = this.selected();
-      const m = this.months[sel];
-      this.tipDate.textContent = MONTH_ABBR[Number(m.month.slice(5, 7)) - 1] + " " + this.year;
-      this.tipValue.textContent = cents(m.income_cents) + " − " + cents(m.expenses_cents);
-      this.placeTip(this.tip, sel * (this.colW + this.gap) + this.colW / 2, hovering);
-    }
-  }
-
-  header() {
-    const d = this.data;
-    if (!d || !this.months.length) {
-      setFigure(this.qs("value"), 0);
-      return;
-    }
-    const sel = this.selected();
-    const m = this.months[sel];
-    const net = m.income_cents - m.expenses_cents;
-    const monthName = MONTH_FULL[Number(m.month.slice(5, 7)) - 1];
-    setFigure(this.qs("value"), net, true);
-    const sub = this.qs("sub");
-    if (sub) sub.textContent = T.balanceOf + " " + monthName;
-    const rate = m.income_cents > 0 ? (net / m.income_cents) * 100 : null;
-    setChip(this.qs("chip-rate"), rate == null ? T.noIncome : percent(rate) + "% " + T.ofIncomeSaved, rate == null ? "neu" : rate >= 25 ? "pos" : rate >= 10 ? "warn" : "neg");
-    const prev = sel > this.first ? this.months[sel - 1] : null;
-    if (prev) {
-      const delta = net - (prev.income_cents - prev.expenses_cents);
-      setChip(this.qs("chip-delta"), cents(delta, { sign: true }) + " " + T.versus + " " + MONTH_FULL[Number(prev.month.slice(5, 7)) - 1], delta >= 0 ? "pos" : "neg", delta >= 0 ? "up" : "down");
-    } else {
-      setChip(this.qs("chip-delta"), T.firstMonth, "neu");
-    }
-    const inc = this.qs("legend-in");
-    const out = this.qs("legend-out");
-    if (inc) inc.textContent = cents(m.income_cents);
-    if (out) out.textContent = cents(m.expenses_cents);
-    const desc = this.qs("desc");
-    if (desc) {
-      desc.textContent = (desc.dataset.prefix || "") + " " + monthName + " " + this.year + ": " + T.incomeLabel.toLowerCase() + " R$ " +
-        cents(m.income_cents) + ", " + T.expenseLabel.toLowerCase() + " R$ " + cents(m.expenses_cents) + ", " + T.balanceOf + " R$ " + cents(net) + ".";
-    }
-    if (this.hit) {
-      this.hit.setAttribute("aria-valuemin", String(this.first));
-      this.hit.setAttribute("aria-valuemax", String(this.n - 1));
-      this.hit.setAttribute("aria-valuenow", String(sel));
-      this.hit.setAttribute("aria-valuetext", monthName + " " + this.year + ": " + T.incomeLabel.toLowerCase() + " R$ " + cents(m.income_cents) + ", " + T.expenseLabel.toLowerCase() + " R$ " + cents(m.expenses_cents) + ", " + T.balanceOf + " R$ " + cents(net));
-    }
-  }
-}
-
-// ───────────────────────────── categories (ring + list) ─────────────────────────────
-
-class DonutChart extends Chart {
-  constructor(root) {
-    super(root);
-    this.box = root.querySelector('[data-fc="ring"]');
-    this.hover = null;
-    this.pin = null;
-    this.open = false;
-    this.size = Number(root.dataset.size) || 220;
-    this.load();
-  }
-
-  start() {
-    const d = this.data;
-    this.slices = d.slices.slice();
-    if (d.rest) this.slices.push({ key: "__rest", name: T.rest, cents: d.rest.cents, count: d.rest.entries, color: "#C9D4CC" });
-    this.total = d.total_cents;
-    this.root.classList.add("is-ready");
-    this.setBusy(false);
-    this.defaultCenter = {
-      label: this.root.dataset.centerLabel || "",
-      sub: this.root.dataset.centerSub || "",
-    };
-    this.build();
-    this.bindRows();
-    this.refresh();
-  }
-
-  fail() {
-    this.setBusy(false);
-    clear(this.box);
-    const msg = h("p", { class: "fc-donut-error", text: this.root.dataset.errorText || "" });
-    this.box.append(msg);
-  }
-
-  build() {
-    clear(this.box);
-    const S = this.size;
-    const SW = 20;
-    const SWH = 25;
-    const c = S / 2;
-    const r = S / 2 - 14;
-    const C = 2 * Math.PI * r;
-    const GAP = 6;
-    this.geo = { S, SW, SWH, c, r, C, GAP };
-    const svg = s("svg", { viewBox: "0 0 " + S + " " + S, width: S, height: S, role: "img", class: "fc-ring", "aria-label": this.root.dataset.ringLabel || "" });
-    svg.append(s("circle", { cx: c, cy: c, r: r, fill: "none", class: "fc-ring-track", "stroke-width": SW }));
-    this.segs = [];
-    let acc = 0;
-    this.slices.forEach((slice, i) => {
-      const f = this.total ? slice.cents / this.total : 0;
-      const circle = s("circle", { cx: c, cy: c, r: r, fill: "none", class: "fc-seg fade", stroke: slice.color, "data-key": slice.key });
-      circle.style.animationDelay = 60 + i * 80 + "ms";
-      circle.style.transformOrigin = c + "px " + c + "px";
-      slice.f = f;
-      slice.start = acc;
-      acc += f;
-      circle.addEventListener("pointermove", () => this.setHover(slice.key));
-      circle.addEventListener("pointerleave", () => this.setHover(null));
-      circle.addEventListener("click", () => this.togglePin(slice.key));
-      svg.append(circle);
-      this.segs.push(circle);
-    });
-    const center = h("div", { class: "fc-center" });
-    this.cLabel = h("span", { class: "fc-center-label" });
-    this.cValue = h("span", { class: "fc-center-value" });
-    this.cSub = h("span", { class: "fc-center-sub" });
-    center.append(this.cLabel, this.cValue, this.cSub);
-    center.style.width = S - 2 * (SWH + 14) + "px";
-    this.box.append(svg, center);
-  }
-
-  bindRows() {
-    this.rows = Array.from(this.root.querySelectorAll("[data-row]"));
-    this.rows.forEach((row) => {
-      const key = row.dataset.row;
-      row.addEventListener("pointermove", () => this.setHover(key));
-      row.addEventListener("pointerleave", () => this.setHover(null));
-      row.addEventListener("focus", () => this.setHover(key));
-      row.addEventListener("blur", () => this.setHover(null));
-      row.addEventListener("click", () => {
-        if (key === "__rest") {
-          this.open = !this.open;
-          this.pin = this.open ? key : null;
-          this.hover = null;
-        } else {
-          this.pin = this.pin === key ? null : key;
-          this.hover = null;
-        }
-        this.refresh();
+    e.preventDefault();
+    this.#fraction = clamp(f, 0, 1);
+    this.#dirtyCursor = true;
+    ticker.add(this.#tick);
+  };
+  // ───────────── controle de período ─────────────
+  #buildRange() {
+    const r = this.#dom.range;
+    r.replaceChildren();
+    r.style.setProperty("--n", String(this.#ranges.length));
+    r.append(h("span", { class: "fp-pill", "aria-hidden": "true" }));
+    this.#ranges.forEach((def, i) => {
+      const b = h("button", { type: "button", role: "radio", class: "fp-opt", "aria-label": def.aria, text: def.label });
+      b.addEventListener("click", () => this.#selectRange(def.key, true));
+      b.addEventListener("keydown", (e) => {
+        const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!step || this.#state !== "ready") return;
+        e.preventDefault();
+        const next = (i + step + this.#ranges.length) % this.#ranges.length;
+        this.#selectRange(this.#ranges[next].key, true);
+        r.querySelectorAll("button")[next]?.focus();
       });
+      r.append(b);
     });
-    this.more = this.root.querySelector("[data-more]");
+    this.#syncRangeUI();
   }
-
-  setHover(key) { if (this.hover !== key) { this.hover = key; this.refresh(); } }
-  togglePin(key) { this.pin = this.pin === key ? null : key; this.hover = null; this.refresh(); }
-
-  refresh() {
-    const hot = this.hover != null ? this.hover : this.pin;
-    const g = this.geo;
-    this.slices.forEach((slice, i) => {
-      const circle = this.segs[i];
-      const sw = hot === slice.key ? g.SWH : g.SW;
-      const length = slice.f * g.C;
-      const dash = Math.max(0.5, length - g.GAP - sw);
-      const off = (((g.GAP / 2 + sw / 2) / g.r) * 180) / Math.PI;
-      const rot = -90 + slice.start * 360 + off;
-      circle.style.strokeWidth = sw + "px";
-      circle.style.strokeDasharray = dash.toFixed(2) + " " + (g.C - dash).toFixed(2);
-      circle.style.transform = "rotate(" + rot.toFixed(2) + "deg)";
-      circle.style.opacity = hot != null && hot !== slice.key ? "0.32" : "1";
-      circle.style.pointerEvents = slice.f > 0 ? "auto" : "none";
+  #syncRangeUI() {
+    const r = this.#dom.range;
+    const idx = Math.max(0, this.#ranges.findIndex((x) => x.key === this.#rangeKey));
+    r.style.setProperty("--i", String(idx));
+    r.querySelectorAll("button").forEach((b, i) => {
+      b.setAttribute("aria-checked", String(i === idx));
+      b.tabIndex = i === idx ? 0 : -1;
     });
-    const slice = this.slices.find((x) => x.key === hot);
-    if (slice) {
-      this.cLabel.textContent = slice.name;
-      this.cValue.textContent = cents(slice.cents);
-      this.cSub.textContent = percent(this.total ? (slice.cents / this.total) * 100 : 0) + "% " + T.ofTotal;
-    } else {
-      this.cLabel.textContent = this.defaultCenter.label;
-      this.cValue.textContent = cents(this.total);
-      this.cSub.textContent = this.defaultCenter.sub;
-    }
-    this.rows.forEach((row) => {
-      const key = row.dataset.row;
-      const on = hot === key;
-      row.classList.toggle("is-hot", on);
-      row.classList.toggle("is-dim", hot != null && !on);
-      row.setAttribute(key === "__rest" ? "aria-expanded" : "aria-pressed", String(key === "__rest" ? this.open : this.pin === key));
-    });
-    if (this.more) {
-      this.more.classList.toggle("is-open", this.open);
-      this.more.setAttribute("aria-hidden", this.open ? "false" : "true");
-    }
   }
-}
-
-// ───────────────────────────── mounting ─────────────────────────────
-
-const KINDS = { networth: NetWorthChart, pace: PaceChart, flow: FlowChart, donut: DonutChart };
-
-export function mount(root) {
-  if (!root || root.__fc) return root && root.__fc;
-  const Kind = KINDS[root.dataset.chart];
-  if (!Kind) return null;
-  root.__fc = new Kind(root);
-  return root.__fc;
-}
-
-export function mountAll() {
-  document.querySelectorAll("[data-chart]").forEach((el) => mount(el));
-}
-
-window.FinCharts = { math, fmt, mount, mountAll };
-
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountAll);
-else mountAll();
+  // ───────────── "poucos dados" e vazio ─────────────
+  /** Nada de curva inventada: os registros que existem sobre uma trilha pontilhada, quanto falta e a ação que resolve. */
+  #renderSparse() {
+    const d = this.#dom;
+    const w = this.#width || 600;
+    const tail = this.#series.slice(-3);
+    const empty = tail.length === 0;
+    const lo = Math.min(...tail.map((q) => q.v));
+    const hi = Math.max(...tail.map((q) => q.v));
+    const narrow = w < 480;
+    const stops = (narrow ? [0.72, 0.855, 0.97] : [0.6, 0.79, 0.96]).slice(3 - tail.length);
+    const innerW = w - 2 * GEOM.padX;
+    const dots = tail.map((q, i) => ({
+      x: GEOM.padX + stops[i] * innerW,
+      y: GEOM.top + this.#plotH * (0.86 - 0.3 * (hi === lo ? 0.5 : (q.v - lo) / (hi - lo)))
+    }));
+    const track = dots.length ? `M${dots.map((p) => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("L")}` : "";
+    const ghost = dots.length ? `M${GEOM.padX} ${dots[0].y.toFixed(1)}H${dots[0].x.toFixed(1)}` : "";
+    const have = this.#series.length;
+    const need = this.#minPoints;
+    const meter = h("div", { class: "fp-meter", role: "progressbar", "aria-label": "Registros de patrimônio", "aria-valuemin": "0", "aria-valuemax": String(need), "aria-valuenow": String(Math.min(have, need)) });
+    for (let i = 0; i < need; i++) meter.append(h("i", { class: i < have ? "on" : "" }));
+    const href = this.getAttribute("empty-href");
+    const label = this.getAttribute("empty-label") || "Registrar um saldo";
+    const cta = href ? h("a", { class: "fp-link", href, text: label }) : h("button", { type: "button", class: "fp-link", text: label });
+    if (!href) cta.addEventListener("click", () => this.dispatchEvent(new CustomEvent("fp-empty-action", { bubbles: true })));
+    const card = h(
+      "div",
+      { class: "fp-card dv-tip" },
+      h("span", { class: "fp-card-t", text: empty ? "Nenhum saldo registrado" : "Poucos dados ainda" }),
+      h("span", {
+        class: "fp-card-p",
+        text: narrow ? `Com ${need} saldos registrados aparece a tendência.` : `Registre o saldo das contas e dos investimentos de tempos em tempos. Com ${need} pontos o gráfico mostra a tendência.`
+      }),
+      h("div", { class: "fp-card-m" }, meter, h("span", { class: "fp-card-n nums", text: `${have} de ${need}` })),
+      cta
+    );
+    card.style.width = narrow ? "62%" : "52%";
+    const svg = s(
+      "svg",
+      { class: "fp-svg", width: "100%", height: "100%", viewBox: `0 0 ${w} ${GEOM.top + this.#plotH + GEOM.bottom}`, "aria-hidden": "true", focusable: "false" },
+      s("path", { class: "fp-ghost", d: ghost, fill: "none" }),
+      s("path", { class: "fp-track", d: track, fill: "none" })
+    );
+    const marks = dots.map((p, i) => {
+      const m = h("span", { class: "fp-spot pop", "aria-hidden": "true" });
+      m.style.translate = `${p.x.toFixed(1)}px ${p.y.toFixed(1)}px`;
+      m.style.animationDelay = `${200 + i * 140}ms`;
+      return m;
+    });
+    d.sparse.replaceChildren(svg, ...marks, card);
+  }
+};
+if (!customElements.get(TAG)) customElements.define(TAG, FpPatrimonio);
+export {
+  FpPatrimonio,
+  parsePoints
+};

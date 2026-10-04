@@ -52,7 +52,7 @@
   <div class="fc-head">
     <div class="fc-head-main">
       <div class="ov fc-title">Patrimônio <span class="fc-partial" data-fc="badge" hidden>parcial</span></div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(250, 46, 10, inline=True) }}</span></div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value">{{ skeleton(250, 46, 10, inline=True) }}</span></div>
       <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="delta">{{ skeleton(110, 14, 7, inline=True) }}</span><span class="fc-when" data-fc="when"></span></div>
     </div>
     <div class="fc-range" role="radiogroup" aria-label="Período do gráfico" data-fc="range" style="--fc-idx: 2; --fc-n: 4">
@@ -66,7 +66,7 @@
   <div class="fc-plot" data-fc="plot" aria-busy="true">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</div>
   <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Patrimônio"></p>
   <p class="fc-note" data-fc="note" hidden>
-    <span data-fc-if="partial" hidden>Parcial: faltam saldos ou avaliações de <span data-fc-pending>—</span>. </span>Caixa mais investimentos, menos as faturas a pagar. As parcelas futuras, R$ <span class="fc-dotted" data-fc-apart>—</span>, não entram.
+    <span data-fc-if="partial" hidden>Parcial: faltam saldos ou avaliações de <span data-fc-pending>—</span>. </span>Caixa mais investimentos, menos as faturas a pagar. As parcelas futuras, {{ config.currency_symbol }} <span class="fc-dotted" data-fc-apart>—</span>, não entram.
   </p>
   <noscript><p class="fc-note">O gráfico precisa de JavaScript. O patrimônio de hoje está em <a href="/networth">Patrimônio</a>.</p></noscript>
   <template data-tpl="skeleton">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</template>
@@ -84,20 +84,20 @@
 
 {#- Month pace: cumulative spending by day, the usual pace (mean of the previous months) and the ceiling (sum of the goals). -#}
 {% macro pace_card(month_key, month_name, id='pace') -%}
-<section class="card chart-card" aria-label="Ritmo de gastos do mês" data-chart="pace" data-src="/api/charts/pace?month={{ month_key }}" data-slider-label="Gasto acumulado no mês, por dia">
+<section class="card chart-card" data-peek-scope aria-label="Ritmo de gastos do mês" data-chart="pace" data-src="/api/charts/pace?month={{ month_key }}" data-slider-label="Gasto acumulado no mês, por dia">
   <div class="fc-head fc-head-sm">
     <div class="fc-head-main">
       <div class="ov fc-title"><span data-fc="title" data-prefix="Ritmo do mês ·">Ritmo do mês · {{ month_name }}</span></div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(210, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
-      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-average">{{ skeleton(120, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-ceiling">{{ skeleton(120, 14, 7, inline=True) }}</span></div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value" data-private="transactions">{{ skeleton(210, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-average" data-private="transactions">{{ skeleton(120, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-ceiling" data-private="transactions">{{ skeleton(120, 14, 7, inline=True) }}</span></div>
     </div>
   </div>
   <div class="fc-legend" aria-hidden="true">
     <span data-fc="legend-month"><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-out"/></svg><span data-fc-text>{{ month_name|capitalize }}</span></span>
     <span data-fc="legend-average" hidden><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-avg"/></svg>Média <span data-fc-text></span></span>
-    <span data-fc="legend-ceiling" hidden><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-ceil"/></svg>Teto <span data-fc-text></span></span>
+    <span data-fc="legend-ceiling" hidden><svg width="22" height="8" viewBox="0 0 22 8"><path d="M1 4H21" class="fc-key-ceil"/></svg>Teto <span data-fc-text data-private="transactions"></span></span>
   </div>
-  <div class="fc-plot" data-fc="plot" aria-busy="true">{{ plot_skeleton('pace', 'Carregando o ritmo do mês') }}</div>
+  <div class="fc-plot" data-fc="plot" data-private="transactions" aria-busy="true">{{ plot_skeleton('pace', 'Carregando o ritmo do mês') }}</div>
   <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Gasto acumulado em"></p>
   <noscript><p class="fc-note">O gráfico precisa de JavaScript. Os gastos do mês estão em <a href="/entries">Lançamentos</a>.</p></noscript>
   <template data-tpl="skeleton">{{ plot_skeleton('pace', 'Carregando o ritmo do mês') }}</template>
@@ -114,19 +114,19 @@
 
 {#- Cash flow: income up, expenses down, the month's balance under each column. -#}
 {% macro flow_card(year, id='flow') -%}
-<section class="card chart-card" aria-label="Fluxo de caixa de {{ year }}" data-chart="flow" data-src="/api/charts/cash-flow?year={{ year }}" data-slider-label="Fluxo de caixa, mês a mês">
+<section class="card chart-card" data-peek-scope aria-label="Fluxo de caixa de {{ year }}" data-chart="flow" data-src="/api/charts/cash-flow?year={{ year }}" data-slider-label="Fluxo de caixa, mês a mês">
   <div class="fc-head fc-head-sm">
     <div class="fc-head-main">
       <div class="ov fc-title">Fluxo de caixa · {{ year }}</div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">R$</span><span class="fc-num" data-fc="value">{{ skeleton(190, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
-      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-rate">{{ skeleton(130, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-delta">{{ skeleton(130, 14, 7, inline=True) }}</span></div>
+      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value" data-private="transactions">{{ skeleton(190, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-rate" data-private="transactions">{{ skeleton(130, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-delta" data-private="transactions">{{ skeleton(130, 14, 7, inline=True) }}</span></div>
     </div>
   </div>
   <div class="fc-legend" aria-hidden="true">
-    <span><i class="fc-key-box fc-in"></i>Entradas <b data-fc="legend-in"></b></span>
-    <span><i class="fc-key-box fc-out"></i>Saídas <b data-fc="legend-out"></b></span>
+    <span><i class="fc-key-box fc-in"></i>Entradas <b data-fc="legend-in" data-private="transactions"></b></span>
+    <span><i class="fc-key-box fc-out"></i>Saídas <b data-fc="legend-out" data-private="transactions"></b></span>
   </div>
-  <div class="fc-plot fc-plot-flow" data-fc="plot" aria-busy="true">{{ plot_skeleton('bars', 'Carregando o fluxo de caixa') }}</div>
+  <div class="fc-plot fc-plot-flow" data-fc="plot" data-private="transactions" aria-busy="true">{{ plot_skeleton('bars', 'Carregando o fluxo de caixa') }}</div>
   <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Entradas e saídas em"></p>
   <noscript><p class="fc-note">O gráfico precisa de JavaScript.</p></noscript>
   <template data-tpl="skeleton">{{ plot_skeleton('bars', 'Carregando o fluxo de caixa') }}</template>
@@ -164,20 +164,20 @@
       <button type="button" class="fc-row" data-row="{{ r.key }}" aria-pressed="false">
         <i class="fc-dot-sw" style="background: {{ r.color }}" aria-hidden="true"></i>
         <span class="fc-row-name"><span class="fc-row-title">{{ r.name }}</span><span class="fc-row-sub">{{ r.group_label }} · {{ r.count }} {{ 'lançamento' if r.count == 1 else 'lançamentos' }}</span></span>
-        <span class="fc-row-value">{{ r.cents|brl }}</span><span class="fc-row-pct">{{ r.share|percent }}</span>
+        <span class="fc-row-value">{{ r.cents|money(private="transactions") }}</span><span class="fc-row-pct">{{ r.share|percent }}</span>
       </button>
       {% endfor %}
       {% if rest_rows %}
       <button type="button" class="fc-row fc-row-rest" data-row="__rest" aria-expanded="false">
         <i class="fc-dot-sw" style="background: #C9D4CC" aria-hidden="true"></i>
         <span class="fc-row-name"><span class="fc-row-title">Demais categorias<svg class="fc-chev" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="fc-row-sub">{{ rest_rows|length }} categorias · {{ breakdown.rest_count }} {{ 'lançamento' if breakdown.rest_count == 1 else 'lançamentos' }}</span></span>
-        <span class="fc-row-value">{{ breakdown.rest_total_cents|brl }}</span><span class="fc-row-pct">{{ rest_share|percent }}</span>
+        <span class="fc-row-value">{{ breakdown.rest_total_cents|money(private="transactions") }}</span><span class="fc-row-pct">{{ rest_share|percent }}</span>
       </button>
       {% endif %}
     </div>
     {% if rest_rows %}
     <div class="fc-more" data-more aria-hidden="true"><div class="fc-more-clip"><ul class="fc-more-list">
-      {% for m in rest_rows %}<li><i class="fc-dot-sm" style="background: {{ m.color }}" aria-hidden="true"></i><span>{{ m.name }}</span><span>{{ m.cents|brl }}</span><span class="fc-row-pct">{{ m.share|percent }}</span></li>{% endfor %}
+      {% for m in rest_rows %}<li><i class="fc-dot-sm" style="background: {{ m.color }}" aria-hidden="true"></i><span>{{ m.name }}</span><span>{{ m.cents|money(private="transactions") }}</span><span class="fc-row-pct">{{ m.share|percent }}</span></li>{% endfor %}
     </ul></div></div>
     {% endif %}
     {% if ncat <= 2 %}

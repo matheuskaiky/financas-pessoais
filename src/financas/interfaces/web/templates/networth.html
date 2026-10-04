@@ -8,16 +8,16 @@
   <div class="nw-top">
     <div>
       <h2 id="h-nw" class="label">Patrimônio líquido</h2>
-      <div class="amount">{{ odometer(nw.net_worth_cents, size='clamp(46px, 7vw, 76px)', dark=True) }}</div>
+      <div class="amount">{{ odometer(nw.net_worth_cents, size='clamp(46px, 7vw, 76px)', dark=True, private="networth") }}</div>
     </div>
     {% if nw.is_partial %}<span class="pill warn">Parcial · {{ nw.pending|length + nw.pending_holdings|length }} pendente(s)</span>{% endif %}
   </div>
   <dl class="nw-ledger">
-    <div><dt>Caixa</dt><i aria-hidden="true"></i><dd>{{ nw.cash_cents|brl }}</dd></div>
-    <div><dt>Investimentos</dt><i aria-hidden="true"></i><dd>{{ nw.investments_cents|brl }}</dd></div>
-    <div><dt>Faturas fechadas a pagar</dt><i aria-hidden="true"></i><dd>− {{ nw.closed_statements_cents|brl }}</dd></div>
-    <div><dt>Faturas abertas (compras já feitas)</dt><i aria-hidden="true"></i><dd>− {{ nw.open_statements_cents|brl }}</dd></div>
-    <div class="apart"><dt>Parcelas futuras (compromisso, fora do total)</dt><i aria-hidden="true"></i><dd>{{ nw.future_installments_cents|brl }}</dd></div>
+    <div><dt>Caixa</dt><i aria-hidden="true"></i><dd>{{ nw.cash_cents|money(private="accounts") }}</dd></div>
+    <div><dt>Investimentos</dt><i aria-hidden="true"></i><dd>{{ nw.investments_cents|money(private="investments") }}</dd></div>
+    <div><dt>Faturas fechadas a pagar</dt><i aria-hidden="true"></i><dd>− {{ nw.closed_statements_cents|money(private="cards") }}</dd></div>
+    <div><dt>Faturas abertas (compras já feitas)</dt><i aria-hidden="true"></i><dd>− {{ nw.open_statements_cents|money(private="cards") }}</dd></div>
+    <div class="apart"><dt>Parcelas futuras (compromisso, fora do total)</dt><i aria-hidden="true"></i><dd>{{ nw.future_installments_cents|money(private="cards") }}</dd></div>
   </dl>
 </section>
 {% if nw.is_partial %}

@@ -14,12 +14,12 @@
 .letter-row { display: grid; grid-template-columns: minmax(0, 1fr) 340px; border-top: 1px dotted #B7C4BC; }
 .letter-row:first-child { border-top: 0; }
 .letter-main { padding: 34px 56px 36px 64px; min-width: 0; }
-.letter-margin { background: #F6F8F5; border-left: 1px solid rgba(10, 46, 36, .08); padding: 34px 28px 30px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.letter-margin { background: var(--fill-1); border-left: 1px solid var(--line); padding: 34px 28px 30px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .letter-hero { padding-top: 40px; padding-bottom: 34px; }
 .letter-hero + .letter-help, .letter-help { justify-content: flex-end; gap: 8px; font-size: 13.5px; line-height: 1.55; }
 .letter-letterhead { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.letter-letterhead .mark { font: 400 20px var(--serif); letter-spacing: -.01em; color: var(--ink); }
-.letter-letterhead .mark small { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: .3em; color: #79907F; }
+.letter-letterhead .mark { font: 400 20px var(--serif); letter-spacing: -.01em; color: var(--head); }
+.letter-letterhead .mark small { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: .3em; color: var(--text-tertiary); }
 .hero-balance { margin-top: 34px; }
 .hero-number { margin-top: 12px; }
 .letter .chips { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; }
@@ -54,7 +54,7 @@
 .cat-line { display: flex; align-items: baseline; font-size: 14px; }
 .cat-name { display: inline-flex; align-items: center; gap: 8px; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-.meter { display: block; height: 5px; border-radius: 2px; background: #E3EAE5; }
+.meter { display: block; height: 5px; border-radius: 2px; background: var(--fill-4); }
 .meter-fill { display: block; height: 100%; border-radius: 2px; background: var(--forest); }
 .meter-fill.cash-low { background: var(--brass-mid); }
 
@@ -69,7 +69,7 @@
 
 .todos { list-style: none; margin: 26px 0 0; padding: 0; border-top: 1px solid rgba(10, 46, 36, .12); }
 .todo { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(10, 46, 36, .08); }
-.todo-box { flex: none; width: 24px; height: 24px; margin: 0 14px 0 14px; border-radius: 8px; border: 1.5px solid #7C8D83; background: #fff; }
+.todo-box { flex: none; width: 24px; height: 24px; margin: 0 14px 0 14px; border-radius: 8px; border: 1.5px solid #7C8D83; background: var(--solid-1); }
 .todo-text { flex: 1; min-width: 0; padding: 12px 0; display: flex; flex-direction: column; gap: 2px; }
 .todo-title { font-size: 15px; font-weight: 500; }
 .todo-cta { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; font: 600 13.5px var(--sans); color: var(--forest);
@@ -78,12 +78,12 @@
 .todo form { margin: 0; }
 
 .seal-box { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; height: 100%; }
-.seal-title { font-size: 14.5px; font-weight: 500; color: var(--ink); }
+.seal-title { font-size: 14.5px; font-weight: 500; color: var(--head); }
 .seal-box .soft { max-width: 250px; line-height: 1.5; }
 
-.letter-how { background: #FBFCFA; }
+.letter-how { background: var(--wash); }
 .letter-how .letter-main { padding-top: 24px; padding-bottom: 26px; display: flex; flex-direction: column; gap: 10px; }
-.letter-how .letter-margin { padding-top: 24px; padding-bottom: 26px; gap: 6px; background: #FBFCFA; }
+.letter-how .letter-margin { padding-top: 24px; padding-bottom: 26px; gap: 6px; background: var(--wash); }
 .letter-how p { margin: 0; font-size: 14px; line-height: 1.7; color: var(--text); }
 
 @media (max-width: 1099px) {

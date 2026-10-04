@@ -1,10 +1,24 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
+  {#- Front v3 handoff head (docs/financas-front-v3-handoff/snippets/base-head.html): the order matters.
+      Data block, fonts, tokens/charts/privacy CSS, the BLOCKING privacy script (it writes <html data-privacy-mask>
+      before the first paint), then the modules from one directory (charts.js imports ./fp-money.js: same URL, no ?v=).
+      app.css and the other app styles come after: they own `body` and may override the bundle. -#}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Finanças{% endblock %} · finanças pessoais</title>
+  <script type="application/json" id="app-config">{{ config.client | tojson }}</script>
+  <link rel="preload" href="/static/fonts/public-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/source-serif-4-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
   <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/charts.css">
+  <link rel="stylesheet" href="/static/fp-privacy.css">
+  <script src="/static/fp-privacy.js"></script>
+  <script type="module" src="/static/fp-money.js"></script>
+  <script type="module" src="/static/fp-ui.js"></script>
+  <script type="module" src="/static/charts.js"></script>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/screens.css">
   <script src="/static/htmx.min.js" defer></script>
@@ -20,7 +34,7 @@
 {% set here = nav_current(nav|default(none)) %}
 {% set menu = nav_groups(here, assistant_enabled) %}
 <div class="shell">
-  <nav class="sidebar" aria-label="Principal">
+  <nav class="sidebar ink" aria-label="Principal">
     <a class="brand" href="/"><span class="name">finanças</span><span class="sub">PESSOAIS</span></a>
     <div class="side-actions">
       <a class="new-entry" href="/entries#form">
@@ -32,6 +46,7 @@
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
         <span>Perguntar ou registrar</span><kbd aria-hidden="true">⌘K</kbd>
       </button>
+      {% include "snippets/privacy-eye-toggle.html" %}
     </div>
     <div class="nav-groups">
       {% for group in menu %}
@@ -87,6 +102,7 @@
     </div>
   </form>
 </dialog>
+{% include "snippets/privacy-dialog.html" %}
 {% include "_palette.html" %}
 </body>
 </html>
