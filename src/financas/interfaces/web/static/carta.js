@@ -1,6 +1,6 @@
 "use strict";
-// Carta do mês: hovering (or focusing) a figure in the text highlights the note that explains it, and
-// the month selector submits on change. Progressive: without this file the letter still reads fine.
+// Carta do mês: hovering (or focusing) a figure in the text highlights the note that explains it. (The month
+// selector submits on change through app.js, which every page loads.) Progressive: without this file the letter still reads fine.
 (function () {
   const notes = function () { return document.querySelectorAll(".lt-note[data-note-id]"); };
   const mark = function (id, on) {
@@ -17,8 +17,4 @@
   document.addEventListener("mouseout", function (event) { mark(target(event), false); });
   document.addEventListener("focusin", function (event) { mark(target(event), true); });
   document.addEventListener("focusout", function (event) { mark(target(event), false); });
-  document.addEventListener("change", function (event) {
-    const el = event.target;
-    if (el instanceof HTMLSelectElement && el.hasAttribute("data-autosubmit") && el.form) el.form.submit();
-  });
 })();

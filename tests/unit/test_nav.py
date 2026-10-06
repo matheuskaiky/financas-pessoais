@@ -12,14 +12,14 @@ def _clean_registry() -> Iterator[None]:  # pyright: ignore[reportUnusedFunction
     # Route modules register their pages when any test builds the app (the registry is global), so
     # these tests start from the built-in menu and put everything back afterwards.
     saved = {e.id: e for e in nav.entries()}
-    for later in ("analises", "carta", "ese"):
+    for later in ("analises", "carta", "ese", "importar"):
         nav.unregister(later)
     before = {e.id for e in nav.entries()}
     yield
     for entry in nav.entries():
         if entry.id not in before:
             nav.unregister(entry.id)
-    for later in ("analises", "carta", "ese"):
+    for later in ("analises", "carta", "ese", "importar"):
         if later in saved:
             nav.register(saved[later])
 
@@ -41,7 +41,7 @@ def test_built_in_menu_matches_the_pages_that_exist() -> None:
 
 
 def test_pages_of_later_packages_are_absent_until_they_register() -> None:
-    assert not {e.id for e in nav.entries()} & {"analises", "carta", "ese"}
+    assert not {e.id for e in nav.entries()} & {"analises", "carta", "ese", "importar"}
     nav.register(
         nav.NavEntry("analises", "Análises", nav.ICONS["analises"], "/analises", "main", 20)
     )

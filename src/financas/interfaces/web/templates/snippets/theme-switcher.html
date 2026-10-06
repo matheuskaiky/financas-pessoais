@@ -1,0 +1,16 @@
+{#- Front v3 patch (docs/financas-v3-patch/snippets/theme-switcher.html, block B): compact Claro/Escuro/Automático switcher for the sidebar .side-actions. Behaviour: static/fp-ui.js; look: static/fp-theme.css. -#}
+<div class="fp-theme" role="radiogroup" aria-label="Tema" data-fp-theme-group>
+  <i aria-hidden="true"></i>
+  <button type="button" role="radio" aria-checked="false" tabindex="-1" aria-label="Claro" data-fp-theme-option="light">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.7"/><path d="M12 3v1.8M12 19.2V21M3 12h1.8M19.2 12H21M5.64 5.64l1.27 1.27M17.09 17.09l1.27 1.27M5.64 18.36l1.27-1.27M17.09 6.91l1.27-1.27"/></svg>
+    <span class="fp-theme-tip" aria-hidden="true">Claro</span>
+  </button>
+  <button type="button" role="radio" aria-checked="false" tabindex="-1" aria-label="Escuro" data-fp-theme-option="dark">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.3 14.6A8.4 8.4 0 0 1 9.4 3.7a8.4 8.4 0 1 0 10.9 10.9z"/></svg>
+    <span class="fp-theme-tip" aria-hidden="true">Escuro</span>
+  </button>
+  <button type="button" role="radio" aria-checked="true" tabindex="0" aria-label="Automático (segue o aparelho)" data-fp-theme-option="system">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4.5" width="18" height="12" rx="2.2"/><path d="M8.5 20h7M12 16.5V20"/></svg>
+    <span class="fp-theme-tip" aria-hidden="true">Automático</span>
+  </button>
+</div>

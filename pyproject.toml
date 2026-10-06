@@ -46,6 +46,8 @@ link-mode = "copy"
 testpaths = ["tests"]
 addopts = "-ra"
 pythonpath = ["tests", "scripts"]
+# Starlette announces the end of httpx support in its TestClient; nothing to act on until it ships a replacement.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
 
 [tool.ruff]
 line-length = 100
@@ -61,6 +63,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "src/financas/infrastructure/db/migrations/versions/*" = ["E501", "I", "UP", "RUF"]
 # Vendored from the front v3 handoff (CLDR tables and long pt-BR docstrings); format only.
 "src/financas/interfaces/web/fp_money.py" = ["E501"]
+"src/financas/interfaces/web/fp_charts.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]

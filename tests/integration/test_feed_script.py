@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from feed_support import TODAY, scratch_container, synthetic_context
 from financas.application.csvfeed import analyze_feed, template_text
+from financas.application.csvfeed import service as feed_service
 from financas.application.csvfeed.model import AccountInfo, FeedContext
 from financas.application.imports.apply import Verification
 from financas.container import Container, build_container
@@ -221,7 +222,7 @@ def test_a_failed_verification_leaves_the_database_untouched(
 
     before = db_digest(scratch)
     with monkeypatch.context() as patch:
-        patch.setattr(feed_from_csv, "verify_feed", failing)
+        patch.setattr(feed_service, "verify_feed", failing)
         code, out = invoke(str(EXAMPLE), "--apply")
     assert code == 3 and "o banco não foi alterado" in out
     assert db_digest(scratch) == before
@@ -234,13 +235,13 @@ def test_a_failed_verification_leaves_the_database_untouched(
 def test_a_failure_in_the_middle_of_the_apply_rolls_everything_back(
     scratch: Container, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = feed_from_csv.ApplyFeed
+    real = feed_service.ApplyFeed
 
     class Exploding(real):  # type: ignore[valid-type,misc]
         def _payment(self, action: object, description: str) -> None:
             raise RuntimeError("boom with Aluguel inside")
 
-    monkeypatch.setattr(feed_from_csv, "ApplyFeed", Exploding)
+    monkeypatch.setattr(feed_service, "ApplyFeed", Exploding)
     before = db_digest(scratch)
     code, out = invoke(str(EXAMPLE), "--apply")
     assert code == 3 and "boom" not in out and "Aluguel" not in out

@@ -308,7 +308,9 @@ export function observe(root) {
   run();
   if (typeof MutationObserver === 'undefined') return; // fora de um navegador (testes, SSR): hidratou uma vez e pronto
   let queued = false;
-  const observer = new MutationObserver(() => { if (queued) return; queued = true; Promise.resolve().then(() => { queued = false; run(); }); });
+  // Hydration can only be needed by a new ELEMENT or by a changed data-* attribute: text updates (chart tooltips, rolling figures) never wake it.
+  const needed = (records) => records.some((r) => r.type === 'attributes' || Array.prototype.some.call(r.addedNodes, (n) => n.nodeType === 1));
+  const observer = new MutationObserver((records) => { if (queued || !needed(records)) return; queued = true; Promise.resolve().then(() => { queued = false; run(); }); });
   observer.observe(scope === document ? document.documentElement : scope, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-cents', 'data-money', 'data-sign', 'data-compact', 'data-bare', 'data-currency', 'data-locale', 'data-places'] });
   if (typeof G.addEventListener === 'function') G.addEventListener('fp:config', run);
 }

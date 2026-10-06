@@ -10,6 +10,8 @@
     <small>Desfoca os valores na tela. Só neste navegador.</small>
   </div>
 </section>
+{#- Appearance (patch 3.2): Claro / Escuro / Automático, kept in localStorage["fp_theme"]. -#}
+{% include "snippets/theme-row.html" %}
 {#- Data-driven: every registered page that is not one of the tab pages (financas/interfaces/web/nav.py). -#}
 {% for group in nav_more_groups(assistant_enabled) %}
 <section class="panel" aria-label="{{ group.label or 'Outras páginas' }}">

@@ -31,11 +31,14 @@
   {% set look = account_looks[v.account.id] %}
   {% set on = chosen and chosen.account.id == v.account.id %}
   <div class="card-slot">
-    <a class="card-face {{ 'on' if on }}" href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
+    {#- Front v3 patch (card-markup.html): the face is the tilt target (data-card-tilt, fp-ui.js) and carries the glare layer;
+        the user's colour and its readable text colour (9.9) stay on the face as --face-bg / --face-fg. -#}
+    <a class="card-face {{ 'on' if on }}" data-card-tilt href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
        style="--face-bg: {{ look.color }}; --face-fg: {{ look.text_color }}">
-      <span class="face-top">{{ avatar(look, 40) }}<span class="face-kind">CRÉDITO</span></span>
-      <span class="face-bottom"><strong class="face-name">{{ v.account.nickname }}</strong>
-        <small>vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes</small></span>
+      <span class="card-face__top">{{ avatar(look, 40) }}<span class="card-face__cycle">CRÉDITO</span></span>
+      <span class="card-face__body"><strong class="card-face__nick">{{ v.account.nickname }}</strong>
+        <span class="card-face__dates">vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes</span></span>
+      <span class="card-glare" aria-hidden="true"></span>
     </a>
     {% if v.usage.alert.value == 'not_informed' %}
     {{ stroke_gauge(0, unset=True, height=12) }}

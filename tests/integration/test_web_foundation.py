@@ -156,15 +156,23 @@ def test_head_follows_the_front_v3_handoff_contract(client: TestClient) -> None:
         config = re.search(r'<script type="application/json" id="app-config">(.*?)</script>', head)
         assert config and json.loads(config[1]) == {"locale": "pt-BR", "currency": "BRL"}, path
         order = [
+            "data-fp-theme-color>",
+            '<script src="/static/fp-theme.js"></script>',  # blocking classic, first
             'id="app-config"',
             "/static/fonts/fonts.css",
             "/static/tokens.css",
+            "/static/components.css",
             "/static/charts.css",
+            "/static/charts-extra.css",
             "/static/fp-privacy.css",
+            "/static/fp-theme.css",
+            "/static/cards.css",
             '<script src="/static/fp-privacy.js"></script>',  # classic, no defer/async/module
             '<script type="module" src="/static/fp-money.js">',
             '<script type="module" src="/static/fp-ui.js">',
+            '<script type="module" src="/static/fp-widgets.js">',
             '<script type="module" src="/static/charts.js">',
+            '<script type="module" src="/static/fp-scrub.js">',
             "/static/app.css",
         ]
         positions = [head.index(item) for item in order]
@@ -183,7 +191,9 @@ def test_head_follows_the_front_v3_handoff_contract(client: TestClient) -> None:
 
 def test_privacy_controls_are_in_the_shell_and_on_the_more_page(client: TestClient) -> None:
     home = client.get("/").text
-    side = home[home.index('class="side-actions"') : home.index('class="nav-groups"')]
+    top = home[home.index('class="side-actions"') : home.index('class="nav-groups"')]
+    assert "data-fp-privacy" not in top and "data-fp-theme-group" not in top
+    side = home[home.index('class="side-utilities"') : home.index("</nav>")]
     assert 'data-fp-privacy="toggle"' in side and 'data-fp-privacy="settings"' in side
     assert 'aria-keyshortcuts="P"' in side and 'aria-label="Ocultar valores"' in side
     dialog = home[home.index('<dialog class="fp-priv-panel') :]
@@ -193,13 +203,51 @@ def test_privacy_controls_are_in_the_shell_and_on_the_more_page(client: TestClie
     assert 'data-fp-privacy="toggle"' in more[more.index("<main>") :]  # phones have no sidebar
 
 
+def test_theme_switcher_is_in_the_sidebar_and_on_the_more_page(client: TestClient) -> None:
+    """Patch 3.1/3.2: theme radiogroup in the sidebar footer with the privacy group; «Aparência»."""
+    home = client.get("/").text
+    side = home[home.index('class="side-utilities"') : home.index("</nav>")]
+    assert home.index('class="backup-box"') < home.index('class="side-utilities"')
+    assert side.index("data-fp-privacy") < side.index("data-fp-theme-group")
+    for mode in ("light", "dark", "system"):
+        assert f'data-fp-theme-option="{mode}"' in side
+    assert 'role="radiogroup" aria-label="Tema"' in side and side.count('aria-checked="true"') >= 1
+    more = client.get("/more").text
+    body = more[more.index("<main>") :]
+    assert "Aparência" in body and body.count("data-fp-theme-group") == 1
+
+
+def test_theme_script_is_blocking_and_first_in_head(client: TestClient) -> None:
+    head = (text := client.get("/").text)[: text.index("</head>")]
+    tag = re.search(r'<script src="/static/fp-theme\.js"[^>]*>', head)
+    assert tag and not re.search(r"defer|async|module", tag[0])
+    assert head.index("fp-theme.js") < head.index(".css")
+    script = client.get("/static/fp-theme.js").text
+    assert (
+        "fp_theme" in script and "data-theme-pref" in script
+    )  # the stored key and the pre-paint attribute
+
+
+def test_files_stay_csp_clean(client: TestClient) -> None:
+    for name in ("fp-theme.js", "fp-ui.js", "fp-widgets.js", "fp-scrub.js"):
+        js = client.get(f"/static/{name}").text
+        assert not re.search(r"\beval\(|new Function\(|hx-on:", js), name
+
+
 def test_static_files_have_the_mime_types_the_modules_need(client: TestClient) -> None:
     for name, mime in (
         ("fp-money.js", "text/javascript"),
         ("fp-ui.js", "text/javascript"),
         ("charts.js", "text/javascript"),
         ("fp-privacy.js", "text/javascript"),
+        ("fp-theme.js", "text/javascript"),
+        ("fp-widgets.js", "text/javascript"),
+        ("fp-scrub.js", "text/javascript"),
         ("fp-privacy.css", "text/css"),
+        ("fp-theme.css", "text/css"),
+        ("cards.css", "text/css"),
+        ("components.css", "text/css"),
+        ("charts-extra.css", "text/css"),
         ("fonts/fonts.css", "text/css"),
     ):
         response = client.get(f"/static/{name}")
@@ -350,3 +398,56 @@ def test_error_pages_use_the_error_state(client: TestClient) -> None:
     assert response.status_code == 404
     assert 'role="alert"' in response.text and "Página não encontrada" in response.text
     assert 'href="/"' in response.text
+
+
+def test_dashboard_header_has_no_second_primary_action(client: TestClient) -> None:
+    """The sidebar owns «Novo lançamento»; the Painel header keeps only its own context."""
+    page = client.get("/").text
+    main = page[page.index("<main>") : page.index("</main>")]
+    header = main[main.index('<header class="page-head"') : main.index("</header>")]
+    assert "Novo lançamento" not in header and 'class="btn"' not in header
+    assert 'class="pn-month"' in header and 'class="head-tools"' in header
+    assert page.count("Novo lançamento") >= 2  # sidebar button + the tab bar's labelled «Novo» link
+
+
+def test_dashboard_kpis_are_odometers_with_privacy_and_accessible_names(client: TestClient) -> None:
+    page = client.get("/").text
+    kpis = page[page.index('class="pn-kpis"') : page.index('class="pn-pair"')]
+    figures = re.findall(r'<span class="od[^"]*" role="img" aria-label="([^"]+)"[^>]*>', kpis)
+    assert len(figures) == 4 and all(label.startswith(("R$", "-R$")) for label in figures)
+    assert kpis.count('data-private="transactions"') >= 4 and kpis.count("data-odometer=") == 4
+    script = client.get("/static/fin-charts.js").text
+    assert "FinUI.odometer" in script or "window.FinUI" in script  # chart figures roll too
+
+
+def test_side_utilities_targets_cannot_outgrow_the_bar(client: TestClient) -> None:
+    """app.css `button { min-height: 48px }` once pushed the 28 px targets out of the 32 px bar."""
+    css = client.get("/static/screens.css").text
+    block = css[css.index(".side-utilities") :]
+    assert "min-height: 0" in block and "box-shadow: none" in block and "height: 32px" in block
+
+
+def test_every_chart_figure_is_an_odometer_on_the_first_paint(client: TestClient) -> None:
+    """Ritmo and Fluxo print their figure on the server: the odometer exists before the JSON."""
+    for path in ("/", "/analises"):
+        page = client.get(path).text
+        figures = re.findall(r'<span class="fc-num[^"]*"[^>]*>(.*?)</span></div>', page, flags=re.S)
+        cards = page.count('class="fc-num')
+        assert cards == 2 and len(figures) == 2, path
+        for figure in figures:
+            assert (
+                "data-odometer=" in figure and 'class="od' in figure and "sk-inline" not in figure
+            )
+            assert "fc-num-od" in figure and "data-private" not in figure
+            assert re.search(r'aria-label="-?R\$[^"]*\d,\d\d"', figure), (
+                figure
+            )  # the full currency text
+        assert page.count('data-private="transactions"') >= 2
+    head = client.get("/").text
+    assert head.index("/static/ui.js") < head.index(
+        "/static/fin-charts.js"
+    )  # FinUI exists when the chart runs
+
+
+def test_static_files_are_revalidated(client: TestClient) -> None:
+    assert client.get("/static/fin-charts.js").headers["cache-control"] == "no-cache"

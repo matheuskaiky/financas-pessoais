@@ -5,6 +5,8 @@
 <title>privacy harness</title>
 <link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
 <link rel="stylesheet" href="../../src/financas/interfaces/web/static/fp-privacy.css">
+<style>/* the harness checks end states: with a starved virtual clock a fade can sit mid-way, so skip the fades */
+*, *::before, *::after { transition: none !important; animation: none !important; }</style>
 <script src="../../src/financas/interfaces/web/static/fp-privacy.js"></script>
 <style>body{margin:0;width:900px;font:15px/1.5 var(--sans)}</style>
 </head>
@@ -35,6 +37,8 @@ window.addEventListener("unhandledrejection", (e) => fail(String(e.reason && e.r
 const results = [];
 const check = (name, ok, detail) => results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// poll for a state that a CSS fade must reach (a fixed delay read computed filters mid-fade under load)
+const until = async (fn, ms = 4000) => { for (let t = 0; t < ms && !fn(); t += 25) await wait(25); };
 const $$ = (s) => [...document.querySelectorAll(s)];
 const html = document.documentElement;
 const filterOf = (el) => getComputedStyle(el).filter;
@@ -76,7 +80,7 @@ check("state persists in localStorage", stored && stored.v === 1 && stored.on ==
 
 // ---- groups mask independently ----
 FP.privacy.setGroup("cards", false);
-await wait(300);
+await until(() => /blur/.test(filterOf(document.querySelector('[data-private="accounts"] .currency-amount'))) && filterOf(amount) === "none");
 check("a group can be switched off alone", !/cards/.test(html.getAttribute("data-privacy-mask")) && filterOf(amount) === "none" && /blur/.test(filterOf(document.querySelector('[data-private="accounts"] .currency-amount'))), html.getAttribute("data-privacy-mask"));
 FP.privacy.reset();
 check("reset re-selects the groups and keeps the on state", FP.privacy.isMasked("cards") && JSON.parse(localStorage.getItem("fp_privacy_settings")).on === true);

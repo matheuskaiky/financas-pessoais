@@ -125,6 +125,10 @@ def test_cards_page_shows_faces_gauge_ledger_and_plan_steps(
     )
     page = client.get(f"/cards?card={card}").text
     assert 'class="card-face on"' in page and "--face-bg: #0F5C45" in page
+    face = page[page.index('class="card-face on"') :]
+    face = face[: face.index("</a>")]
+    assert "data-card-tilt" in face and 'class="card-glare" aria-hidden="true"' in face  # patch 3.3
+    assert 'class="card-face__nick"' in face
     assert re.search(r'class="sg sg-forest" role="img" aria-label="Comprometido 30,0%', page)
     assert 'class="ledger"' in page and 'class="ledger-line due"' in page
     assert 'class="plan-steps"' in page and page.count('class="next"') == 1

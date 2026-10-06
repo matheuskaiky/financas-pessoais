@@ -1,8 +1,12 @@
 # Real data never goes into git
-data/
+data/*
+# data/ covers financas.db, financas.db-wal, financas.db-shm, backups/, import/, images/ and logs/ (the real data).
+# The ONE exception is the synthetic demo database (see the *.db rules below and the README):
+# it is built from made-up data only, by `financas seed-demo`. Its -wal/-shm files stay ignored.
 *.db
 *.db-wal
 *.db-shm
+!data/demo.db
 *.sqlite*
 *.xlsx
 *.xls
@@ -27,4 +31,5 @@ dist/
 build/
 
 CLAUDE.md
-docs/
+# Engineering records (audits, plans, the project history naming the owner's real banks): local only.
+docs-dev/

@@ -61,7 +61,7 @@ FEED_OVERRIDES: dict[str, str] = {
     "ACCOUNT_TRACKS_HOLDINGS": (
         "Conta de investimento controlada por aplicação: o arquivo não informa saldo nela."
     ),
-    "INVALID_CHOICE": "Valor não reconhecido. Veja os valores aceitos em docs/CSV_IMPORT.md.",
+    "INVALID_CHOICE": "Valor não reconhecido. Veja os valores aceitos em docs/IMPORTACAO_DADOS.md.",
     "INVALID_DATE": "Data inválida. Use AAAA-MM-DD ou dd/mm/aaaa (ano com 4 dígitos).",
     "INVALID_YEAR_MONTH": "Fatura inválida. Use AAAA-MM (mês do fechamento).",
     "INVALID_NUMBER": "Número inválido: use só dígitos, sem sinal nem vírgula.",

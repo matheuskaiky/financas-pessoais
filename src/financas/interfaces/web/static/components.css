@@ -1,0 +1,281 @@
+/* components.css — the shared component layer the canvas used but the 3.0 bundle never shipped. Needs tokens.css (load it first, then this file, then app.css).
+ *
+ * Canvas short names are kept on purpose (tokens.css already lists .seg .btnp .btng .btns .btnb .chipb .in .tip in its squircle rule, and every board used them).
+ * Rules of the house: tokens only (no hard-coded theme colour), nothing keyed on `.dk` alone, no `style=""` anywhere (strict CSP), state in ARIA first
+ * (aria-checked / aria-pressed / aria-selected / aria-expanded / aria-current / aria-disabled / aria-invalid / aria-busy), a class second.
+ * Press feedback: tokens.css scales `button:active` and inline-style anchors only; an `<a class="btnp">` never matched it, so the anchors get it here.
+ *
+ *  1 theme knobs · 2 buttons · 3 segmented / tabs · 4 switch · 5 chips, badges, kbd, tooltip · 6 fields (.in .fld .opt .stp .rg) · 7 disclosure and state layers
+ *  8 meter (Medidor) · 9 floating bar, dialogs and the palette result layout · 10 app shell (sidebar + rail, tab bar, /more rows) · 11 ledger helpers · 12 status glyphs, instalment squares, checkbox · 13 capture-form helpers (.fw .amt .chips .dot .cat-*) · 14 skeleton sizes, empty states · 15 state widgets (horizontal empty state, assistive-suggestion row, live panels)
+ *  16 position carriers (.at-N) and tone classes · 17 small marks (.sdot .ckm .ckb .ckrow .chev--down .sw--lg, gated actions, .res) · 18 bars (.vbars .hbar .dvbar .cbar, .mmk, .rg-mark) · 19 .xf cross-fade, .verdict, .seg--cards, .ink-card
+ *  20 Transparência (.ruler, .rcp receipt) · 21 Carta (.sheet) · 22 serrated paper edge (.zz, .zz-wrap, .paper) · 23 bar variants (.cbar--10, .cbar--ends, .sqs--lg, .xbars, more .cat-*)
+ *  24 page patterns (.ink-hero, .mstep, .mhead, .note-link, .fpills, .mic, .assist, .dstrip, the Comando answer .cmd-*, .editv, .vbars--axis, .verdict__cols)
+ */
+
+/* ── 1 · theme knobs: values that differ between light and dark; the dark ones are written for all three dark scopes tokens.css uses ───────────────────── */
+:root{
+--in-ring:rgba(var(--sh-accent),.10);--fld-ring:rgba(var(--sh-accent),.12);
+--pill-bd:rgba(255,255,255,.7);--pill-sh:0 0 0 1px rgba(var(--sh-ink),.08),0 2px 4px rgba(var(--sh-ink),.05),0 16px 32px -12px rgba(var(--sh-ink),.18),0 40px 80px -32px rgba(var(--sh-ink),.28);}
+:root[data-theme="dark"],.ink{--in-ring:rgba(92,196,155,.18);--fld-ring:rgba(92,196,155,.22);--pill-bd:rgba(255,255,255,.12);--pill-sh:var(--sh-3);}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--in-ring:rgba(92,196,155,.18);--fld-ring:rgba(92,196,155,.22);--pill-bd:rgba(255,255,255,.12);--pill-sh:var(--sh-3);}}
+
+/* ── 2 · buttons ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   .btnp primary · .btns secondary (outline) · .btng text action (underlined) · .ghost quiet bordered · .btnb brass · .cta / .cta2 = the link forms of .btnp / .btns
+   Canvas ambiguity: `.btng` was an underlined text action in Contas and a bordered quiet button in Movimento. Here .btng = the text action, .ghost = the bordered one. */
+.cta,.cta2,.ghost{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;margin:0;padding:0 24px;border:0;border-radius:12px;font-family:inherit;font-size:15px;font-weight:600;line-height:1.2;text-decoration:none;white-space:nowrap;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui),border-color .2s var(--ease),transform var(--d-press) var(--sp-press),opacity .2s var(--ease)}
+.ghost{min-height:44px;padding:0 16px;border:1px solid var(--line-2);background:transparent;color:var(--accent);font-size:14px}
+.ghost:hover{background:var(--solid-1);box-shadow:var(--sh-1)}
+:is(.btnp,.btns,.btng,.btnb,.cta,.cta2,.ghost):active{transform:scale(.98);transition-duration:.12s}
+:is(.btnp,.btns,.btng,.btnb,.cta,.cta2,.ghost):focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+:is(.btnp,.btns,.btng,.btnb,.cta,.cta2,.ghost):disabled,:is(.btnp,.btns,.btng,.btnb,.cta,.cta2,.ghost)[aria-disabled="true"]{opacity:.45;pointer-events:none;box-shadow:none}
+/* a busy action keeps its size and shows the shimmer: aria-busy="true" on the button */
+:is(.btnp,.btns,.cta,.cta2)[aria-busy="true"]{pointer-events:none;opacity:.7}
+.step{flex:none;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:44px;height:44px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--accent);cursor:pointer;text-decoration:none;transition:background-color .2s var(--ease),transform var(--d-press) var(--sp-press)}
+.step:hover{background:var(--row-hover)}
+:is(.xbtn,.step,.lnk):active{transform:scale(.98)}
+:is(.xbtn,.step,.lnk):focus-visible{outline:2px solid var(--ring);outline-offset:-3px}
+
+/* ── 3 · segmented control and tabs ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   <div class="seg" role="radiogroup" aria-label="…"><i aria-hidden="true"></i><button type="button" role="radio" aria-checked="true">…</button> … </div>
+   N (2–6 buttons) and the selected index are read from the markup with :has(): the pill slides on `transform` alone, nothing is written inline.
+   Also fits role="tablist" > role="tab" (aria-selected) and toggle groups (aria-pressed). `.on` is accepted as a fallback for the selected button.
+   Without an <i> the selected button draws its own pill (no slide). Variants: .seg--2l two-line buttons (52 px) · .seg-2…6 force N where :has() is missing. */
+.seg{--n:3;--i:0;position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));box-sizing:border-box;border-radius:14px;background:var(--seg-bg);box-shadow:inset 0 0 0 1px var(--line)}
+
+.seg:has(>button:nth-of-type(2):last-of-type){--n:2}
+.seg:has(>button:nth-of-type(4):last-of-type){--n:4}
+.seg:has(>button:nth-of-type(5):last-of-type){--n:5}
+.seg:has(>button:nth-of-type(6):last-of-type){--n:6}
+.seg:has(>button:nth-of-type(2):is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on)){--i:1}
+.seg:has(>button:nth-of-type(3):is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on)){--i:2}
+.seg:has(>button:nth-of-type(4):is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on)){--i:3}
+.seg:has(>button:nth-of-type(5):is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on)){--i:4}
+.seg:has(>button:nth-of-type(6):is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on)){--i:5}
+/* the <i> is exactly one cell wide and slides in whole cells; the visible pill is its ::before, inset 3 px */
+.seg>i{position:absolute;top:3px;bottom:3px;left:0;width:calc(100% / var(--n));pointer-events:none;transform:translateX(calc(var(--i) * 100%));transition:transform var(--d-ui) var(--sp-ui)}
+.seg>i::before{content:"";position:absolute;inset:0 3px;border-radius:11px;background:var(--seg-pill);box-shadow:var(--seg-pill-sh)}
+.seg>button{position:relative;display:flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:0;min-height:44px;margin:0;padding:0 6px;border:0;border-radius:11px;background:transparent;font-family:inherit;font-weight:500;font-size:13.5px;line-height:1.2;color:var(--text-secondary);cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color .2s var(--ease)}
+.seg>button:hover{color:var(--text-primary)}
+.seg>button:is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on){font-weight:600;color:var(--text-primary)}
+.seg>button:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.seg:not(:has(>i))>button:is([aria-checked="true"],[aria-pressed="true"],[aria-selected="true"],.on){background:var(--seg-pill);box-shadow:var(--seg-pill-sh)}
+.seg>button:disabled,.seg>button[aria-disabled="true"]{opacity:.45;pointer-events:none}
+
+/* ── 4 · switch (iOS): <button type="button" class="swrow" role="switch" aria-checked="true"><span>Label</span><span class="sw"><i></i></span></button> ──────────────── */
+.sw{position:relative;flex:none;display:block;width:51px;height:31px;border-radius:999px;background:var(--fill-4);}
+.sw>i{position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:var(--solid-1);box-shadow:0 0 0 .5px rgba(var(--sh-ink),.12),0 2px 4px rgba(var(--sh-ink),.22),0 1px 1px rgba(var(--sh-ink),.12);transition:transform var(--d-ui) var(--sp-ui),width var(--d-press) var(--sp-press)}
+.sw.on{background:var(--accent)}
+.sw.on>i{transform:translateX(20px)}
+/* dark: the off knob is the light --knob-off so it still reads on the dark track */
+:root[data-theme="dark"] .sw:not(.on)>i{background:var(--knob-off)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .sw:not(.on)>i{background:var(--knob-off)}}
+:root[data-theme="dark"] .sw.on>i{background:var(--solid-1)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .sw.on>i{background:var(--solid-1)}}
+
+/* .src: who wrote this line (provenance badge) */
+.src{display:inline-flex;align-items:center;flex:none;box-sizing:border-box;min-height:22px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.src.modelo{background:var(--warn-tint);color:var(--brass-ink);border:1px dashed var(--brass-ink)}
+.src.regra{background:var(--solid-1);color:var(--accent);border:1px solid var(--accent)}
+.src.pend{background:var(--solid-1);color:var(--text-secondary);border:1px dashed var(--text-tertiary)}
+.src.texto{background:var(--pos-bg);color:var(--accent);border:1px solid var(--line)}
+
+/* .tip: the floating tooltip / chart readout surface (same recipe as .dv-tip in tokens.css) */
+@supports (corner-shape:squircle){.step,.cta,.cta2,.ghost,.opt,.fld,.stp,.dlg,.pill-in,.kf,.tb{corner-shape:squircle}}
+
+/* ── 6 · fields ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+.in{box-sizing:border-box;display:block;width:100%;height:48px;margin:0;padding:0 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--solid-1);color:var(--text-primary);font-family:inherit;font-size:15px;transition:border-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui)}
+.in::placeholder{color:var(--text-tertiary);opacity:1}
+.in:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--in-ring)}
+.in[aria-invalid="true"]{border-color:var(--deficit);box-shadow:0 0 0 3px var(--neg-bg)}
+.in:disabled,.in[readonly]{opacity:.6}
+@media (pointer:coarse){.in{height:50px;font-size:16px}}
+/* .fld: a big number field (saldo, valor): symbol + serif input on one baseline; the wrapper owns the border and the focus ring, so the input draws neither */
+.fld{display:flex;align-items:baseline;gap:10px;box-sizing:border-box;padding:0 20px;cursor:text;border:1px solid var(--line-2);border-radius:16px;background:var(--surface-1);transition:border-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui)}
+.fld:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--fld-ring)}
+.fld[aria-invalid="true"],.fld:has(input[aria-invalid="true"]){border-color:var(--deficit);box-shadow:0 0 0 3px var(--neg-bg)}
+.fld input{flex:1;min-width:0;padding:12px 0;border:0;outline:0;background:transparent;transition:none;font-family:var(--serif);font-size:40px;font-weight:400;line-height:1.15;letter-spacing:var(--track-display);color:var(--text-primary)}
+.fld input::placeholder{color:var(--text-tertiary);opacity:1}
+.fld>[data-symbol],.fld>.cur{font-family:var(--serif);font-size:20px;color:var(--brass-ink)}
+@media (max-width:640px){.fld{gap:8px;padding:0 16px}.fld input{padding:10px 0;font-size:36px}.fld>[data-symbol],.fld>.cur{font-size:18px}}
+.hint{line-height:1.5;}
+.hint[data-tone="error"]{color:var(--neg-fg)}
+/* .opt + .rd: a radio card (option group = role="radiogroup" of <button role="radio" aria-checked>) */
+.opt{box-sizing:border-box;width:100%;margin:0;font-family:inherit;color:var(--text-primary);text-align:left;-webkit-tap-highlight-color:transparent;transition:background-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui),border-color .2s var(--ease),transform var(--d-press) var(--sp-press)}
+.opt:active{transform:scale(.99)}
+.opt:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.opt[aria-checked="true"]{border-color:var(--accent);background:var(--fill-1);box-shadow:0 0 0 1px var(--accent)}
+.opt:disabled,.opt[aria-disabled="true"]{opacity:.45;pointer-events:none}
+@media (pointer:coarse){.opt{min-height:64px}}
+.opts{flex-direction:column;}
+
+.opt[aria-checked="true"] .rd{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3.5px var(--fill-1)}
+/* .stp: stepper  <div class="stp" role="group" aria-label="Parcelas"><button type="button" data-fp-step="-1" aria-label="Menos uma">−</button><output>12</output><button type="button" data-fp-step="1" aria-label="Mais uma">+</button></div> */
+.stp{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:14px;background:var(--fill-3);box-shadow:inset 0 0 0 1px rgba(var(--sh-ink),.05)}
+.stp>button{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:44px;height:44px;margin:0;padding:0;border:0;border-radius:11px;background:transparent;color:var(--text-primary);font-family:inherit;font-size:20px;cursor:pointer;transition:background-color .2s var(--ease),box-shadow var(--d-ui) var(--sp-ui),transform var(--d-press) var(--sp-press),opacity .2s var(--ease)}
+.stp>button:hover{background:var(--solid-1);box-shadow:0 0 0 .5px rgba(var(--sh-ink),.1),0 1px 2px rgba(var(--sh-ink),.1)}
+.stp>button:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.stp>button[aria-disabled="true"],.stp>button:disabled{opacity:.35;pointer-events:none}
+.stp>output{min-width:56px;text-align:center;font-family:var(--serif);font-size:26px;line-height:1;letter-spacing:-.01em;color:var(--text-primary)}
+/* .rg: range slider (E se…?): ticked track, the filled part follows --p (0–1, written by fp-widgets.js through CSSOM), brass fill on the dark ink panel */
+.rg{--p:0;-webkit-appearance:none;appearance:none;display:block;width:100%;height:44px;margin:0;padding:0;background:transparent;cursor:pointer}
+.rg::-webkit-slider-runnable-track{height:14px;border-radius:0;background:repeating-linear-gradient(90deg,var(--brass-hi) 0 2px,transparent 2px 6px) 0 0/calc(14px + (100% - 28px) * var(--p)) 100% no-repeat,repeating-linear-gradient(90deg,var(--rg-track,var(--line-3)) 0 2px,transparent 2px 6px)}
+.rg::-moz-range-track{height:14px;border-radius:0;background:repeating-linear-gradient(90deg,var(--brass-hi) 0 2px,transparent 2px 6px) 0 0/calc(14px + (100% - 28px) * var(--p)) 100% no-repeat,repeating-linear-gradient(90deg,var(--rg-track,var(--line-3)) 0 2px,transparent 2px 6px)}
+.rg::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;margin-top:-7px;border:0;border-radius:50%;background:var(--text-primary);box-shadow:0 0 0 .5px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.25),0 6px 14px -4px rgba(0,0,0,.45);transition:transform var(--d-press) var(--sp-press),box-shadow var(--d-ui) var(--sp-ui)}
+.rg::-moz-range-thumb{width:28px;height:28px;border:0;border-radius:50%;background:var(--text-primary);box-shadow:0 0 0 .5px rgba(0,0,0,.10),0 1px 2px rgba(0,0,0,.25),0 6px 14px -4px rgba(0,0,0,.45)}
+.rg:active::-webkit-slider-thumb{transform:scale(1.1)}
+.rg:focus-visible{outline:none}
+.rg:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--ink),0 0 0 5px var(--brass-hi),0 6px 14px -4px rgba(0,0,0,.45)}
+.rg:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px var(--ink),0 0 0 5px var(--brass-hi)}
+.ink .rg{--rg-track:rgba(255,255,255,.26)}
+:root[data-theme="dark"] .rg{--rg-track:rgba(255,255,255,.26)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .rg{--rg-track:rgba(255,255,255,.26)}}
+
+/* ── 7 · disclosure and state layers ─────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* .fold: height animates through grid rows (0fr ↔ 1fr), no measuring: <div class="fold" id="x"><div>…</div></div> + a trigger with aria-controls="x" aria-expanded; fp-widgets.js flips data-open */
+.fold{display:grid;grid-template-rows:0fr;visibility:hidden;transition:grid-template-rows var(--d-ui) var(--sp-ui),visibility 0s linear var(--d-ui)}
+.fold>*{min-height:0;overflow:hidden}
+.fold:is([data-open="true"],.is-open){grid-template-rows:1fr;visibility:visible;transition-delay:0s}
+/* state layers: one grid cell, the layer of the current state cross-fades in.  <div class="mod" data-s="load|ready|empty"><div class="lay lay-l">…</div><div class="lay lay-r">…</div><div class="lay lay-e">…</div></div>
+   The server swaps data-s (HTMX) and sets aria-busy on the region while it loads; the layer that is not current is also out of the tab order (visibility).
+   Canvas contract: ONE data-s on a common ancestor (.page) drives every .mod inside it. Patch addition: a .mod that carries its own data-s (the states.html macro writes one) ignores any ancestor's — the nearest wins. */
+.mod{display:grid;grid-template-columns:minmax(0,1fr);min-width:0}
+/* empty state: icon disc + title + sentence + action */
+.ic{display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:50%;background:var(--fill-2);box-shadow:inset 0 0 0 1px rgba(var(--sh-ink),.06);color:var(--text-secondary)}
+
+/* ── 8 · meter (Medidor): ticked bar, tone by threshold, projected segment, warning mark ───────────────────────────────────────────────────────── */
+/* <span class="meter pct-43 [add-6] [meter--warn|meter--over|meter--unset] [meter--w70…90]" role="img" aria-label="Comprometido 43,0%"><span class="meter__in wipe"><span class="meter__main"></span><span class="meter__add"></span></span><span class="meter__mark"></span></span>
+   --p and --a are whole percentages (0–100) from the .pct-N / .add-N classes: no inline width, so a strict CSP never sees one. The label keeps the decimals. */
+@property --meter-tone{syntax:"<color>";inherits:true;initial-value:#0F5C45}
+.meter{--p:0;--meter-tone:var(--accent);position:relative;display:block;height:14px;background:repeating-linear-gradient(90deg,var(--meter-track,var(--line-2)) 0 2px,transparent 2px 6px);transition:--meter-tone .35s var(--ease)}
+
+/* ── 9 · floating action pill and dialogs ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* .pill-in: summary + action that floats at the bottom of the page and fades in after the hero scrolls away (E se…?). Without scroll-driven animations it is simply always there. */
+.pill-in{position:sticky;bottom:20px;z-index:var(--z-pop);align-self:center;box-sizing:border-box;max-width:100%;display:flex;align-items:center;gap:18px;padding:10px 10px 10px 22px;border-radius:24px;border:1px solid var(--pill-bd);background:var(--glass-bg);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);box-shadow:var(--pill-sh)}
+.pill-in__dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 4px var(--pos-bg);transition:background-color .35s var(--ease),box-shadow .35s var(--ease)}
+.pill-in__dot[data-tone="warn"]{background:var(--brass-hi);box-shadow:0 0 0 4px var(--warn-bg)}
+.pill-in__dot[data-tone="neg"]{background:var(--deficit);box-shadow:0 0 0 4px var(--neg-bg)}
+.pill-in__t{display:flex;flex-direction:column;gap:1px;min-width:0}
+.pill-in__t>b{font-size:15px;font-weight:500;color:var(--text-primary)}
+.pill-in__t>span{font-size:13px;color:var(--text-secondary)}
+@keyframes pill-in{from{opacity:0;transform:translateY(14px);pointer-events:none}to{opacity:1;transform:none;pointer-events:auto}}
+@keyframes pill-tx{from{opacity:0}to{opacity:1}}
+@supports (animation-timeline:scroll()){
+.pill-in--scroll{animation:pill-in linear both;animation-timeline:scroll(root block);animation-range:180px 340px}
+.pill-in--scroll :is(.pill-in__t,.pill-in__dot,.btnp){animation:pill-tx linear both;animation-timeline:scroll(root block);animation-range:180px 340px}
+.pill-in--scroll:focus-within{opacity:1!important;transform:none!important;pointer-events:auto!important}
+.pill-in--scroll:focus-within :is(.pill-in__t,.pill-in__dot,.btnp){opacity:1!important}
+}
+@media (prefers-reduced-motion:reduce){.pill-in--scroll,.pill-in--scroll :is(.pill-in__t,.pill-in__dot,.btnp){animation:none!important;opacity:1!important;transform:none!important;pointer-events:auto!important}}
+/* sticky action bar at the foot of a long form (Transparência) */
+.bar{position:static}
+@media (min-height:1000px){.bar{position:sticky;bottom:20px;z-index:var(--z-pop)}}
+
+/* dialog: <dialog class="dlg" aria-labelledby="t"> … </dialog>, opened with showModal() (fp-widgets.js: data-fp-open="#id" / data-fp-close). Same surface as the privacy settings dialog.
+   .dlg--cmd = the wide ⌘K command palette; under 640 px every .dlg is a bottom sheet. */
+.dlg{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;width:min(480px,calc(100vw - 32px));max-width:none;height:fit-content;max-height:min(calc(100dvh - 32px),780px);overflow:hidden;color:var(--text-primary);background:linear-gradient(var(--surface-2),var(--surface-2)) var(--under-2);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border:1px solid var(--glass-line);border-radius:22px;box-shadow:var(--sh-3);font-family:var(--sans);font-variant-numeric:lining-nums tabular-nums}
+.dlg[open]{display:flex;flex-direction:column}
+.dlg::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%)}
+.dlg{opacity:0;transform:translateY(14px) scale(.975);transition:opacity .2s ease,transform var(--d-ui) var(--sp-ui),overlay .2s allow-discrete,display .2s allow-discrete}
+.dlg[open]{opacity:1;transform:none}
+.dlg::backdrop{opacity:0;transition:opacity .2s ease,overlay .2s allow-discrete,display .2s allow-discrete}
+.dlg[open]::backdrop{opacity:1}
+@starting-style{.dlg[open]{opacity:0;transform:translateY(14px) scale(.975)}.dlg[open]::backdrop{opacity:0}}
+/* palette result (Comando board): «1 · Entendi» and «2 · Calculei, pelo sistema» side by side while the palette is 760 px wide or more, stacked below that.
+   A container query, so it also works in the full-page /comando (give the page's wrapper class .cmd). .cmd-l = the first column (its rule becomes a bottom rule when stacked). */
+@media (max-width:640px){
+.dlg{inset:auto 0 0 0;margin:0;width:100%;max-width:100%;max-height:calc(100dvh - 24px);border-radius:22px 22px 0 0;transform:translateY(40px)}
+}
+@media (prefers-reduced-motion:reduce){.dlg,.dlg::backdrop{transition:none}}
+html:has(dialog.dlg[open]){overflow:hidden}
+
+/* ── 10 · app shell ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* sidebar: <nav class="ink sb" aria-label="Principal"> (snippets/shell.html). Wide (232 px) by default; from 1100 px down tokens.css narrows --side-w to 76 px and this block turns it into an icon rail:
+   labels (.lbl) stay in the DOM for screen readers, groups lose their titles, every item is a 44 px square. */
+.kf:active{transform:scale(.98)}
+.gl{padding:0 12px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-tertiary)}
+.kf:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.kf{display:flex;align-items:center;gap:10px;min-height:40px;box-sizing:border-box;padding:0 8px 0 12px;border-radius:12px;background:var(--fill-2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);color:var(--text-secondary);font-size:13.5px;text-decoration:none;transition:background-color .2s var(--ease),color .2s var(--ease),transform var(--d-press) var(--sp-press)}
+.kf:hover{background:var(--fill-3);color:var(--text-primary)}
+.kf kbd{font-family:inherit;font-size:11.5px;line-height:1;padding:4px 6px;border-radius:6px;background:var(--fill-1);color:var(--text-secondary)}
+@media (min-width:400px) and (max-width:1100px){
+.kf{width:44px;min-height:44px;padding:0;justify-content:center;gap:0;border-radius:12px;align-self:center}
+.kf kbd,.gl{display:none}
+}
+/* the nav is the only scroll region: brand, «Novo lançamento» and ⌘K stay on top, the privacy/theme controls and the footer stay at the bottom.
+   A soft fade on the edge that still has more behind it (scroll-driven animation: Chromium, Safari 26; elsewhere the nav simply scrolls) */
+@property --sb-fade-t{syntax:"<length>";inherits:false;initial-value:0px}
+@property --sb-fade-b{syntax:"<length>";inherits:false;initial-value:0px}
+/* short windows, wide sidebar, mouse: tighter rows so the whole menu fits down to ~900 px of height (it scrolls below that) */
+@media (min-width:1101px) and (max-height:940px) and (pointer:fine){
+.gl{padding-bottom:2px}
+}
+/* tab bar (mobile): <nav class="glass tbar" aria-label="Principal"> with four .tb links and the capture button .tb-add in the middle */
+.tb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:56px;border-radius:14px;text-decoration:none;font-size:11.5px;font-weight:500;letter-spacing:0;color:var(--text-secondary);transition:background-color .2s var(--ease),color .2s var(--ease),transform var(--d-press) var(--sp-press)}
+.tb:hover{background:var(--fill-1)}
+.tb:active{transform:scale(.97)}
+.tb:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
+.tb[aria-current="page"]{font-weight:600;color:var(--cat-forest)}
+
+/* ── 11 · ledger helpers shared by several screens ───────────────────────────────────────────────────────────────────────────────────────────────── */
+.ov{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary)}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.lead,.dots{flex:1;min-width:12px;margin:0 8px;border-bottom:1px dotted var(--line-3)}
+.tot{display:flex;align-items:baseline;padding-top:12px;border-top:3px double var(--text-primary)}
+.tot .a{font-size:14.5px;font-weight:500}
+.tot .v{font-family:var(--serif);font-size:24px;letter-spacing:-.01em;color:var(--text-primary)}
+.ld{display:flex;align-items:baseline;font-size:14.5px;line-height:1.4;color:var(--text-primary)}
+.lk{display:flex;align-items:baseline;box-sizing:border-box;min-height:48px;padding:13px 8px;margin:0 -8px;border-radius:12px;font-size:14.5px;line-height:1.4;color:var(--text-primary);text-decoration:none;transition:background-color .2s var(--ease)}
+.lk:hover{background:var(--row-hover)}
+.lk small{margin-left:8px;font-size:13px;color:var(--text-secondary)}
+.num{transition:background-color .2s var(--ease)}
+.fn{margin-left:2px;font-family:var(--sans);font-size:12px;font-weight:500;color:var(--brass-ink)}
+.fnr{margin-left:2px;font-family:var(--serif);font-size:12px;line-height:0;vertical-align:super;color:var(--brass-ink)}
+.fnr:empty{display:none}
+.tag{white-space:nowrap}
+.hatch{background:repeating-linear-gradient(135deg,var(--accent) 0 1.5px,transparent 1.5px 5px);box-shadow:inset 0 0 0 1px rgba(var(--sh-accent),.55)}
+
+/* .ck: a native checkbox / radio row ("Parcelada"): the platform control, tinted, with a 44 px row */
+input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
+.ck{display:inline-flex;align-items:center;gap:10px;box-sizing:border-box;min-height:44px;font-size:14.5px;color:var(--text-primary);cursor:pointer}
+.ck>input{flex:none;width:20px;height:20px;margin:0;cursor:inherit}
+.ck>input:focus-visible{outline:2px solid var(--ring);outline-offset:3px}
+
+/* .amt: the amount on the capture screens — symbol + 60 px serif digits on a 2 px rule. data-tone="pos" (receita, estorno) paints the digits forest; the default is the ink of the data layer.
+   <div class="amt" data-tone="neg"><span class="cur" data-symbol aria-hidden="true"></span><input id="v" inputmode="numeric" data-fp-mask="cents" …></div> */
+.amt{display:flex;align-items:baseline;gap:10px;padding-bottom:8px;border-bottom:2px solid var(--text-primary)}
+.amt>[data-symbol],.amt>.cur{font-family:var(--serif);font-size:26px;color:var(--brass-ink)}
+.amt input{flex:1;min-width:0;padding:0;border:0;background:transparent;font-family:var(--serif);font-size:60px;font-weight:400;line-height:1.05;letter-spacing:-.025em;color:var(--dv-ink);outline-offset:6px;transition:color .2s var(--ease)}
+.amt[data-tone="pos"] input{color:var(--cat-forest)}
+@media (max-width:359px){.amt input{font-size:48px}}
+/* .chips: one horizontally scrolling row of .chip radios (Categoria, Conta). The negative margin bleeds the row to the screen edge; padding puts the first chip back on the content line. */
+.chips{position:relative;scrollbar-width:none;}
+.chips::-webkit-scrollbar{display:none}
+.chips>*{flex:none}
+
+/* ── 14 · skeleton sizes and empty-state typography ──────────────────────────────────────────────────────────────────────────────────────────────── */
+/* .sk (tokens.css) is the shimmer; these give it a size without a style="" (strict CSP): <span class="sk sk-h14 sk-l" aria-hidden="true"></span> */
+.sk[class*="sk-"]{display:block}
+
+/* assistive suggestion under the category chips (Novo lançamento): one fold, six states chosen by the SERVER — offer · ask · wait · applied · quiet · empty (+ none = closed).
+   <div class="fold sgf" id="sug" aria-live="polite" data-open="true"><div><div class="sgs"> …one of the rows… </div></div></div> */
+.sg-r{display:flex;align-items:center;gap:10px}
+.sg-r--wait{gap:12px;min-height:46px}
+.sg-r--done{min-height:46px}
+.sg-sp{flex:1}
+.sg-t{flex:1;min-width:0;font-size:13.5px;color:var(--text-primary)}
+.sg-q{padding:4px 0}
+
+/* a gated action: aria-disabled (never `disabled`: it stays reachable and says why) + data-gate; fp-widgets.js swallows its clicks.  Primary → filled grey; outline → quiet text. */
+:is(.btnp,.btnb,.cta)[data-gate][aria-disabled="true"]{opacity:1;pointer-events:auto;cursor:not-allowed;background:var(--fill-2);color:var(--text-tertiary);box-shadow:none}
+:is(.btns,.cta2,.ghost)[data-gate][aria-disabled="true"]{opacity:1;pointer-events:auto;cursor:not-allowed;background:var(--solid-1);border-color:var(--line-2);color:var(--text-secondary);box-shadow:none}
+
+/* .cbar — composition bar: shares of one whole as flex-grow (Contas: onde está o caixa).  <div class="cbar" role="img" aria-label="…"><i class="pct-78 cat-forest"></i><i class="pct-22 dash"></i></div>; legend swatches are .dot + the same .cat-* (.dot.dash for the dashed one) */
+.dot.dash{background:transparent;border:1.5px dashed var(--line-2);box-sizing:border-box}
+
+/* .verdict — the E se…? answer panel: an .ink scope lit from the top-left (a radial --ink-2 → --ink), a hairline ring and the inset highlight; holds an .xf stack.
+   <section class="ink verdict" aria-label="Veredito" aria-live="polite">…</section>   (the .ink class supplies the dark tokens; this class the surface) */
+.verdict{min-width:0;border-radius:24px;overflow:hidden;color:var(--text-primary);background:radial-gradient(120% 170% at 0% 0%,var(--ink-2) 0%,var(--ink) 58%);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 0 1px rgba(var(--sh-ink),.9),var(--sh-3)}
+@supports (corner-shape:squircle){.verdict{corner-shape:squircle}}
+
+/* small variants */
+.dot.hollow{background:transparent;border:1.5px solid var(--text-tertiary);box-sizing:border-box}

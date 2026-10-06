@@ -66,6 +66,7 @@ ICONS: dict[str, str] = {
         "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"
     ),
     "categories": "M3 12V4h8l10 10-8 8z M7.5 8.5h.01",
+    "importar": "M12 15V4 M8 8l4-4 4 4 M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
     "diagnostics": "M12 8v5 M12 16.5h.01 M12 3l9.5 17h-19z",
     "pergunte": (
         "M5 5.5A1.5 1.5 0 0 1 6.5 4h11A1.5 1.5 0 0 1 19 5.5v9a1.5 1.5 0 0 1-1.5 1.5H11l-4 4v-4"

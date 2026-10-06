@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from fakes import FixedClock
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.budget import SetCategoryBudgets
 from financas.application.use_cases.cards import CardPurchaseCommand, RegisterCardPurchase
@@ -40,6 +41,7 @@ def container(tmp_path: Path) -> Container:
         _env_file=None,  # type: ignore[call-arg]
     )
     c = Container(settings)
+    c.__dict__["clock"] = FixedClock(TODAY)  # frozen: the date these tests use
     c.migrate()
     seed_categories(c.uow)
     return c

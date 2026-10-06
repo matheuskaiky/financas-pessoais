@@ -17,3 +17,12 @@ def test_charts_js_money_island_maths_formatting_and_interaction() -> None:
     assert not failures and "DONE 0" in report, report
     assert report.count("PASS") >= 30 + 17  # + the golden currency vectors
     assert "PASS island upgrades" in report and "PASS golden 1485000 de-DE auto" in report
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_chart_figures_are_odometers_that_survive_hydration_and_scrubbing() -> None:
+    """ui.js + fin-charts.js together: no TypeError, the same .od is updated in place."""
+    report = run_harness("tests/js/figure_harness.html", "--virtual-time-budget=30000")
+    failures = [line for line in report.splitlines() if line.startswith("FAIL")]
+    assert not failures and "DONE 0" in report, report
+    assert report.count("PASS") == 15

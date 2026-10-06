@@ -1,7 +1,7 @@
 {#- Chart cards (design v3, package 2). Jinja prints the card, the header, the skeleton and the fixed-height box;
     static/charts.js fetches /api/charts/... and draws inside [data-fc="plot"]. Every figure arrives as integer cents
     in the JSON; the texts of the states (few data, error) live here, in <template data-tpl="...">.
-    Import: {% from "_charts.html" import net_worth_card, pace_card, flow_card, donut_card, month_stepper %} -#}
+    Import: {% from "_charts.html" import pace_card, flow_card, donut_card, month_stepper %} -#}
 {% from "_ui.html" import skeleton, stroke_gauge, odometer %}
 
 {#- Skeleton of the plot box: same footprint as the live chart (the box height is fixed by CSS). ``kind``: line | bars | ring. -#}
@@ -46,49 +46,13 @@
 </div>
 {%- endmacro %}
 
-{#- Net worth over time: figure, change chip, period selector, scrubbable curve. -#}
-{% macro net_worth_card(id='nw') -%}
-<section class="card chart-card" aria-label="Evolução do patrimônio" data-chart="networth" data-src="/api/charts/net-worth" data-default-range="1A" data-slider-label="Patrimônio ao longo do período">
-  <div class="fc-head">
-    <div class="fc-head-main">
-      <div class="ov fc-title">Patrimônio <span class="fc-partial" data-fc="badge" hidden>parcial</span></div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value">{{ skeleton(250, 46, 10, inline=True) }}</span></div>
-      <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="delta">{{ skeleton(110, 14, 7, inline=True) }}</span><span class="fc-when" data-fc="when"></span></div>
-    </div>
-    <div class="fc-range" role="radiogroup" aria-label="Período do gráfico" data-fc="range" style="--fc-idx: 2; --fc-n: 4">
-      <span class="fc-thumb" aria-hidden="true"></span>
-      <button type="button" role="radio" aria-checked="false" aria-label="Último mês" data-range="1M" tabindex="-1">1M</button>
-      <button type="button" role="radio" aria-checked="false" aria-label="Últimos 3 meses" data-range="3M" tabindex="-1">3M</button>
-      <button type="button" role="radio" aria-checked="true" aria-label="Último ano" data-range="1A" tabindex="0">1A</button>
-      <button type="button" role="radio" aria-checked="false" aria-label="Todo o período" data-range="Tudo" tabindex="-1">Tudo</button>
-    </div>
-  </div>
-  <div class="fc-plot" data-fc="plot" aria-busy="true">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</div>
-  <p class="sr-only" id="{{ id }}-desc" data-fc="desc" data-prefix="Patrimônio"></p>
-  <p class="fc-note" data-fc="note" hidden>
-    <span data-fc-if="partial" hidden>Parcial: faltam saldos ou avaliações de <span data-fc-pending>—</span>. </span>Caixa mais investimentos, menos as faturas a pagar. As parcelas futuras, {{ config.currency_symbol }} <span class="fc-dotted" data-fc-apart>—</span>, não entram.
-  </p>
-  <noscript><p class="fc-note">O gráfico precisa de JavaScript. O patrimônio de hoje está em <a href="/networth">Patrimônio</a>.</p></noscript>
-  <template data-tpl="skeleton">{{ plot_skeleton('line', 'Carregando o gráfico de patrimônio') }}</template>
-  <template data-tpl="sparse">
-    <div class="fc-sparse dv-tip">
-      <h3 class="fc-sparse-title">Poucos dados ainda</h3>
-      <p class="fc-sparse-text">Registre o saldo das contas e dos investimentos de tempos em tempos. Com <span data-fc-need>8</span> pontos o gráfico mostra a tendência.</p>
-      <div class="fc-sparse-meter">{{ stroke_gauge(0, tone='forest', label='0 de 8', mark=False, height=10) }}<span class="fc-sparse-count"><span data-fc-have>0</span> de <span data-fc-need>8</span></span></div>
-      <a class="link-quiet" href="/accounts">Registrar um saldo</a>
-    </div>
-  </template>
-  {{ error_template() }}
-</section>
-{%- endmacro %}
-
 {#- Month pace: cumulative spending by day, the usual pace (mean of the previous months) and the ceiling (sum of the goals). -#}
-{% macro pace_card(month_key, month_name, id='pace') -%}
+{% macro pace_card(month_key, month_name, id='pace', figure=none) -%}
 <section class="card chart-card" data-peek-scope aria-label="Ritmo de gastos do mês" data-chart="pace" data-src="/api/charts/pace?month={{ month_key }}" data-slider-label="Gasto acumulado no mês, por dia">
   <div class="fc-head fc-head-sm">
     <div class="fc-head-main">
       <div class="ov fc-title"><span data-fc="title" data-prefix="Ritmo do mês ·">Ritmo do mês · {{ month_name }}</span></div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value" data-private="transactions">{{ skeleton(210, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-fig"{% if figure is not none %} data-ssr{% endif %}><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value" data-private="transactions">{% if figure is not none %}{{ odometer(figure, size='1em', prefix=False, label=figure|brl, cls='fc-num-od') }}{% else %}{{ skeleton(210, 38, 10, inline=True) }}{% endif %}</span><span class="fc-sub" data-fc="sub"></span></div>
       <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-average" data-private="transactions">{{ skeleton(120, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-ceiling" data-private="transactions">{{ skeleton(120, 14, 7, inline=True) }}</span></div>
     </div>
   </div>
@@ -113,12 +77,12 @@
 {%- endmacro %}
 
 {#- Cash flow: income up, expenses down, the month's balance under each column. -#}
-{% macro flow_card(year, id='flow') -%}
+{% macro flow_card(year, id='flow', figure=none) -%}
 <section class="card chart-card" data-peek-scope aria-label="Fluxo de caixa de {{ year }}" data-chart="flow" data-src="/api/charts/cash-flow?year={{ year }}" data-slider-label="Fluxo de caixa, mês a mês">
   <div class="fc-head fc-head-sm">
     <div class="fc-head-main">
       <div class="ov fc-title">Fluxo de caixa · {{ year }}</div>
-      <div class="fc-fig"><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num" data-fc="value" data-private="transactions">{{ skeleton(190, 38, 10, inline=True) }}</span><span class="fc-sub" data-fc="sub"></span></div>
+      <div class="fc-fig"{% if figure is not none %} data-ssr{% endif %}><span class="fc-cur" aria-hidden="true">{{ config.currency_symbol }}</span><span class="fc-num{{ ' is-negative' if figure is not none and figure < 0 }}" data-fc="value" data-private="transactions">{% if figure is not none %}{{ odometer(figure, size='1em', prefix=False, label=figure|brl, cls='fc-num-od') }}{% else %}{{ skeleton(190, 38, 10, inline=True) }}{% endif %}</span><span class="fc-sub" data-fc="sub"></span></div>
       <div class="fc-chips"><span class="dl dl-neu dl-chip" data-fc="chip-rate" data-private="transactions">{{ skeleton(130, 14, 7, inline=True) }}</span><span class="dl dl-neu dl-chip" data-fc="chip-delta" data-private="transactions">{{ skeleton(130, 14, 7, inline=True) }}</span></div>
     </div>
   </div>

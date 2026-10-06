@@ -87,22 +87,16 @@
 .card-slot .sg-caption a { font-size: 13px; }
 .limit-note { padding: 0 2px; font-size: 13px; font-weight: 600; }
 .limit-note.warn { color: var(--warn-fg); } .limit-note.bad { color: var(--neg-fg); }
-.card-face { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; height: 184px; padding: 20px 24px; border-radius: 20px;
-  color: var(--face-fg, #fff); background-color: var(--face-bg, var(--ink)); text-decoration: none;
-  background-image: repeating-radial-gradient(circle at 108% -12%, rgba(217, 178, 95, .20) 0 1px, transparent 1px 9px), repeating-radial-gradient(circle at -6% 130%, rgba(255, 255, 255, .08) 0 1px, transparent 1px 8px);
-  box-shadow: 0 0 0 1px rgba(10, 46, 36, .10), 0 10px 24px -14px rgba(10, 46, 36, .45); transition: transform var(--d-ui) var(--sp-ui), box-shadow var(--d-ui) var(--sp-ui); }
-.card-face:hover { color: var(--face-fg, #fff); transform: translateY(-2px); }
-.card-face.on { box-shadow: 0 0 0 3px var(--page), 0 0 0 5px var(--head), 0 10px 24px -14px rgba(10, 46, 36, .45); }
+/* The face itself (layout, tilt, glare, selection ring) is cards.css; here only what the user's colour needs (9.9). */
+a.card-face { color: var(--face-fg, #fff); text-decoration: none; }
+a.card-face:hover { color: var(--face-fg, #fff); }
+.card-face__cycle, .card-face__dates { color: inherit; opacity: .9; }
 .card-face .avatar { border: 1.5px solid rgba(255, 255, 255, .55); }
-.face-top { display: flex; align-items: flex-start; justify-content: space-between; }
-.face-kind { font-size: 11px; font-weight: 600; letter-spacing: .08em; opacity: .9; }
-.face-bottom { display: flex; flex-direction: column; gap: 4px; }
-.face-bottom small { color: inherit; opacity: .9; font-size: 12.5px; }
-.face-name { font: 400 28px / 1.1 var(--serif); letter-spacing: -.01em; }
+.card-face__nick { font-size: 28px; }
 @media (max-width: 699px) {
   .card-faces { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 14px; padding: 4px 4px 10px; margin: 0 -4px; }
   .card-slot { flex: 0 0 82%; scroll-snap-align: start; }
-  .card-face { height: 168px; }
+  .card-face { min-height: 168px; }
 }
 .statement-tabs { border-bottom: 1px solid var(--line); gap: 4px; padding-bottom: 0; }
 .statement-tabs a { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; min-height: 48px; color: var(--soft); box-shadow: none; }
@@ -353,3 +347,40 @@ tr.sub-row td details > summary { min-height: 36px; font-size: 13.5px; font-weig
   .accounts-table td[data-label="Informar saldo"] { grid-column: 1 / -1; }
   .accounts-table td[data-label="Informar saldo"]::before { margin-bottom: 6px; }
 }
+
+/* ---------- Patch v3 compat (components.css loads before the page styles) ----------
+   components.css reuses a few short class names that the pages below already own with another meaning. Only the
+   properties that would leak are reset here; everything else keeps the page's own rule. */
+.num { border-bottom: 0; border-radius: 0; cursor: auto; }   /* components: dotted footnote underline; here a right-aligned column */
+.num:hover { background: none; }
+.tag { text-transform: none; letter-spacing: normal; font-weight: inherit; }
+.chips { margin: 0; padding: 0 0 2px; scroll-padding-inline: 0; }   /* components: a row bled to the screen edge */
+.bars-cols .bar { bottom: auto; z-index: auto; }   /* components: .bar is the floating action bar (sticky) */
+.dues-chart .gl { padding: 0; display: block; }   /* components: .gl is a sidebar group label, hidden on the rail */
+.sw { box-shadow: none; transition: none; }   /* components: .sw is the switch track */
+
+/* ---------- Sidebar utilities (footer): privacy group + theme switcher, same height, same surface ----------
+   Both controls are 32 px tall with 28 px targets and 16 px glyphs, the same fill, ring and radius. The sidebar is an
+   .ink scope (dark in both themes), so the contrast of --text-secondary on --seg-bg is the same in Light and Dark.
+   Tooltips open upwards (the row sits at the bottom edge) and the outer ones hug their side so the 248 px sidebar never clips them. */
+.side-utilities { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; }
+.side-utilities :is(.fp-priv, .fp-theme) { --fpt-w: 28px; --fpt-h: 28px; --fpt-pad: 2px; --fpt-r: 10px; --fpt-pr: 8px;
+  box-sizing: border-box; height: 32px; padding: 2px; border: 0; border-radius: 10px; background: var(--seg-bg); box-shadow: inset 0 0 0 1px var(--line); }
+.side-utilities :is(.fp-priv-btn, .fp-theme button) { box-sizing: border-box; min-height: 0; min-width: 0; padding: 0; }   /* app.css `button { min-height: 48px }` would otherwise win over height: 28px and push the targets out of the 32 px bar */
+.side-utilities :where(.fp-priv-btn, .fp-theme button) { box-shadow: none; }   /* app.css `button` also paints a green drop shadow (0 6px 14px) under every idle target; :where keeps the masked-eye ring winning */
+.side-utilities .fp-theme button:hover { background: transparent; }   /* app.css `button:hover` would paint the green hover fill */
+.side-utilities .fp-priv-btn { width: 28px; height: 28px; border-radius: 8px; }
+.side-utilities .fp-priv-btn svg, .side-utilities .fp-priv-gear svg { width: 16px; height: 16px; }
+.side-utilities .fp-priv-gear::before { left: -1px; top: 7px; bottom: 7px; }
+.side-utilities .fp-priv-tip, .side-utilities .fp-theme-tip { top: auto; bottom: calc(100% + 10px); }
+.side-utilities .fp-priv-btn > .fp-priv-tip { left: 0; right: auto; transform: translate(0, 3px); }
+.side-utilities .fp-priv-btn:is(:hover, :focus-visible) > .fp-priv-tip { transform: translate(0, 0); }
+.side-utilities .fp-theme button > .fp-theme-tip { left: 50%; right: auto; transform: translate(-50%, 3px); }
+.side-utilities .fp-theme button:first-of-type > .fp-theme-tip { left: 0; transform: translate(0, 3px); }
+.side-utilities .fp-theme button:last-of-type > .fp-theme-tip { left: auto; right: 0; transform: translate(0, 3px); }
+.side-utilities .fp-theme button:is(:hover, :focus-visible) > .fp-theme-tip { transform: translate(-50%, 0); }
+.side-utilities .fp-theme button:first-of-type:is(:hover, :focus-visible) > .fp-theme-tip,
+.side-utilities .fp-theme button:last-of-type:is(:hover, :focus-visible) > .fp-theme-tip { transform: translate(0, 0); }
+@media (pointer: coarse) { .side-utilities :is(.fp-priv, .fp-theme) { --fpt-w: 44px; --fpt-h: 44px; height: 48px; }
+  .side-utilities .fp-priv-btn { width: 44px; height: 44px; } }
+.side-utilities :is(.fp-priv-btn, .fp-theme button):focus-visible { outline-offset: -2px; }   /* a ring outside the targets would leave the 32 px bar */

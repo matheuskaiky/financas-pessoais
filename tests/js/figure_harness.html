@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>chart figures as odometers (ui.js + fin-charts.js)</title>
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/app.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/fin-charts.css">
+<style>body{margin:0;width:800px}.fc-plot{width:700px;height:200px}</style>
+</head>
+<body>
+<div style="height:1600px"></div><!-- both cards start below the fold of the 800 x 600 test window -->
+<!-- Ritmo: printed by the server as a skeleton (no SSR figure). -->
+<section id="pace" class="card chart-card" data-chart="pace" data-src="/pace.json">
+  <div class="fc-fig"><span class="fc-cur">R$</span><span class="fc-num" data-fc="value" data-private="transactions"><span class="sk sk-inline"></span></span><span data-fc="sub"></span></div>
+  <span data-fc="title" data-prefix="Ritmo ·"></span><span data-fc="chip-average"></span><span data-fc="chip-ceiling"></span>
+  <span data-fc="legend-month"><span data-fc-text></span></span><span data-fc="legend-average" hidden><span data-fc-text></span></span><span data-fc="legend-ceiling" hidden><span data-fc-text></span></span>
+  <div class="fc-plot" data-fc="plot"></div><p id="pace-desc" data-fc="desc"></p>
+  <template data-tpl="sparse"><div class="fc-sparse"><span data-fc-avg-hint></span></div></template>
+</section>
+<!-- Fluxo: the server already printed the odometer (templates/_charts.html with figure=): same markup as the macro. -->
+<section id="flow" class="card chart-card" data-chart="flow" data-src="/flow.json">
+  <div class="fc-fig" data-ssr><span class="fc-cur">R$</span><span class="fc-num" data-fc="value" data-private="transactions"><span class="od" role="img" aria-label="R$ 5.600,00" data-odometer="560000" data-od-prefix="0" style="--od-size: 1em"><span aria-hidden="true"><span class="od-d"><span style="visibility: hidden">5</span><span class="od-s" style="transform: translateY(-5em); animation-delay: 0ms"><i>0</i><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i></span></span></span><span aria-hidden="true">.</span><span aria-hidden="true"><span class="od-d"><span style="visibility: hidden">6</span><span class="od-s" style="transform: translateY(-6em); animation-delay: 55ms"><i>0</i><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i></span></span></span></span></span><span data-fc="sub"></span></div>
+  <span data-fc="chip-rate"></span><span data-fc="chip-delta"></span><b data-fc="legend-in"></b><b data-fc="legend-out"></b>
+  <div class="fc-plot" data-fc="plot"></div><p id="flow-desc" data-fc="desc"></p>
+  <template data-tpl="sparse"><div class="fc-sparse"></div></template>
+</section>
+<script type="application/json" id="app-config">{"locale":"pt-BR","currency":"BRL"}</script>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+window.addEventListener("unhandledrejection", (e) => fail(String(e.reason && e.reason.stack || e.reason)));
+</script>
+<script src="../../src/financas/interfaces/web/static/ui.js"></script>
+<script type="module">
+const results = [];
+const check = (name, ok, detail) => results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail));
+const q = (sel, root = document) => root.querySelector(sel);
+const plain = (s) => (s || "").replace(/ /g, " ");
+const payloads = {
+  "/pace.json": { month: "2026-09", days: 30, elapsed_days: 5, daily_cents: [0, 100, 0, 250, 50], daily_counts: [0, 1, 0, 2, 1],
+    cumulative_cents: [0, 100, 100, 350, 400], average_cents: Array.from({ length: 30 }, (_, i) => 50 * (i + 1)), average_months: ["2026-07", "2026-08"],
+    ceiling_cents: 300, crossed_day: 4, total_cents: 400, entry_count: 4 },
+  "/flow.json": { year: 2026, months: [1, 2, 3, 4].map((m) => ({ month: "2026-0" + m, income_cents: 900000, expenses_cents: 300000 + m * 10000, refunds_cents: 0, balance_cents: 600000 - m * 10000 })) },
+};
+const realFetch = window.fetch.bind(window);
+window.fetch = async (url) => (payloads[url] ? { ok: true, json: async () => payloads[url] } : realFetch(url));
+
+check("ui.js exposes FinUI.odometer.set as a function", typeof (window.FinUI && window.FinUI.odometer && window.FinUI.odometer.set) === "function");
+
+const flow = document.getElementById("flow");
+const ssr = q(".fc-num .od", flow);
+const ssrStrips = [...flow.querySelectorAll(".od-s")];
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = () => new Promise((r) => requestAnimationFrame(r));
+const rolling = (od) => od.getAnimations({ subtree: true }).length;
+// the roll is short: sample it while it plays instead of looking after it ended
+const sawRoll = async (od) => {   // polls while the roll plays (it is short) and gives the observer time to fire
+  let seen = 0;
+  for (let i = 0; i < 300; i++) { await wait(16); if (!od.classList.contains("od-wait")) seen = Math.max(seen, rolling(od)); if (seen) break; }
+  return seen;
+};
+
+await import("../../src/financas/interfaces/web/static/fin-charts.js"); // mounts every [data-chart]
+await wait(400);
+
+const pace = document.getElementById("pace");
+const pod = q(".fc-num .od", pace);
+// Ritmo: the skeleton becomes an odometer; the symbol stays outside it
+check("pace: the figure is an odometer", !!pod && pod.dataset.odometer === "400", pod && pod.outerHTML.slice(0, 120));
+check("pace: skeleton is gone", !q(".sk-inline", pace));
+check("pace: accessible name is the full currency text", !!pod && plain(pod.getAttribute("aria-label")) === "R$ 4,00", pod && pod.getAttribute("aria-label"));
+check("pace: privacy marker stays on .fc-num, not nested", q(".fc-num", pace).dataset.private === "transactions" && !pod.hasAttribute("data-private"));
+// below the fold nobody sees a roll: both wait, with the final digits already printed
+check("pace (built by the script) waits below the fold", pod.classList.contains("od-wait") && rolling(pod) === 0);
+check("flow (printed by the server) waits below the fold", ssr.classList.contains("od-wait") && rolling(ssr) === 0);
+pace.scrollIntoView();
+const paceSeen = await sawRoll(pod);
+check("pace rolls once it is on screen", !pod.classList.contains("od-wait") && paceSeen > 0, paceSeen);
+check("flow keeps waiting while it is off screen", ssr.classList.contains("od-wait"));
+
+const slider = q('[role="slider"]', pace);
+slider.focus();
+slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+await wait(100);
+check("pace: scrubbing updates the SAME odometer", q(".fc-num .od", pace) === pod && pod.dataset.odometer === "0" && plain(pod.getAttribute("aria-label")) === "R$ 0,00", pod.dataset.odometer);
+slider.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+await wait(100);
+check("pace: scrubbing back restores the value", pod.dataset.odometer === "400", pod.dataset.odometer);
+
+flow.scrollIntoView();
+const flowSeen = await sawRoll(ssr);
+const fod = q(".fc-num .od", flow);
+check("flow: the server's odometer node is kept", fod === ssr && fod.dataset.odometer === "560000", fod && fod.dataset.odometer);
+check("flow: same value, so the strips are untouched", ssrStrips.every((s) => s.isConnected && s.style.animation !== "none"));
+check("flow rolls once it is on screen", !fod.classList.contains("od-wait") && flowSeen > 0, flowSeen);
+check("flow: accessible name set from the data", plain(fod.getAttribute("aria-label")) === "R$ 5.600,00", fod.getAttribute("aria-label"));
+
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + results.filter((x) => x.startsWith("FAIL")).length;
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-"""The deterministic purchase simulator (CLAUDE.md 9.3, 9.4, 9.5; docs/V3_PLAN.md "E se…").
+"""The deterministic purchase simulator (CLAUDE.md 9.3, 9.4, 9.5; docs/PROJECT_HISTORY.md 7).
 
 Pure functions over facts that a read query collects. Definitions (each one has a test):
 

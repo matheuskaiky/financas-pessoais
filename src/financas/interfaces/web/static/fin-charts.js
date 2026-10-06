@@ -14,7 +14,7 @@
 //             fullDate, longDate, toEpoch
 //   mount(root)       turns a [data-chart] element into a live chart; returns the controller
 //   mountAll()        mounts every [data-chart] not mounted yet (runs on DOMContentLoaded)
-// Chart kinds (data-chart): networth | pace | flow | donut. Text shown to the user lives in T below and in
+// Chart kinds (data-chart): pace | flow | donut (the net worth is the <fp-patrimonio> element of charts.js). Text shown to the user lives in T below and in
 // the page templates (states); this file belongs to interfaces/.
 
 import { formatAmount, formatCurrency } from "./fp-money.js";
@@ -55,11 +55,8 @@ const T = {
   incomeLabel: "Entradas",
   expenseLabel: "Saídas",
   ofTotal: "do total",
-  biggestSum: "maiores somam",
   rest: "Demais categorias",
-  categories: "categorias",
   thousand: "mil",
-  loadingFailed: "falhou",
 };
 
 // ───────────────────────────── pure maths (no DOM) ─────────────────────────────
@@ -342,6 +339,7 @@ function createTween(onFrame, opts = {}) {
   const zeta = opts.zeta || 0.88;
   const omega = opts.omega || 11;
   const maxSeconds = opts.maxSeconds || 0.95;
+  const alive = opts.alive || (() => true);
   let from = [];
   let to = [];
   let p = 1;
@@ -366,6 +364,7 @@ function createTween(onFrame, opts = {}) {
       p = 0;
       const t0 = performance.now();
       const tick = (now) => {
+        if (!alive()) return; // the chart left the page: stop the loop (nobody is left to see it)
         const t = Math.max(0, (now - t0) / 1000);
         const e = springProgress(t, zeta, omega);
         const done = t > maxSeconds || (t > 0.25 && Math.abs(1 - e) < 0.0008);
@@ -381,6 +380,39 @@ function createTween(onFrame, opts = {}) {
 
 // ───────────────────────────── base: fetch, states, size ─────────────────────────────
 
+// One ResizeObserver for every chart: a callback batch reads all the boxes first and only then lets the charts rebuild (a rebuild writes,
+// and a read after a write forces a layout). A chart whose box left the page is let go of here.
+const chartOf = new WeakMap();
+const sizeObserver =
+  typeof ResizeObserver === "undefined"
+    ? null
+    : new ResizeObserver((entries) => {
+        const sizes = [];
+        for (const entry of entries) {
+          const chart = chartOf.get(entry.target);
+          if (!chart) continue;
+          if (!entry.target.isConnected) {
+            sizeObserver.unobserve(entry.target);
+            chartOf.delete(entry.target);
+            continue;
+          }
+          sizes.push([chart, Math.round(entry.target.clientWidth), Math.round(entry.target.clientHeight)]);
+        }
+        for (const [chart, w, hgt] of sizes) {
+          if (w > 0 && (w !== chart.width || hgt !== chart.height)) {
+            chart.width = w;
+            chart.height = hgt;
+            chart.onResize();
+          }
+        }
+      });
+
+// Cached layout boxes (the scrub layer's left edge and width) stay valid until the page scrolls or resizes: the epoch moves then.
+let layoutEpoch = 0;
+const bumpLayout = () => { layoutEpoch++; };
+window.addEventListener("scroll", bumpLayout, { passive: true, capture: true });
+window.addEventListener("resize", bumpLayout, { passive: true });
+
 const PLOT_TOP = 34; // band reserved for the tooltip: it never covers data
 const PLOT_PAD_X = 8;
 const MIN_POINTS = 8;
@@ -395,7 +427,8 @@ class Chart {
     this.state = "loading";
     this.width = 0;
     this.height = 0;
-    this.observer = null;
+    this.observer = false;
+    this.rectCache = null;
     root.classList.add("fc");
   }
 
@@ -427,6 +460,7 @@ class Chart {
       this.fail(error);
       return;
     }
+    this.measure(); // before the first write below: the box height is fixed by CSS, so this is the only read of the mount
     this.setBusy(false);
     this.watchSize();
     this.start();
@@ -453,17 +487,10 @@ class Chart {
 
   /** Measures the box (its height is fixed by CSS, so measuring never moves the page). */
   watchSize() {
-    if (this.observer || typeof ResizeObserver === "undefined") return;
-    this.observer = new ResizeObserver(() => {
-      const w = Math.round(this.box.clientWidth);
-      const hgt = Math.round(this.box.clientHeight);
-      if (w > 0 && (w !== this.width || hgt !== this.height)) {
-        this.width = w;
-        this.height = hgt;
-        this.onResize();
-      }
-    });
-    this.observer.observe(this.box);
+    if (this.observer || !sizeObserver) return;
+    this.observer = true;
+    chartOf.set(this.box, this);
+    sizeObserver.observe(this.box);
   }
 
   measure() {
@@ -474,9 +501,19 @@ class Chart {
   onResize() {}
   start() {}
 
+  /** Left edge and width of the scrub layer, read once and reused until the pointer re-enters, the page scrolls or it resizes. */
+  rectOf(el) {
+    const c = this.rectCache;
+    if (c && c.el === el && c.epoch === layoutEpoch) return c.rect;
+    const r = el.getBoundingClientRect();
+    const rect = { left: r.left, width: r.width };
+    this.rectCache = { el, epoch: layoutEpoch, rect };
+    return rect;
+  }
+
   /** Pointer position as a fraction of the drawing width. */
   fractionOf(clientX, el) {
-    const r = el.getBoundingClientRect();
+    const r = this.rectOf(el);
     return clamp((clientX - r.left - PLOT_PAD_X) / Math.max(1, r.width - 2 * PLOT_PAD_X), 0, 1);
   }
 
@@ -485,8 +522,11 @@ class Chart {
     const hit = h("div", {
       class: "fc-hit", role: "slider", tabindex: "0", "aria-label": label, "aria-orientation": "horizontal",
     });
+    const forget = () => { this.rectCache = null; };
+    hit.addEventListener("pointerenter", forget);
     hit.addEventListener("pointermove", (e) => handlers.move(e.clientX, hit, e));
     hit.addEventListener("pointerdown", (e) => {
+      forget();
       try { hit.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events */ }
       handlers.press(true);
       handlers.move(e.clientX, hit, e);
@@ -495,8 +535,9 @@ class Chart {
       handlers.press(false);
       if (e.pointerType !== "mouse") handlers.release();
     });
-    hit.addEventListener("pointercancel", () => handlers.release());
+    hit.addEventListener("pointercancel", () => { forget(); handlers.release(); });
     hit.addEventListener("pointerleave", (e) => {
+      forget();
       if (e.pointerType === "mouse" && !(hit.hasPointerCapture && hit.hasPointerCapture(e.pointerId))) handlers.release();
     });
     hit.addEventListener("blur", () => handlers.release());
@@ -519,8 +560,17 @@ class Chart {
 
   /** Floating glass note; `x` is the pointer abscissa in the box, `html` pieces are text nodes (no markup). */
   placeTip(tip, x, visible) {
+    // a note's width depends only on its text: measure each text once (the tip is rebuilt on resize, which drops the cache)
+    const text = tip.textContent;
+    const widths = tip.__widths || (tip.__widths = new Map());
+    let w = widths.get(text);
+    if (w === undefined) {
+      w = tip.offsetWidth;
+      if (widths.size > 400) widths.clear();
+      if (w) widths.set(text, w);
+    }
+    w = w || 150;
     tip.style.opacity = visible ? "1" : "0";
-    const w = tip.offsetWidth || 150;
     const left = clamp(x, w / 2 + 2, Math.max(w / 2 + 2, this.width - w / 2 - 2));
     tip.style.left = left + "px";
   }
@@ -532,9 +582,28 @@ function setChip(el, text, tone, direction) {
   el.textContent = text;
 }
 
+/** The card's big figure as a rolling odometer (static/ui.js, same markup as templates/_ui.html). The symbol stays in .fc-cur;
+ *  the odometer keeps the full "R$ …" text as its accessible name. Falls back to plain text when ui.js is not loaded. */
 function setFigure(el, value, negativeRed) {
   if (!el) return;
-  el.textContent = cents(value);
+  const rolling = window.FinUI && window.FinUI.odometer;
+  if (rolling) {
+    const total = Math.round(value);
+    let od = el.querySelector(":scope > .od");
+    if (!od) {
+      el.textContent = "";
+      od = h("span", { class: "od od-md", role: "img" });
+      od.dataset.odometer = "0";
+      od.dataset.odPrefix = "0";
+      el.append(od);
+      if (rolling.armOnView) rolling.armOnView(od); // below the fold: roll when it scrolls into view
+    }
+    // the server already printed this value (templates/_charts.html): leave the first-paint roll running
+    if (od.dataset.odometer !== String(total)) rolling.set(od, total);
+    od.setAttribute("aria-label", money(total));
+  } else {
+    el.textContent = cents(value);
+  }
   el.classList.toggle("is-negative", Boolean(negativeRed) && value < 0);
   el.classList.remove("sk-inline");
   el.style.width = "";
@@ -581,349 +650,6 @@ class LabelLayer {
   }
 }
 
-// ───────────────────────────── net worth ─────────────────────────────
-
-const RANGE_DAYS = { "1M": 30, "3M": 92, "1A": 365, Tudo: Infinity };
-
-class NetWorthChart extends Chart {
-  constructor(root) {
-    super(root);
-    this.range = root.dataset.defaultRange || "1A";
-    this.prevRange = this.range;
-    this.fraction = null;
-    this.pressed = false;
-    this.series = [];
-    this.minPoints = Number(root.dataset.minPoints) || MIN_POINTS;
-    this.tween = createTween(() => this.draw());
-    this.bindRange();
-    this.load();
-  }
-
-  bindRange() {
-    this.rangeBox = this.qs("range");
-    if (!this.rangeBox) return;
-    this.rangeButtons = Array.from(this.rangeBox.querySelectorAll("[data-range]"));
-    this.rangeButtons.forEach((button) => {
-      button.addEventListener("click", () => this.selectRange(button.dataset.range));
-      button.addEventListener("keydown", (e) => {
-        const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-        if (!dir) return;
-        e.preventDefault();
-        const i = this.rangeButtons.indexOf(button);
-        const next = this.rangeButtons[(i + dir + this.rangeButtons.length) % this.rangeButtons.length];
-        this.selectRange(next.dataset.range);
-        next.focus();
-      });
-    });
-    this.syncRange();
-  }
-
-  syncRange() {
-    if (!this.rangeBox) return;
-    const index = Math.max(0, this.rangeButtons.findIndex((b) => b.dataset.range === this.range));
-    this.rangeBox.style.setProperty("--fc-idx", String(index));
-    this.rangeButtons.forEach((b, i) => {
-      b.setAttribute("aria-checked", i === index ? "true" : "false");
-      b.tabIndex = i === index ? 0 : -1;
-    });
-    this.rangeBox.classList.toggle("is-disabled", this.state !== "ready");
-  }
-
-  selectRange(key) {
-    if (!(key in RANGE_DAYS) || key === this.range || this.state !== "ready") return;
-    this.prevRange = this.range;
-    this.range = key;
-    this.fraction = null;
-    this.syncRange();
-    this.compute();
-    this.tween.set(this.target);
-    this.header();
-  }
-
-  start() {
-    this.series = (this.data.points || [])
-      .map((p) => ({ t: toEpoch(p.date), v: p.cents }))
-      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v))
-      .sort((a, b) => a.t - b.t);
-    this.todayEpoch = this.data.today ? toEpoch(this.data.today) : Date.now();
-    const badge = this.qs("badge");
-    if (badge) badge.hidden = !this.data.partial;
-    this.fillNote();
-    this.measure();
-    if (this.series.length < this.minPoints) {
-      this.showSparse();
-      return;
-    }
-    this.state = "ready";
-    this.root.classList.add("is-ready");
-    this.syncRange();
-    this.build();
-    this.compute();
-    this.tween.set(this.target, true);
-    this.header();
-  }
-
-  fillNote() {
-    const note = this.qs("note");
-    if (!note) return;
-    const apart = note.querySelector("[data-fc-apart]");
-    if (apart) apart.textContent = cents(this.data.future_installments_cents || 0);
-    const partial = Boolean(this.data.partial);
-    note.querySelectorAll('[data-fc-if="partial"]').forEach((e) => { e.hidden = !partial; });
-    const pending = note.querySelector("[data-fc-pending]");
-    if (pending) pending.textContent = (this.data.pending || []).map((p) => p.name).join(", ");
-    note.hidden = false;
-  }
-
-  showSparse() {
-    this.state = "sparse";
-    this.root.classList.add("is-ready");
-    this.syncRange();
-    const node = this.showTemplate("sparse");
-    const have = this.series.length;
-    if (node) {
-      node.querySelectorAll("[data-fc-have]").forEach((e) => (e.textContent = String(have)));
-      node.querySelectorAll("[data-fc-need]").forEach((e) => (e.textContent = String(this.minPoints)));
-      const gauge = node.querySelector(".sg");
-      if (gauge) {
-        gauge.style.setProperty("--sg-w", Math.min(100, (100 * have) / this.minPoints).toFixed(2) + "%");
-        gauge.setAttribute("aria-label", have + " de " + this.minPoints);
-      }
-    }
-    this.sparseDots();
-    this.headerSparse();
-  }
-
-  sparseDots() {
-    const tail = this.series.slice(-3);
-    if (!tail.length || !this.width) return;
-    const plotH = this.height - PLOT_TOP - 30;
-    const lo = Math.min(...tail.map((q) => q.v));
-    const hi = Math.max(...tail.map((q) => q.v));
-    const stops = [0.267, 0.667, 0.967].slice(3 - tail.length);
-    const inner = this.width - 2 * PLOT_PAD_X;
-    const pts = tail.map((q, i) => ({
-      x: PLOT_PAD_X + stops[i] * inner,
-      y: PLOT_TOP + plotH * (0.8 - 0.42 * (hi === lo ? 0.5 : (q.v - lo) / (hi - lo))),
-    }));
-    const svg = s("svg", { width: this.width, height: this.height, viewBox: "0 0 " + this.width + " " + this.height, "aria-hidden": "true", class: "fc-svg" });
-    svg.append(
-      s("path", { class: "fc-ghost", d: "M" + PLOT_PAD_X + " " + pts[0].y.toFixed(1) + "H" + pts[0].x.toFixed(1) }),
-      s("path", { class: "fc-track", d: "M" + pts.map((p) => p.x.toFixed(1) + " " + p.y.toFixed(1)).join("L") }),
-    );
-    this.box.prepend(svg);
-    pts.forEach((p, i) => {
-      const dot = marker("fc-dot fc-pop is-on");
-      dot.style.left = p.x + "px";
-      dot.style.top = p.y + "px";
-      dot.style.animationDelay = 200 + i * 140 + "ms";
-      this.box.append(dot);
-    });
-  }
-
-  headerSparse() {
-    const last = this.series[this.series.length - 1];
-    setFigure(this.qs("value"), last ? last.v : 0);
-    setChip(this.qs("delta"), "—", "neu");
-    const when = this.qs("when");
-    if (when) when.textContent = "";
-    const desc = this.qs("desc");
-    if (desc) desc.textContent = this.series.length + " de " + this.minPoints;
-  }
-
-  onResize() {
-    if (this.state === "ready") {
-      this.build();
-      this.draw();
-    } else if (this.state === "sparse") {
-      this.box.querySelectorAll(".fc-svg, .fc-pop").forEach((n) => n.remove());
-      this.sparseDots();
-    }
-  }
-
-  compute() {
-    const def = RANGE_DAYS[this.range];
-    this.slice = sliceByDays(this.series, def);
-    this.prevSlice = sliceByDays(this.series, RANGE_DAYS[this.prevRange]);
-    const samples = resampleByTime(this.slice, SAMPLES);
-    const domain = niceDomain(samples);
-    this.target = [domain.min, domain.max].concat(samples);
-  }
-
-  build() {
-    clear(this.box);
-    this.plotH = Math.max(40, this.height - PLOT_TOP - 30);
-    const gid = nextId("fc-fill");
-    const layer = h("div", { class: "fc-layer wipe" });
-    const svg = s("svg", { width: this.width, height: this.height, viewBox: "0 0 " + this.width + " " + this.height, "aria-hidden": "true", class: "fc-svg" });
-    const defs = s("defs");
-    const grad = s("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });
-    grad.append(s("stop", { offset: 0, class: "fc-stop-top" }), s("stop", { offset: 1, class: "fc-stop-bottom" }));
-    defs.append(grad);
-    this.gridBoth = s("path", { class: "fc-grid" });
-    this.gridFrom = s("path", { class: "fc-grid" });
-    this.gridTo = s("path", { class: "fc-grid" });
-    this.area = s("path", { fill: "url(#" + gid + ")", stroke: "none" });
-    this.line = s("path", { class: "fc-line" });
-    svg.append(defs, this.gridBoth, this.gridFrom, this.gridTo, this.area, this.line);
-    layer.append(svg);
-    this.yLabels = new LabelLayer(layer, "fc-ylabel");
-    this.xLabels = new LabelLayer(layer, "fc-xlabel");
-    this.box.append(layer);
-    this.guide = marker("fc-guide");
-    this.guide.style.top = PLOT_TOP + "px";
-    this.guide.style.height = this.plotH + "px";
-    this.halo = marker("fc-halo");
-    this.dotEl = marker("fc-dot");
-    this.tip = h("div", { class: "fc-tip dv-tip", "aria-hidden": "true" });
-    this.tipDate = h("span", { class: "fc-tip-soft" });
-    this.tipValue = h("span", { class: "fc-tip-value" });
-    this.tip.append(this.tipDate, h("span", { class: "fc-tip-sep", text: "·" }), this.tipValue);
-    this.hit = this.makeHit(this.root.dataset.sliderLabel || "Patrimônio ao longo do período", {
-      move: (x, el) => this.scrubTo(this.fractionOf(x, el)),
-      press: (on) => { this.pressed = on; this.cursor(); },
-      release: () => this.release(),
-      nudge: (n) => this.nudge(n),
-      jump: (f) => this.scrubTo(f),
-    });
-    const desc = this.qs("desc");
-    if (desc) this.hit.setAttribute("aria-describedby", desc.id);
-    this.box.append(this.guide, this.halo, this.dotEl, this.tip, this.hit);
-  }
-
-  scrubTo(f) { this.fraction = clamp(f, 0, 1); this.cursor(); this.header(); }
-  release() { this.fraction = null; this.pressed = false; this.cursor(); this.header(); }
-  nudge(n) {
-    const last = Math.max(1, this.slice.length - 1);
-    this.scrubTo((this.fraction == null ? 1 : this.fraction) + n / last);
-  }
-
-  xAxis(slice) {
-    if (!slice.length) return [];
-    const a = slice[0].t;
-    const b = slice[slice.length - 1].t;
-    const long = (b - a) / DAY > 100;
-    return xAxisStops(a, b).map((stop, i, all) => ({
-      fraction: stop.fraction,
-      text: i === all.length - 1 && sameDay(new Date(b), new Date(this.todayEpoch)) ? T.today : long ? monthYear(new Date(stop.t)) : shortDate(new Date(stop.t)),
-    }));
-  }
-
-  draw() {
-    if (this.state !== "ready" || !this.line) return;
-    const w = this.width;
-    const v = this.tween.values;
-    const min = v[0];
-    const max = v[1];
-    const values = v.slice(2);
-    const n = values.length;
-    const inner = Math.max(1, w - 2 * PLOT_PAD_X);
-    const yOf = (value) => PLOT_TOP + (1 - (value - min) / (max - min || 1)) * this.plotH;
-    const xs = values.map((_, i) => PLOT_PAD_X + (i / (n - 1)) * inner);
-    const ys = values.map(yOf);
-    const my = monotoneTangents(ys);
-    const line = monotonePath(xs, ys, my);
-    const base = PLOT_TOP + this.plotH;
-    this.line.setAttribute("d", line);
-    this.area.setAttribute("d", line + "L" + xs[n - 1].toFixed(2) + " " + base + "L" + xs[0].toFixed(2) + " " + base + "Z");
-    this.ys = ys;
-    this.my = my;
-    this.xsInner = inner;
-
-    const p = clamp(this.tween.progress, 0, 1);
-    const fromTicks = niceDomain(this.tween.from.slice(2)).ticks;
-    const toTicks = niceDomain(this.tween.to.slice(2)).ticks;
-    const both = toTicks.filter((t) => fromTicks.includes(t));
-    const fromOnly = fromTicks.filter((t) => !toTicks.includes(t));
-    const toOnly = toTicks.filter((t) => !fromTicks.includes(t));
-    this.gridBoth.setAttribute("d", gridPath(both, yOf, w));
-    this.gridFrom.setAttribute("d", gridPath(fromOnly, yOf, w));
-    this.gridTo.setAttribute("d", gridPath(toOnly, yOf, w));
-    this.gridFrom.style.opacity = String(1 - p);
-    this.gridTo.style.opacity = String(p);
-    const yItems = [];
-    both.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: 1 }));
-    fromOnly.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: 1 - p }));
-    toOnly.forEach((t) => yItems.push({ key: "b" + t, text: thousands(t), top: yOf(t) - 17, opacity: p }));
-    this.yLabels.update(yItems);
-
-    const fromX = this.xAxis(this.prevSlice);
-    const toX = this.xAxis(this.slice);
-    const sameLabel = (a, b) => a.fraction === b.fraction && a.text === b.text;
-    const xItems = [];
-    const shift = (f) => "translateX(" + (f === 0 ? "0" : f === 1 ? "-100%" : "-50%") + ")";
-    const push = (label, opacity) =>
-      xItems.push({ key: label.fraction + label.text, text: label.text, left: label.fraction * w, shift: shift(label.fraction), opacity });
-    toX.forEach((l) => push(l, fromX.some((o) => sameLabel(o, l)) ? 1 : p));
-    fromX.forEach((l) => { if (!toX.some((o) => sameLabel(o, l))) push(l, 1 - p); });
-    this.xLabels.update(xItems);
-    this.cursor();
-    this.header();
-  }
-
-  /** Current reading: the value at the scrub point (the real record when the curve rests), change and text. */
-  reading() {
-    const slice = this.slice;
-    const first = slice[0];
-    const last = slice[slice.length - 1];
-    const values = this.tween.values.slice(2);
-    const at = this.fraction == null ? 1 : this.fraction;
-    const t = first.t + (last.t - first.t) * at;
-    const curveValue = hermiteAt(values, monotoneTangents(values), at * (values.length - 1));
-    const value = this.tween.settled ? valueAtTime(slice, t) : curveValue;
-    const start = this.tween.settled ? first.v : values[0];
-    return { first, last, at, t, value, change: value - start, pct: start ? ((value - start) / Math.abs(start)) * 100 : 0 };
-  }
-
-  header() {
-    if (this.state !== "ready") return;
-    const r = this.reading();
-    setFigure(this.qs("value"), r.value);
-    const span = (r.last.t - r.first.t) / DAY;
-    const since = T.since + " " + (span > 100 ? monthYearFull(new Date(r.first.t)) : shortDate(new Date(r.first.t)));
-    const date = new Date(r.t);
-    const lastDate = new Date(r.last.t);
-    const when = this.fraction != null
-      ? longDate(date) + " · " + since
-      : (sameDay(lastDate, new Date(this.todayEpoch)) ? T.today : T.on) + " " + fullDate(lastDate) + " · " + since;
-    setChip(this.qs("delta"), cents(r.change, { sign: true }) + " · " + (r.change >= 0 ? "+" : "−") + percent(r.pct) + "%", r.change >= 0 ? "pos" : "neg");
-    const whenEl = this.qs("when");
-    if (whenEl) whenEl.textContent = when;
-    const desc = this.qs("desc");
-    if (desc) {
-      const pre = desc.dataset.prefix || "";
-      desc.textContent = pre + " " + since + ": " + money(r.first.v) + " → " + money(r.last.v) + " (" + cents(r.last.v - r.first.v, { sign: true }) + ").";
-    }
-    const lastIndex = Math.max(0, this.slice.length - 1);
-    this.hit.setAttribute("aria-valuemin", "0");
-    this.hit.setAttribute("aria-valuemax", String(lastIndex));
-    this.hit.setAttribute("aria-valuenow", String(this.fraction == null ? lastIndex : Math.round(this.fraction * lastIndex)));
-    this.hit.setAttribute("aria-valuetext", longDate(date) + ": " + money(r.value));
-  }
-
-  cursor() {
-    if (this.state !== "ready" || !this.ys) return;
-    const active = this.fraction != null;
-    const shown = this.fraction == null ? (this.lastFraction == null ? 1 : this.lastFraction) : this.fraction;
-    if (active) this.lastFraction = this.fraction;
-    const x = PLOT_PAD_X + shown * this.xsInner;
-    const y = hermiteAt(this.ys, this.my, shown * (this.ys.length - 1));
-    this.guide.style.left = x - 0.5 + "px";
-    this.guide.style.opacity = active ? "1" : "0";
-    for (const el of [this.halo, this.dotEl]) {
-      el.style.transform = "translate3d(" + x + "px," + y + "px,0) scale(" + (this.pressed ? 1.15 : active ? 1 : 0.4) + ")";
-      el.style.opacity = active ? "1" : "0";
-    }
-    if (active) {
-      const r = this.reading();
-      const date = new Date(r.t);
-      this.tipDate.textContent = shortDate(date) + " " + String(date.getFullYear()).slice(2);
-      this.tipValue.textContent = cents(r.value);
-    }
-    this.placeTip(this.tip, x, active);
-  }
-}
-
 // ───────────────────────────── month pace ─────────────────────────────
 
 class PaceChart extends Chart {
@@ -940,7 +666,6 @@ class PaceChart extends Chart {
     this.year = Number(d.month.slice(0, 4));
     const title = this.qs("title");
     if (title) title.textContent = (title.dataset.prefix || "") + " " + MONTH_FULL[this.monthIndex];
-    this.measure();
     this.root.classList.add("is-ready");
     this.fillLegend();
     if (d.total_cents === 0 || d.elapsed_days === 0) {
@@ -1177,7 +902,6 @@ class FlowChart extends Chart {
     this.first = d.months.findIndex((m) => m.income_cents || m.expenses_cents);
     if (this.first < 0) this.first = this.n;
     const real = this.n - this.first;
-    this.measure();
     this.root.classList.add("is-ready");
     if (!d.months.length || real < 3) {
       this.state = "sparse";
@@ -1287,7 +1011,7 @@ class FlowChart extends Chart {
     }
     this.hit = this.makeHit(this.root.dataset.sliderLabel || "Fluxo de caixa por mês", {
       move: (x, el) => {
-        const r = el.getBoundingClientRect();
+        const r = this.rectOf(el);
         this.pick(Math.floor(((x - r.left) / Math.max(1, r.width)) * n));
       },
       press: () => {},
@@ -1405,6 +1129,10 @@ class DonutChart extends Chart {
     this.refresh();
   }
 
+  // The ring has a fixed size (data-size) and nothing is redrawn on resize: no box to measure, no observer.
+  measure() {}
+  watchSize() {}
+
   fail() {
     this.setBusy(false);
     clear(this.box);
@@ -1517,7 +1245,7 @@ class DonutChart extends Chart {
 
 // ───────────────────────────── mounting ─────────────────────────────
 
-const KINDS = { networth: NetWorthChart, pace: PaceChart, flow: FlowChart, donut: DonutChart };
+const KINDS = { pace: PaceChart, flow: FlowChart, donut: DonutChart };
 
 export function mount(root) {
   if (!root || root.__fc) return root && root.__fc;

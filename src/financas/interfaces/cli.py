@@ -1,7 +1,9 @@
 """Command line adapter: thin layer over the use cases. All output is pt-BR."""
 
+import contextvars
 import datetime as dt
 import functools
+import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -173,8 +175,43 @@ Image = Annotated[
 ]
 
 
+_DEMO = contextvars.ContextVar("financas_demo", default=False)
+Demo = Annotated[
+    bool,
+    typer.Option(
+        "--demo",
+        help="Usa o banco de demonstração (data/demo.db), com dados fictícios. "
+        "Nunca toca em data/financas.db.",
+    ),
+]
+
+
+_OPENED: contextvars.ContextVar[list[Container] | None] = contextvars.ContextVar(
+    "financas_opened_containers", default=None
+)
+
+
 def container() -> Container:
-    return build_container()
+    """The container of the current command: the real data, or the demo with ``--demo``.
+
+    It is released when the command ends (``_release_containers``).
+    """
+    c = build_container(demo=True) if _DEMO.get() else build_container()
+    if _DEMO.get():
+        c.ensure_demo()
+    opened = _OPENED.get()
+    if opened is not None:
+        opened.append(c)
+    return c
+
+
+def container_for_demo() -> Container:
+    """The demo container of commands that build the demo themselves (``demo``, ``seed-demo``)."""
+    c = build_container(demo=True)
+    opened = _OPENED.get()
+    if opened is not None:
+        opened.append(c)
+    return c
 
 
 def handle_errors[**P, R](func: Callable[P, R]) -> Callable[P, R]:
@@ -690,6 +727,50 @@ def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) ->
     c.seed()
     # no access log: URLs can carry search text (descriptions never go to logs, rule 4)
     uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
+
+
+@app.command("demo")
+def demo(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8001) -> None:
+    """Painel web com dados fictícios (data/demo.db), isolado dos seus dados reais."""
+    import uvicorn
+
+    from financas.interfaces.web.app import create_app
+
+    c = container_for_demo()
+    created = c.ensure_demo()
+    console.print(
+        "Modo demonstração: dados fictícios em "
+        f"{c.settings.demo_db_path}{' (criados agora)' if created else ''}."
+    )
+    console.print("Seus dados reais (data/financas.db) não são abertos por este comando.")
+    uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
+
+
+@app.command("seed-demo")
+@handle_errors
+def seed_demo_command(
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Apaga data/demo.db e gera tudo de novo."),
+    ] = False,
+) -> None:
+    """Cria (ou, com --force, recria do zero) o banco de demonstração."""
+    c = container_for_demo()
+    if force:
+        summary = c.reset_demo()
+        console.print("Banco de demonstração recriado.")
+    elif c.ensure_demo():
+        console.print("Banco de demonstração criado.")
+        summary = None
+    else:
+        console.print("O banco de demonstração já tem dados. Use --force para recriá-lo.")
+        return
+    if summary is not None:
+        console.print(
+            f"{summary.accounts} contas, {summary.transactions} lançamentos, "
+            f"{summary.statements} faturas, {summary.plans} compras parceladas."
+        )
+    console.print(f"Arquivo: {c.settings.demo_db_path}")
 
 
 # --- spreadsheet import (CLAUDE.md 13.1) --------------------------------------------------------
@@ -1817,11 +1898,93 @@ def account_flow(
     )
 
 
+_NO_DEMO_FLAG = {
+    "demo",
+    "seed-demo",
+    "import",
+}  # demo has its own command; import is real data only
+
+
+def _add_demo_flag(typer_app: typer.Typer) -> None:
+    """Give every command a ``--demo`` option that runs it against the demo database."""
+    for info in typer_app.registered_commands:
+        callback = info.callback
+        name = info.name or (callback.__name__.replace("_", "-") if callback else "")
+        if (
+            callback is None
+            or name in _NO_DEMO_FLAG
+            or "demo" in inspect.signature(callback).parameters
+        ):
+            continue
+        info.callback = _with_demo(callback)
+    for group in typer_app.registered_groups:
+        if group.name not in _NO_DEMO_FLAG and group.typer_instance is not None:
+            _add_demo_flag(group.typer_instance)
+
+
+def _with_demo[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        token = _DEMO.set(bool(kwargs.pop("demo", False)))
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _DEMO.reset(token)
+
+    signature = inspect.signature(func)
+    extra = inspect.Parameter(
+        "demo", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=Demo
+    )
+    wrapper.__signature__ = signature.replace(  # type: ignore[attr-defined]
+        parameters=[*signature.parameters.values(), extra]
+    )
+    wrapper.__annotations__ = {**func.__annotations__, "demo": Demo}
+    return wrapper
+
+
+def _release_containers(typer_app: typer.Typer) -> None:
+    """Close the database connections of every container a command opened, when it ends.
+
+    A process exit does it by itself, but an in-process caller (tests, a shell) would keep the
+    ``-wal``/``-shm`` files of the database until garbage collection.
+    """
+    for info in typer_app.registered_commands:
+        if info.callback is not None:
+            info.callback = _releasing(info.callback)
+    for group in typer_app.registered_groups:
+        if group.typer_instance is not None:
+            _release_containers(group.typer_instance)
+
+
+def _releasing[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        opened: list[Container] = []
+        token = _OPENED.set(opened)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _OPENED.reset(token)
+            for c in opened:
+                c.close()
+
+    return wrapper
+
+
+_add_demo_flag(app)
+_release_containers(app)
+
+
+def _demo_requested(argv: list[str]) -> bool:
+    return "--demo" in argv or bool(argv[:1] and argv[0] in {"demo", "seed-demo"})
+
+
 def main() -> None:
     """Entry point of the ``financas`` command: unexpected failures go to the failure log."""
     try:
         app()
     except Exception as error:
+        _DEMO.set(_demo_requested(sys.argv[1:]))  # a demo failure is logged in the demo folder
         code = container().failures.record_exception(
             "cli", "cli_error", error, path=" ".join(sys.argv[1:2])
         )

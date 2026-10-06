@@ -17,14 +17,16 @@
     from 0 on load (``flat`` turns that off). ``size``: px number or any CSS length ("clamp(54px,9vw,84px)").
     ``dark``: on a dark panel (gold "R$", light cents). ``prefix=False`` hides "R$" (tables).
     ``private``: privacy group (networth, accounts, investments, cards, transactions); the figure blurs when the mode is on.
+    ``label``: the accessible name when it differs from the visible text (e.g. ``prefix=False`` next to a separate "R$" glyph).
+    ``cls``: extra class names for the figure (the privacy attribute never goes on the odometer inside a private wrapper: no nesting).
     ``static/ui.js``: ``FinUI.odometer.set(el, cents)`` rolls an existing odometer to a new value. -#}
-{% macro odometer(cents, size=56, dark=False, prefix=True, delay=0, flat=False, private=None) %}
+{% macro odometer(cents, size=56, dark=False, prefix=True, delay=0, flat=False, private=None, label=None, cls=None) %}
 {%- set sign, whole, frac = cents|money_parts -%}
 {%- set text = whole ~ ',' ~ frac -%}
 {%- set px = (size ~ 'px') if size is number else size -%}
 {%- set scale = ' od-sm' if (size is number and size < 24) else (' od-md' if (size is number and size < 40) else '') -%}
 {%- set ns = namespace(n=0, tail=false) -%}
-<span class="od{{ scale }}{{ ' od-dark' if dark }}{{ ' od-flat' if flat }}" role="img" aria-label="{{ cents|brl if prefix else (sign ~ text) }}" data-odometer="{{ cents }}"{% if private %} data-private="{{ private }}"{% endif %} data-od-prefix="{{ 1 if prefix else 0 }}" style="--od-size: {{ px }}">
+<span class="od{{ scale }}{{ ' od-dark' if dark }}{{ ' od-flat' if flat }}{{ ' ' ~ cls if cls }}" role="img" aria-label="{{ label or (cents|brl if prefix else (sign ~ text)) }}" data-odometer="{{ cents }}"{% if private %} data-private="{{ private }}"{% endif %} data-od-prefix="{{ 1 if prefix else 0 }}" style="--od-size: {{ px }}">
   {%- if sign %}<span class="od-sign" aria-hidden="true">−</span>{% endif -%}
   {%- if prefix %}<span class="od-cur" aria-hidden="true">R$</span>{% endif -%}
   {%- for ch in text -%}

@@ -1,7 +1,7 @@
 """Turns the rows of the old workbook into a reviewable plan (CLAUDE.md 13.1). Pure functions.
 
 Nothing is written anywhere: the plan lists what *would* be created, with a flag on everything
-the user should look at. The rules (decided with the user, ``docs/IMPORT_PLAN_2026.md``):
+the user should look at. The rules (decided with the user, ``docs/PROJECT_HISTORY.md`` section 8.1):
 
 * scope is the year by competence: checking rows by their date, card rows by their statement month;
 * the kind decides the category when they disagree; outgoing Pix are classified by counterparty;

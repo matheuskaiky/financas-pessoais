@@ -21,8 +21,8 @@
                   empty_href="/accounts", empty_label="Registrar um saldo", private="networth", id="nw-an") }}
 
 <div class="pn-pair pn-pair-wide">
-  {{ pace_card(month_key, month_name, 'pace-an') }}
-  {{ flow_card(year, 'flow-an') }}
+  {{ pace_card(month_key, month_name, 'pace-an', figure=pace_figure) }}
+  {{ flow_card(year, 'flow-an', figure=flow_figure) }}
 </div>
 
 <section class="card chart-card pn-cat-wide" aria-labelledby="h-cat">

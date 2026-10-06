@@ -105,6 +105,10 @@ from financas.interfaces.web.routes import palette  # noqa: E402
 
 MODULES.append(palette)
 
+from financas.interfaces.web.routes import importar  # noqa: E402
+
+MODULES.append(importar)
+
 __all__ = [
     "MODULES",
     "Lookups",

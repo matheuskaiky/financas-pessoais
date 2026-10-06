@@ -5,8 +5,9 @@
 //
 // Public API (window.FinUI):
 //   FinUI.odometer.set(el, cents)   roll an existing odometer ([data-odometer], see _ui.html) to a new value
+//   FinUI.odometer.armOnView(el)    hold an odometer that is below the fold (.od-wait) and let it roll when it scrolls into view
 //   FinUI.gauge.set(el, percent, add?)  move an existing stroke gauge (.sg) and re-pick its tone
-//   FinUI.formatCents(cents)        "1.234,56" (pt-BR, no "R$"); negative values keep a leading "−"
+//   FinUI.formatCents(cents)        "1.234,56" (no symbol; negative values keep a leading "−"); formatted by fp-money.js when the page has it
 //   FinUI.reducedMotion()           true when the user asked for less motion
 // Hooks (data attributes) other scripts bind to: [data-palette-open] (palette.js, work package 4).
 (function () {
@@ -14,8 +15,18 @@
     return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   };
 
+  // The one currency layer is fp-money.js (an ES module that publishes window.FP.money). It is looked up at call time, never at load
+  // (module and classic scripts both run deferred, in document order, but a page may omit the module); the pt-BR formatting below is
+  // only the fallback for a page without it (same output: "1.234,56", "−0,05").
+  const money = function () {
+    const m = window.FP && window.FP.money;
+    return m && typeof m.formatAmount === "function" && typeof m.minorDigits === "function" ? m : null;
+  };
+
   const formatCents = function (cents) {
     const value = Math.trunc(Number(cents) || 0);
+    const m = money();
+    if (m) return m.formatAmount(value);
     const whole = Math.floor(Math.abs(value) / 100);
     const frac = String(Math.abs(value) % 100).padStart(2, "0");
     return (value < 0 ? "−" : "") + String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "," + frac;
@@ -53,7 +64,9 @@
     const withPrefix = el.dataset.odPrefix !== "0";
     const negative = value < 0;
     el.dataset.odometer = String(value);
-    el.setAttribute("aria-label", (negative ? "−" : "") + (withPrefix ? "R$ " : "") + text);
+    const m = money();
+    const symbol = m ? m.currencySymbol() : "R$";
+    el.setAttribute("aria-label", (negative ? "−" : "") + (withPrefix ? symbol + " " : "") + text);
 
     // the sign appears or disappears
     let sign = el.querySelector(":scope > .od-sign");
@@ -88,8 +101,11 @@
     });
     let n = 0;
     let tail = false;
-    Array.from(text).forEach(function (ch) {
-      if (ch === ",") tail = true;
+    // the cents start at the decimal separator, which sits `places` digits from the end (pt-BR "," today; whatever the locale says)
+    const places = m ? m.minorDigits() : 2;
+    const tailAt = places > 0 ? text.length - places - 1 : -1;
+    Array.from(text).forEach(function (ch, at) {
+      if (at === tailAt) tail = true;
       el.append(digitCell(ch, tail, n));
       if (ch >= "0" && ch <= "9") n++;
     });
@@ -107,8 +123,47 @@
     el.classList.add(total > 100 ? "sg-negative" : total >= warn ? "sg-gold" : "sg-forest");
   };
 
+  // A roll that plays below the fold is a roll nobody sees: hold it (.od-wait stops the CSS animation, the final digits are
+  // already printed) until the figure enters the viewport, then let it play once. Without IntersectionObserver it just plays.
+  const rollObserver =
+    typeof window.IntersectionObserver === "function"
+      ? new window.IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (!entry.isIntersecting) return;
+              entry.target.classList.remove("od-wait");
+              rollObserver.unobserve(entry.target);
+            });
+          },
+          { threshold: 0.1 },
+        )
+      : null;
+
+  const armable = function (el) {
+    return !!rollObserver && el instanceof HTMLElement && !el.classList.contains("od-flat");
+  };
+
+  const hold = function (el, box) {
+    if (box.bottom > 0 && box.top < window.innerHeight) return; // already on screen: it plays now
+    el.classList.add("od-wait");
+    rollObserver.observe(el);
+  };
+
+  const armOnView = function (el) {
+    if (armable(el)) hold(el, el.getBoundingClientRect());
+  };
+
+  // Every box is measured first and the classes are written afterwards: one layout for the whole page, not one per odometer.
+  const armAll = function () {
+    const list = Array.from(document.querySelectorAll(".od")).filter(armable);
+    const boxes = list.map(function (el) { return el.getBoundingClientRect(); });
+    list.forEach(function (el, i) { hold(el, boxes[i]); });
+  };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", armAll);
+  else armAll();
+
   window.FinUI = {
-    odometer: { set: odometerSet },
+    odometer: { set: odometerSet, armOnView: armOnView },
     gauge: { set: gaugeSet },
     formatCents: formatCents,
     reducedMotion: reducedMotion,

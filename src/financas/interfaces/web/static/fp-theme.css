@@ -1,0 +1,87 @@
+/* fp-theme.css — Claro / Escuro / Automático switcher. Needs tokens.css. Markup: snippets/theme-switcher.html. Behaviour: fp-ui.js (talks to fp-theme.js).
+ *
+ * One component, two densities, both a role="radiogroup" of three role="radio" buttons with a sliding pill:
+ *   .fp-theme                 compact, icon only, 30 px segments (44 px on coarse pointers) — desktop sidebar `.side-actions`, next to .fp-priv (94 px wide)
+ *   .fp-theme.fp-theme--labeled   full width, icon + label, 44 px segments — the «Aparência» row of the mobile /more list
+ * The pill and the selected colour are drawn from <html data-theme-pref="light|dark|system"> (written by fp-theme.js before first paint),
+ * so the control is right on the very first frame with no JavaScript; aria-checked (fp-ui.js) takes over for assistive tech and for
+ * instances that are not bound to the global choice. Only tokens.css variables are used: it re-themes itself inside .ink / .dk scopes.
+ */
+
+/* ── segmented control ───────────────────────────────────────────────────────────────────────────────────────────── */
+.fp-theme{--fpt-w:30px;--fpt-h:30px;--fpt-pad:2px;--fpt-r:12px;--fpt-pr:10px;--fpt-n:3;--fpt-i:2;position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:var(--fpt-w);flex:none;box-sizing:border-box;margin:0;padding:var(--fpt-pad);border-radius:var(--fpt-r);background:var(--seg-bg);box-shadow:inset 0 0 0 1px var(--line);-webkit-tap-highlight-color:transparent}
+:root[data-theme-pref="light"] .fp-theme{--fpt-i:0}
+:root[data-theme-pref="dark"] .fp-theme{--fpt-i:1}
+:root[data-theme-pref="system"] .fp-theme{--fpt-i:2}
+.fp-theme>i{position:absolute;top:var(--fpt-pad);bottom:var(--fpt-pad);left:var(--fpt-pad);width:var(--fpt-w);border-radius:var(--fpt-pr);background:var(--seg-pill);box-shadow:var(--seg-pill-sh);transform:translateX(calc(var(--fpt-i) * 100%));transition:transform var(--d-ui) var(--sp-ui);pointer-events:none}
+.fp-theme button{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;width:100%;min-width:0;height:var(--fpt-h);margin:0;padding:0;border:0;border-radius:var(--fpt-pr);background:transparent;color:var(--text-secondary);font:500 13.5px/1.15 var(--sans);text-align:center;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:color var(--d-ui) var(--sp-ui)}
+.fp-theme button:hover{color:var(--text-primary)}
+:root[data-theme-pref="light"] .fp-theme [data-fp-theme-option="light"],
+:root[data-theme-pref="dark"] .fp-theme [data-fp-theme-option="dark"],
+:root[data-theme-pref="system"] .fp-theme [data-fp-theme-option="system"],
+.fp-theme button[aria-checked="true"]{color:var(--text-primary)}
+.fp-theme button:focus-visible{outline-offset:-2px}
+.fp-theme svg{display:block;flex:none;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+
+/* tooltips: CSS only, hover (after a short intent delay) and keyboard focus; the first/last one hug their segment so they stay inside a narrow sidebar */
+.fp-theme-tip{position:absolute;top:calc(100% + 10px);left:50%;z-index:var(--z-pop);box-sizing:border-box;padding:6px 11px;border-radius:10px;border:1px solid var(--glass-line);background:var(--tip-bg);-webkit-backdrop-filter:saturate(180%) blur(14px);backdrop-filter:saturate(180%) blur(14px);box-shadow:var(--tip-sh);color:var(--text-primary);font:500 12.5px/1.2 var(--sans);white-space:nowrap;opacity:0;transform:translate(-50%,-3px);pointer-events:none;transition:opacity .14s ease,transform .14s ease}
+.fp-theme button:first-of-type>.fp-theme-tip{left:0;transform:translate(0,-3px)}
+.fp-theme button:last-of-type>.fp-theme-tip{left:auto;right:0;transform:translate(0,-3px)}
+.fp-theme button:focus-visible>.fp-theme-tip{opacity:1;transform:translate(-50%,0);transition-delay:.4s}
+.fp-theme button:first-of-type:focus-visible>.fp-theme-tip,.fp-theme button:last-of-type:focus-visible>.fp-theme-tip{transform:translate(0,0)}
+@media (hover:hover){
+.fp-theme button:hover>.fp-theme-tip{opacity:1;transform:translate(-50%,0);transition-delay:.4s}
+.fp-theme button:first-of-type:hover>.fp-theme-tip,.fp-theme button:last-of-type:hover>.fp-theme-tip{transform:translate(0,0)}
+}
+
+/* touch: 44 px targets, no tooltips */
+@media (pointer:coarse){
+.fp-theme:not(.fp-theme--labeled){--fpt-w:44px;--fpt-h:44px;--fpt-r:14px;--fpt-pr:12px}
+.fp-theme-tip{display:none}
+}
+
+/* ── labeled density (full width, 3 equal columns) ───────────────────────────────────────────────────────────────── */
+.fp-theme--labeled{--fpt-pad:3px;--fpt-h:44px;--fpt-r:14px;--fpt-pr:11px;display:grid;grid-template-columns:repeat(var(--fpt-n),minmax(0,1fr));grid-auto-flow:row;width:100%}
+.fp-theme--labeled>i{width:calc((100% - 2 * var(--fpt-pad)) / var(--fpt-n))}
+.fp-theme--labeled button{padding:0 6px}
+.fp-theme--labeled button svg{width:17px;height:17px}
+:root[data-theme-pref="light"] .fp-theme--labeled [data-fp-theme-option="light"],
+:root[data-theme-pref="dark"] .fp-theme--labeled [data-fp-theme-option="dark"],
+:root[data-theme-pref="system"] .fp-theme--labeled [data-fp-theme-option="system"],
+.fp-theme--labeled button[aria-checked="true"]{font-weight:600}
+.fp-theme--labeled .fp-theme-tip{display:none}
+@media (max-width:359px){.fp-theme--labeled button svg{display:none}}
+
+/* ── «Aparência» row for the /more list (uses .overline and .card from tokens.css) ───────────────────────────────── */
+.fp-theme-sec{display:flex;flex-direction:column;gap:8px}
+.fp-theme-ov{padding:0 6px}
+.fp-theme-card{display:flex;flex-direction:column;gap:12px;box-sizing:border-box;padding:14px 16px 16px;overflow:hidden}
+.fp-theme-row{display:flex;align-items:center;gap:14px;min-height:34px;color:var(--text-primary);font-size:15px;font-weight:500}
+.fp-theme-ic{flex:none;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:11px;background:var(--neu-bg);color:var(--accent)}
+.fp-theme-ic svg{display:none;width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.fp-theme-name{flex:1 1 auto;min-width:0}
+.fp-theme-meta{flex:none;font-size:13px;font-weight:400;color:var(--text-secondary)}
+.fp-theme-hint{margin:0;font-size:12.5px;line-height:1.5;color:var(--text-secondary)}
+
+/* one of several spans/icons is shown, picked from <html data-theme-pref / data-theme-resolved> (no JS, no flash).
+   No attribute at all = fp-theme.js did not run = «Automático», «claro». */
+.fp-theme-val>[data-v],.fp-theme-hint [data-p],.fp-theme-now>[data-r]{display:none}
+:root:is(:not([data-theme-pref]),[data-theme-pref="system"]) .fp-theme-ic>[data-v="system"]{display:block}
+:root[data-theme-pref="light"] .fp-theme-ic>[data-v="light"]{display:block}
+:root[data-theme-pref="dark"] .fp-theme-ic>[data-v="dark"]{display:block}
+:root:is(:not([data-theme-pref]),[data-theme-pref="system"]) .fp-theme-val>[data-v="system"]{display:inline}
+:root[data-theme-pref="light"] .fp-theme-val>[data-v="light"]{display:inline}
+:root[data-theme-pref="dark"] .fp-theme-val>[data-v="dark"]{display:inline}
+:root:is(:not([data-theme-pref]),[data-theme-pref="system"]) .fp-theme-hint [data-p="system"]{display:inline}
+:root[data-theme-pref="light"] .fp-theme-hint [data-p="fixed"],:root[data-theme-pref="dark"] .fp-theme-hint [data-p="fixed"]{display:inline}
+:root:not([data-theme-resolved="dark"]) .fp-theme-now>[data-r="light"]{display:inline}
+:root[data-theme-resolved="dark"] .fp-theme-now>[data-r="dark"]{display:inline}
+
+/* visually hidden live region (fp-ui.js writes «Tema: Escuro» into it after a user choice) */
+.fp-theme-live{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* the page cross-fades when the user picks a theme (View Transitions; fp-ui.js skips it under prefers-reduced-motion) */
+@media (prefers-reduced-motion:no-preference){::view-transition-old(root),::view-transition-new(root){animation-duration:.26s;animation-timing-function:ease}}
+
+@media (forced-colors:active){.fp-theme>i{border:2px solid Highlight;background:transparent;box-shadow:none}}
+@media print{.fp-theme,.fp-theme-sec{display:none}}

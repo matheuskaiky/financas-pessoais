@@ -1,4 +1,4 @@
-# Synthetic example for docs/CSV_IMPORT.md: every kind of row. Names are made up.
+# Synthetic example for docs/IMPORTACAO_DADOS.md: every kind of row. Names are made up.
 # Needs these accounts (checking: Conta Corrente, Conta Reserva; investment: Caixinha Exemplo;
 # card: Cartão Exemplo, due on day 5, closing 11 days before) and the initial categories.
 date;kind;account;to_account;amount;description;category;recurring;notes;statement;installments;installment_number;amount_type;gross_amount

@@ -6,7 +6,7 @@
 .sent-strip { display: flex; align-items: center; gap: 12px; padding: 11px 2px; border-top: 1px dotted #A9B8AF; border-bottom: 1px dotted #A9B8AF;
   font-size: 13px; line-height: 1.45; color: var(--soft); }
 .sent-strip svg { flex: none; color: var(--brass-text); }
-.sent-strip strong { font-weight: 600; color: var(--text); }
+.sent-strip strong { font-weight: 600; }
 .letter-empty { padding: 24px; }
 
 .letter { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; overflow: hidden;

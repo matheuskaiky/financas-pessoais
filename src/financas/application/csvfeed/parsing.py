@@ -156,7 +156,7 @@ def _whole_part(head: str, group: str) -> int:
 
 
 def _split_decimal(body: str) -> tuple[int, str]:
-    """``(whole, fraction digits)`` of the unsigned text, by the rule in docs/CSV_IMPORT.md.
+    """``(whole, fraction digits)`` of the unsigned text, by the rule in docs/IMPORTACAO_DADOS.md.
 
     The last ``.`` or ``,`` is the decimal separator when followed by exactly 1 or 2 digits;
     groups of exactly 3 digits are thousands separators; a lone ``1.234`` is ambiguous.

@@ -377,6 +377,21 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "top_share": share(sum(r.total_cents for r in breakdown.top)),
         }
 
+    def card_figures(chosen: YearMonth) -> dict[str, int | None]:
+        """The big figure of the Ritmo and Fluxo cards, printed by the server so the odometer exists
+        (and rolls) on the first paint. Same rule as static/fin-charts.js: Ritmo = spent so far
+        (last elapsed day), Fluxo = income - expenses of the last month of the year. The
+        script sets them again from the JSON (a no-op when equal)."""
+        pace = GetMonthPace(c.uow, c.clock).execute(chosen)
+        cumulative = pace.cumulative_cents
+        day = max(0, pace.elapsed_days - 1)
+        flow = GetCashFlow(c.uow, c.clock).execute(chosen.year)
+        last = flow.months[-1] if flow.months else None
+        return {
+            "pace_figure": cumulative[day] if day < len(cumulative) else 0,
+            "flow_figure": last.income_cents - last.expenses_cents if last else 0,
+        }
+
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, month: str = "", year: str = "") -> HTMLResponse:
         chosen = parse_month(month, year, current_month())
@@ -415,6 +430,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "attention": attention_items(),
             "group_colors": _GROUP_COLORS,
             "nw_island": net_worth_island(),
+            **card_figures(chosen),
         }
         return ctx.render(request, "dashboard.html", context)
 
@@ -431,6 +447,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "month_nav": month_nav(chosen, "/analises"),
             "summary": summary,
             "nw_island": net_worth_island(),
+            **card_figures(chosen),
             **donut_context(summary, data),
         }
         return ctx.render(request, "analises.html", context)

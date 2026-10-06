@@ -1,0 +1,138 @@
+/*
+ * charts-extra.css — Ritmo do mês · Fluxo de caixa · Rosca de categorias · Saldo diário (server-rendered SVG; controller: fp-scrub.js).
+ * Structure only. Colours, springs, durations, glass and the privacy mask come from tokens.css (load it BEFORE this file); light and dark are automatic.
+ * No inline style anywhere: positions are SVG attributes (viewBox units, or % on the px overlay) or CSS variables written through the CSSOM.
+ *
+ *   .cx                           root · data-cx=ritmo|fluxo|donut|saldo · data-state=ready|loading|sparse|empty|error · data-peek-scope
+ *   .cx-compact · .cx-mini        phone layout · account-row sparkline (no header, no legend)
+ *   .cx-plot                      relative box; its height comes from the viewBox of the main svg (aspect ratio = w/h), so every state has the same box
+ *   .cx-main                      svg viewBox="0 0 w h" — lines, areas, bars (scale with the box)
+ *   .cx-ov                        svg WITHOUT viewBox over the plot: user unit = CSS px, x/y in % — labels and markers keep their size at any width
+ *   .cx-cur · .cx-tip · .cx-hit   cursor layer (driven by fp-scrub.js through --x --y --y2 --xu --i --half) · tooltip · slider
+ */
+
+/* ───────────── 1 · frame ───────────── */
+.cx {
+  display: block;
+  width: 100%;
+  font-family: var(--sans);
+  color: var(--text-primary);
+  font-variant-numeric: lining-nums tabular-nums;
+  text-align: left;
+}
+
+/* ───────────── 2 · plot box and layers ───────────── */
+.cx-plot { position: relative; margin-top: 8px; width: 100%; }
+
+/* ───────────── 3 · cursor, tooltip, slider (scrub) ───────────── */
+
+.cx-tip {                                   /* --half (px) is written by fp-scrub.js when the tip is first shown; until then 50 % keeps the hidden tip inside the plot (no page overflow on a phone) */
+  position: absolute;
+  top: 0;
+  left: clamp(min(var(--half, 50%), 50%), var(--x, 50%), calc(100% - min(var(--half, 50%), 50%)));
+  translate: -50% 0;
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 5px 11px;
+  white-space: normal;
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  opacity: 0;
+  transition: opacity .2s var(--ease);
+  pointer-events: none;
+}
+.cx[data-active="true"] .cx-tip { opacity: 1; }
+
+.cx-hit {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 12px;
+  outline: 2px solid transparent;
+  outline-offset: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.cx[data-pressed="true"] .cx-hit { cursor: grabbing; }
+.cx-hit:focus-visible { outline-color: var(--ring); outline-offset: 2px; }
+
+/* ───────────── 4 · rolling number (odometer) ─────────────
+   Digits are cells `.od-d[data-n]` (the strip `.od-s` slides to the digit); the controller changes data-n and the spring does the rest. */
+.cx-od { display: inline-flex; align-items: baseline; white-space: nowrap; --cx-dur: 260ms; --cx-step: 55ms; }
+.cx-od .od-d { line-height: 1; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 15%, #000 92%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, #000 15%, #000 92%, transparent 100%); }
+.cx-od .od-sp { visibility: hidden; }
+/* the strip of ten digits is one pseudo-element, ten lines of 1em: no ten <i> per digit in the HTML, and it still renders without JavaScript */
+.cx-od .od-s::before { content: "0\A 1\A 2\A 3\A 4\A 5\A 6\A 7\A 8\A 9"; display: block; white-space: pre; line-height: 1; }
+.cx-od .od-s { transition: transform var(--cx-dur) var(--sp-scrub); animation: od-roll calc(var(--cx-dur) + 500ms) var(--sp-scrub) backwards; }
+.cx-od-n { display: inline-flex; align-items: baseline; }
+.cx-od-c { line-height: 1; white-space: pre; }
+.cx-od-tail { display: inline-flex; align-items: baseline; font-size: .5em; color: var(--text-secondary); }
+.cx-od-sign { margin-right: .04em; }
+.cx-od-sym { font-size: .42em; font-weight: 500; letter-spacing: 0; color: var(--brass-ink); }
+.cx-od-sym[data-pos="before"] { margin-right: .333em; }
+.cx-od-sym[data-pos="after"] { margin-left: .333em; }
+.cx-od-sym[data-gap="none"][data-pos="before"] { margin-right: .12em; }
+.cx-od-sym[data-gap="none"][data-pos="after"] { margin-left: .12em; }
+[data-privacy-mask~="transactions"] .cx[data-pg="transactions"] .cx-od-sym,
+[data-privacy-mask~="accounts"] .cx[data-pg="accounts"] .cx-od-sym { color: var(--text-secondary); }
+
+/* ───────────── 5 · fluxo de caixa ───────────── */
+.cx-col { transition: opacity .25s var(--ease); }
+.cx-fm { font-size: 12.5px; fill: var(--text-primary); transition: opacity .25s var(--ease); }
+.cx-fm[data-ghost] { fill: var(--text-tertiary); }
+.cx-fm[data-sel] { font-weight: 600; }
+
+/* ───────────── 6 · rosca de categorias ───────────── */
+.cx-seg { fill: none; stroke-linecap: round; stroke: var(--cx-c, var(--cat-grey)); cursor: pointer; opacity: 1; transition: stroke-dasharray var(--d-ui) var(--sp-ui), stroke-dashoffset var(--d-ui) var(--sp-ui), stroke-width var(--d-ui) var(--sp-ui), opacity .25s var(--ease); }
+.cx-rw { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 56px; align-items: center; column-gap: 14px; width: 100%; min-height: 50px; padding: 0 10px; margin: 0; border: 0; border-radius: 12px; background: transparent; font-family: inherit; text-align: left; color: var(--text-primary); cursor: pointer; opacity: 1; -webkit-tap-highlight-color: transparent; transition: background-color .2s var(--ease), opacity .25s var(--ease); }
+.cx-rw[data-on] { background: rgba(15, 92, 69, .06); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cx-rw:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.cx-more { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows var(--d-soft) var(--sp-soft), visibility 0s linear var(--d-soft); }
+.cx-more[data-open="true"] { grid-template-rows: 1fr; visibility: visible; transition-delay: 0s; }
+.cx-more > div { min-height: 0; overflow: hidden; }
+
+/* ───────────── 8 · squircle (where `corner-shape` exists) ───────────── */
+@supports (corner-shape: squircle) {
+  .cx-hit { corner-shape: squircle; }
+}
+
+/* the strip slides to the digit: data-n 0…9 · the digits start one after the other: data-k (left → right) × --cx-step */
+.cx-od .od-d[data-n="0"]>.od-s{transform:translateY(0)}
+.cx-od .od-d[data-n="1"]>.od-s{transform:translateY(-1em)}
+.cx-od .od-d[data-n="2"]>.od-s{transform:translateY(-2em)}
+.cx-od .od-d[data-n="3"]>.od-s{transform:translateY(-3em)}
+.cx-od .od-d[data-n="4"]>.od-s{transform:translateY(-4em)}
+.cx-od .od-d[data-n="5"]>.od-s{transform:translateY(-5em)}
+.cx-od .od-d[data-n="6"]>.od-s{transform:translateY(-6em)}
+.cx-od .od-d[data-n="7"]>.od-s{transform:translateY(-7em)}
+.cx-od .od-d[data-n="8"]>.od-s{transform:translateY(-8em)}
+.cx-od .od-d[data-n="9"]>.od-s{transform:translateY(-9em)}
+.cx-od .od-d[data-k="1"]>.od-s{transition-delay:calc(var(--cx-step)*1);animation-delay:calc(var(--cx-step)*1)}
+.cx-od .od-d[data-k="2"]>.od-s{transition-delay:calc(var(--cx-step)*2);animation-delay:calc(var(--cx-step)*2)}
+.cx-od .od-d[data-k="3"]>.od-s{transition-delay:calc(var(--cx-step)*3);animation-delay:calc(var(--cx-step)*3)}
+.cx-od .od-d[data-k="4"]>.od-s{transition-delay:calc(var(--cx-step)*4);animation-delay:calc(var(--cx-step)*4)}
+.cx-od .od-d[data-k="5"]>.od-s{transition-delay:calc(var(--cx-step)*5);animation-delay:calc(var(--cx-step)*5)}
+.cx-od .od-d[data-k="6"]>.od-s{transition-delay:calc(var(--cx-step)*6);animation-delay:calc(var(--cx-step)*6)}
+.cx-od .od-d[data-k="7"]>.od-s{transition-delay:calc(var(--cx-step)*7);animation-delay:calc(var(--cx-step)*7)}
+.cx-od .od-d[data-k="8"]>.od-s{transition-delay:calc(var(--cx-step)*8);animation-delay:calc(var(--cx-step)*8)}
+.cx-od .od-d[data-k="9"]>.od-s{transition-delay:calc(var(--cx-step)*9);animation-delay:calc(var(--cx-step)*9)}
+.cx-od .od-d[data-k="10"]>.od-s{transition-delay:calc(var(--cx-step)*10);animation-delay:calc(var(--cx-step)*10)}
+.cx-od .od-d[data-k="11"]>.od-s{transition-delay:calc(var(--cx-step)*11);animation-delay:calc(var(--cx-step)*11)}
+.cx-od .od-d[data-k="12"]>.od-s{transition-delay:calc(var(--cx-step)*12);animation-delay:calc(var(--cx-step)*12)}
+.cx-od .od-d[data-k="13"]>.od-s{transition-delay:calc(var(--cx-step)*13);animation-delay:calc(var(--cx-step)*13)}
+.cx-od .od-d[data-k="14"]>.od-s{transition-delay:calc(var(--cx-step)*14);animation-delay:calc(var(--cx-step)*14)}
+.cx-od .od-d[data-k="15"]>.od-s{transition-delay:calc(var(--cx-step)*15);animation-delay:calc(var(--cx-step)*15)}
+/* entrance: bars of the fluxo (60 ms + 55 ms per column) and segments of the rosca (60 ms + 80 ms each) */
+.cx-seg[data-k="0"]{animation-delay:60ms}
+.cx-seg[data-k="1"]{animation-delay:140ms}
+.cx-seg[data-k="2"]{animation-delay:220ms}
+.cx-seg[data-k="3"]{animation-delay:300ms}
+.cx-seg[data-k="4"]{animation-delay:380ms}
+.cx-seg[data-k="5"]{animation-delay:460ms}
+.cx-seg[data-k="6"]{animation-delay:540ms}
+.cx-seg[data-k="7"]{animation-delay:620ms}
+/*END*/

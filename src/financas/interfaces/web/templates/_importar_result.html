@@ -1,0 +1,63 @@
+{#- Fragment swapped into #import-result by the analysis and by the apply. `view` is routes/importar.py::ResultView. -#}
+{% if view.state == "problems" %}
+<section class="panel imp-card imp-problems" role="alert" aria-labelledby="imp-res-title">
+  <header><h2 id="imp-res-title">{{ view.title }}</h2></header>
+  <p>{{ view.text }}</p>
+  <ul class="imp-list">
+    {% for line in view.problems %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% if view.more %}<p class="soft">{{ view.more }}</p>{% endif %}
+</section>
+
+{% elif view.state == "blocked" %}
+<section class="panel imp-card imp-blocked" role="alert">
+  {% if view.title %}<header><h2>{{ view.title }}</h2></header>{% endif %}
+  <p>{{ view.text }}</p>
+</section>
+
+{% elif view.state == "applied" %}
+<section class="panel imp-card imp-done" role="status" aria-labelledby="imp-res-title">
+  <header><h2 id="imp-res-title">{{ view.title }}</h2></header>
+  <p>{{ view.text }}</p>
+  <ul class="imp-counts">
+    {% for label, n in view.counts %}<li><span class="imp-n">{{ n }}</span><span class="imp-l">{{ label }}</span></li>{% endfor %}
+  </ul>
+  {% if view.balances %}
+  <ul class="imp-list">
+    {% for b in view.balances %}<li>{{ b.label }}: {{ b.informed_cents|money(private="accounts") }}
+      {%- if b.computed_cents is not none %}; o sistema calculava {{ b.computed_cents|money(private="accounts") }} (diferença {{ b.difference_cents|money(private="accounts") }}){% else %} (sem saldo anterior para comparar){% endif %}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  <div class="imp-actions"><a class="cta" href="/entries">Ver lançamentos</a><a class="cta2" href="/importar">Importar outro arquivo</a></div>
+</section>
+
+{% else %}
+<section class="panel imp-card" aria-labelledby="imp-res-title">
+  <header><h2 id="imp-res-title">2. {{ view.title }}</h2></header>
+  <p>{{ view.text }}</p>
+  <ul class="imp-counts">
+    {% for label, n in view.counts %}<li><span class="imp-n">{{ n }}</span><span class="imp-l">{{ label }}</span></li>{% endfor %}
+  </ul>
+  <p class="imp-created"><strong>{{ view.created }}</strong> lançamento(s) serão registrados, contando parcelas e as duas pontas de cada transferência.</p>
+  {% if view.accounts %}
+  <div class="imp-accounts">
+    <span class="eyebrow">Efeito por conta</span>
+    <ul class="plain">
+      {% for a in view.accounts %}<li><span>{{ a.name }} <small class="soft">· {{ a.count }} lançamento(s)</small></span><span>{{ a.cents|money(sign="always", private="accounts") }}</span></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% if view.warnings %}
+  <div class="imp-warn" role="note"><strong>Avisos</strong>
+    <ul class="imp-list">{% for w in view.warnings %}<li>{{ w|trim }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  <form class="imp-actions" action="/importar/aplicar" method="post"
+        hx-post="/importar/aplicar" hx-target="#import-result" hx-swap="innerHTML" hx-disabled-elt="find button">
+    {% if view.token and not view.demo %}<input type="hidden" name="token" value="{{ view.token }}">{% endif %}
+    <button type="submit" class="cta" {% if view.demo or not view.token %}disabled aria-describedby="imp-demo-note"{% endif %}>Aplicar importação</button>
+    {% if view.demo %}<p id="imp-demo-note" class="imp-note">Modo demonstração: a importação não grava nada.</p>
+    {% else %}<p class="soft imp-note">Antes de gravar, o sistema faz um backup. Se algo falhar, nada é alterado.</p>{% endif %}
+  </form>
+</section>
+{% endif %}

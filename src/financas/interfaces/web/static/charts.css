@@ -122,6 +122,8 @@ fp-patrimonio[plot-height="320"] { --fp-plot-h: 320px; }
 .fp-num .od-s {
   transition: none;
   animation: none;
+}
+fp-patrimonio:has(.fp-plot[data-active="true"]) .fp-num .od-s {
   will-change: transform;
 }
 .fp-num .od-sp {
@@ -158,6 +160,8 @@ fp-patrimonio[plot-height="320"] { --fp-plot-h: 320px; }
 .fp-chip .od-s {
   transition: none;
   animation: none;
+}
+fp-patrimonio:has(.fp-plot[data-active="true"]) .fp-chip .od-s {
   will-change: transform;
 }
 .fp-chip .od-sp {
@@ -339,7 +343,6 @@ fp-patrimonio[data-state="loading"] .fp-skr {
   font-size: 11px;
   line-height: 1;
   color: var(--text-tertiary);
-  will-change: transform;
 }
 .fp-xl {
   position: absolute;
@@ -359,7 +362,6 @@ fp-patrimonio[data-state="loading"] .fp-skr {
   width: 0;
   height: 0;
   pointer-events: none;
-  will-change: transform;
   --halo-d: calc(var(--dv-marker) + 2 * (var(--dv-marker-ring) + var(--dv-halo-pad)));
 }
 .fp-halo,
@@ -387,6 +389,10 @@ fp-patrimonio[data-state="loading"] .fp-skr {
 .fp-plot[data-active="true"] .fp-dot {
   --s: 1;
   opacity: 1;
+}
+.fp-plot[data-active="true"] .fp-marker,
+.fp-plot[data-active="true"] .fp-tip {
+  will-change: transform;
 }
 .fp-plot[data-active="true"] .fp-guide {
   opacity: 1;
@@ -417,7 +423,6 @@ fp-patrimonio[data-state="loading"] .fp-skr {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s var(--ease);
-  will-change: transform;
 }
 .fp-plot[data-active="true"] .fp-tip {
   opacity: 1;

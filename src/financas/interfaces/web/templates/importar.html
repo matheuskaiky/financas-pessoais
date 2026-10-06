@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/importar.css"><script src="/static/importar.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><span class="eyebrow">Movimento</span><h1>{{ title }}</h1><p>{{ subtitle }}</p></div>
+</header>
+
+<section class="panel imp-upload" aria-labelledby="imp-upload-title">
+  <header><h2 id="imp-upload-title">1. Escolha o arquivo</h2></header>
+  <form id="imp-form" action="/importar/analisar" method="post" enctype="multipart/form-data"
+        hx-post="/importar/analisar" hx-encoding="multipart/form-data"
+        hx-target="#import-result" hx-swap="innerHTML" hx-indicator="#imp-form"
+        hx-trigger="change from:#imp-file">
+    <label class="imp-drop" for="imp-file" data-import-drop>
+      <svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4 M8 8l4-4 4 4 M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      <span class="imp-drop-main"><span class="imp-pick">Escolher arquivo</span> <span class="imp-or">ou solte aqui</span></span>
+      <span class="imp-drop-file" data-import-name aria-live="polite">Nenhum arquivo escolhido</span>
+      <span class="imp-drop-limit">Até {{ limit_mb }} MB</span>
+      <input id="imp-file" name="file" type="file" accept=".csv,text/csv" required>
+    </label>
+    <noscript><button type="submit" class="cta2">Analisar arquivo</button></noscript>
+    <p class="imp-loading htmx-indicator" role="status"><span class="imp-spin" aria-hidden="true"></span>Analisando o arquivo…</p>
+  </form>
+  <p class="soft imp-help">O arquivo segue um formato próprio (colunas como data, tipo, conta e valor). <a href="/importar/modelo">Baixar um arquivo de exemplo</a> · guia completo em <code>docs/IMPORTACAO_DADOS.md</code>. Contas e categorias precisam já existir no sistema.</p>
+</section>
+
+<div id="import-result" class="imp-result" aria-live="polite" aria-atomic="false"></div>
+{% endblock %}

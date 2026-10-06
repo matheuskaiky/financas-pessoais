@@ -16,10 +16,8 @@
   </div>
   <div class="head-tools">
     {% if letter %}<a class="pn-letter" href="{{ letter.href }}"><span class="pn-letter-dot" aria-hidden="true"></span>Carta de {{ letter.month }} pronta</a>{% endif %}
+    {#- No "Novo lançamento" here: the sidebar (desktop) and the tab bar's central button (phones) own the creation action. -#}
     {{ month_stepper(month_nav) }}
-    <a class="btn" href="/entries#form">
-      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      Novo lançamento</a>
   </div>
 </header>
 
@@ -54,19 +52,19 @@
 </div>
 
 <section class="pn-kpis" aria-label="Outros números do mês">
-  <div><span class="label">Estornos</span><strong class="value">{{ summary.refunds_cents|money(private="transactions") }}</strong>
+  <div><span class="label">Estornos</span><strong class="value">{{ odometer(summary.refunds_cents, size='clamp(24px, 2.4vw, 30px)', delay=0, private="transactions") }}</strong>
     <small>{% if summary.refunds_cents %}despesa líquida {{ summary.net_expenses_cents|money(private="transactions") }}{% else %}Sem estornos no período{% endif %}</small></div>
-  <div><span class="label">Aportes líquidos</span><strong class="value">{{ summary.net_contributions_cents|money(private="transactions") }}</strong>
+  <div><span class="label">Aportes líquidos</span><strong class="value">{{ odometer(summary.net_contributions_cents, size='clamp(24px, 2.4vw, 30px)', delay=80, private="transactions") }}</strong>
     <small>{% if summary.investment_rate is none %}Aportes − resgates{% else %}{{ summary.investment_rate|percent }} da renda investida{% endif %}</small></div>
-  <div><span class="label">Recorrentes</span><strong class="value">{{ summary.recurring_expenses_cents|money(private="transactions") }}</strong>
+  <div><span class="label">Recorrentes</span><strong class="value">{{ odometer(summary.recurring_expenses_cents, size='clamp(24px, 2.4vw, 30px)', delay=160, private="transactions") }}</strong>
     <small>{% if summary.expenses_cents %}{{ (summary.recurring_expenses_cents / summary.expenses_cents)|percent }} das despesas{% else %}Sem despesas no período{% endif %}</small></div>
-  <div><span class="label">Compras do mês</span><strong class="value">{{ purchases|sum(attribute='total_cents')|money(private="transactions") }}</strong>
+  <div><span class="label">Compras do mês</span><strong class="value">{{ odometer(purchases|sum(attribute='total_cents'), size='clamp(24px, 2.4vw, 30px)', delay=240, private="transactions") }}</strong>
     <small>{{ purchases|length }} compra(s), valor cheio</small></div>
 </section>
 
 <div class="pn-pair">
-  {{ pace_card(month_key, month_name) }}
-  {{ flow_card(year) }}
+  {{ pace_card(month_key, month_name, figure=pace_figure) }}
+  {{ flow_card(year, figure=flow_figure) }}
 </div>
 
 <div class="pn-split">

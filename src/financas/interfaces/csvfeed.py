@@ -165,6 +165,21 @@ def record_applied(
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+class FileLedger:
+    """The ledger as the ``FeedLedger`` port (the same file for the script and the web page)."""
+
+    def __init__(self, import_dir: Path) -> None:
+        self._path = ledger_path(import_dir)
+
+    def find(self, sha256: str) -> dict[str, object] | None:
+        return find_applied(self._path, sha256)
+
+    def record(
+        self, sha256: str, when: dt.datetime, counts: Mapping[str, int], forced: bool
+    ) -> None:
+        record_applied(self._path, sha256, when, counts, forced)
+
+
 def applied_when(entry: Mapping[str, object]) -> str:
     text = str(entry.get("applied_at", ""))
     try:

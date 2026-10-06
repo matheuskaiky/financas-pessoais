@@ -1,0 +1,57 @@
+/* cards.css — card faces (Cartões, Estados, Movimento) + 3D parallax tilt and specular glare. Needs tokens.css.
+ * Behaviour: fp-ui.js part 3 (writes --tilt-x/-y and --glare-x/-y, and data-tilt-state). Markup: snippets/card-markup.html.
+ *
+ * TILT   [data-tilt-state="track"]   mouse/pen over the card:  perspective(1000px) rotateX(--tilt-y × −10deg) rotateY(--tilt-x × 10deg) scale3d(1.02)
+ *        [data-tilt-state="leave"]   pointer gone: rotateX(0) rotateY(0) scale3d(1) over .4 s on var(--spring-bounce, var(--sp-pop, ease))
+ *        [data-tilt-state="press"]   touch: a small lift only (scale3d(1.015) + shadow), never a rotation
+ *        no data-tilt-state          at rest: no transform at all (no stacking context from here, no will-change)
+ *        All of it lives inside @media (prefers-reduced-motion: no-preference): under «reduce» the card never moves and no glare is drawn.
+ * KNOBS  (custom properties, per card or per scope)   --tilt-max 10deg · --tilt-scale 1.02 · --tilt-persp 1000px · --face-bg · --face-ring · --face-lift
+ * GLARE  .card-glare = the inner overlay, aria-hidden, pointer-events none: radial-gradient(circle at --glare-x --glare-y, white 25 % → transparent 60 %).
+ *        The unit is carried by the custom property (--glare-x: 42.5%) because `var(--x)%` is not valid CSS.
+ */
+
+/* ── face ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* A face is an .ink scope (dark brand surface in both themes): write class="card-face ink card-face--forest". */
+.card-face{position:relative;isolation:isolate;display:flex;flex-direction:column;justify-content:space-between;gap:14px;box-sizing:border-box;min-height:184px;padding:20px 24px;border-radius:20px;color:var(--text-primary);background-color:var(--face-bg,var(--face-forest));background-image:repeating-radial-gradient(circle at 108% -12%,rgba(217,178,95,.07) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.04) 0 1px,transparent 1px 8px);box-shadow:var(--face-ring,0 0 #0000),var(--face-lift,0 0 #0000);-webkit-tap-highlight-color:transparent}
+.card-face--forest{--face-bg:var(--face-forest)}
+.card-face--teal{--face-bg:var(--face-teal)}
+.card-face--slate{--face-bg:var(--face-slate)}
+@supports (corner-shape:squircle){.card-face{corner-shape:squircle}}
+/* selected card (the link wraps the face: a.cf[aria-current="true"]) */
+.cf[aria-current="true"] .card-face,.card-face[aria-current="true"],.card-face.is-selected{--face-ring:0 0 0 3px var(--sel-gap),0 0 0 5px var(--sel-ring)}
+
+.card-face__top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card-face__mono{flex:none;display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;border:1.5px solid rgba(255,255,255,.55);font-size:13px;font-weight:600;letter-spacing:.04em}
+.card-face__cycle{font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--text-secondary)}
+.card-face__body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.card-face__nick{font-family:var(--serif);font-size:28px;font-weight:400;letter-spacing:-.01em;line-height:1.1}
+.card-face__dates{font-size:12.5px;color:var(--text-secondary)}
+
+/* the link that wraps a face and the meter under it: the lift is the hover feedback ONLY when the face does not tilt
+   (a tilting face scales and rotates; lifting its wrapper too would move the box under a pointer the tilt has already measured) */
+.cf{display:flex;flex-direction:column;gap:16px;color:var(--text-primary);text-decoration:none;transition:transform var(--d-ui) var(--sp-ui)}
+.cf:hover:is(.cf--lift,:not(:has(.card-face,[data-card-tilt]))){transform:translateY(-3px)}
+
+/* ── glare ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+.card-glare{position:absolute;inset:0;z-index:1;border-radius:inherit;pointer-events:none;opacity:0;background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,50%),rgba(255,255,255,.25) 0%,transparent 60%);transition:opacity .35s ease}
+.card-glare--soft{mix-blend-mode:soft-light;background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,50%),rgba(255,255,255,.55),rgba(255,255,255,0) 58%)}
+
+/* ── tilt ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion:no-preference){
+[data-tilt-state]{will-change:transform}
+[data-tilt-state="track"]{--face-lift:0 2px 4px rgba(var(--sh-ink),.14),0 22px 36px -14px rgba(var(--sh-ink),.55);transform:perspective(var(--tilt-persp,1000px)) rotateX(calc(var(--tilt-y,0) * var(--tilt-max,10deg) * -1)) rotateY(calc(var(--tilt-x,0) * var(--tilt-max,10deg))) scale3d(var(--tilt-scale,1.02),var(--tilt-scale,1.02),var(--tilt-scale,1.02));transition:transform .12s cubic-bezier(.2,.7,.2,1),box-shadow .3s ease}
+[data-tilt-state="leave"]{transform:perspective(var(--tilt-persp,1000px)) rotateX(0deg) rotateY(0deg) scale3d(1,1,1);transition:transform .4s var(--spring-bounce,var(--sp-pop,ease)),box-shadow .3s ease}
+[data-tilt-state="press"]{--face-lift:0 1px 3px rgba(var(--sh-ink),.16),0 12px 22px -10px rgba(var(--sh-ink),.45);transform:perspective(var(--tilt-persp,1000px)) rotateX(0deg) rotateY(0deg) scale3d(1.015,1.015,1.015);transition:transform var(--d-press) var(--sp-press),box-shadow .2s ease}
+[data-tilt-state="track"] .card-glare{opacity:1}
+}
+@media (prefers-reduced-motion:reduce){.card-glare{display:none}}
+
+/* ── the Carta seal (lacre): a circular tilt target whose highlight is always on ─────────────────────────────────── */
+.seal-tilt{--tilt-persp:720px;--tilt-max:11deg;--tilt-scale:1;position:relative;display:block;width:164px;height:164px;border-radius:50%}
+.seal-tilt .card-glare{opacity:1;mix-blend-mode:soft-light;background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,30%),rgba(255,255,255,.55),rgba(255,255,255,0) 58%)}   /* the fallback is the resting highlight; never redefine --glare-x here: it would shadow the value fp-ui.js writes on the parent */
+/* the face (sealed → .pop, open → .fade) fills the tilt target; the second guilloche line draws 120 ms after the first (no inline animation-delay under the CSP) */
+.seal-face{position:absolute;inset:0;border-radius:50%}
+.seal-face.ink{background:none}   /* .ink paints a surface; the sealed face is only a token scope (dark in both themes) for the SVG drawn on it */
+.seal-face>svg{display:block}
+.seal-r2{animation-delay:120ms}

@@ -118,7 +118,7 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
-from financas.interfaces.web import fp_money, nav
+from financas.interfaces.web import fp_charts, fp_money, nav
 from financas.interfaces.web.routes import MODULES, WebContext
 from financas.interfaces.web.shared import Lookups
 from financas.interfaces.web.shared import enum_of as _enum
@@ -196,6 +196,7 @@ def create_app(c: Container) -> FastAPI:
     # `brl` stays plain text (attributes, aria-label, option labels). `money` writes the .money
     # markup the privacy mode blurs; `currency`/`amount` are text forms; `config` feeds the head.
     fp_money.install(templates.env, locale="pt-BR", currency="BRL")
+    fp_charts.install(templates.env)  # after fp_money: cx_* filters of the v3 patch
     templates.env.globals.update(
         kind_labels=messages.TRANSACTION_KIND_LABELS,
         group_labels=messages.CATEGORY_GROUP_LABELS,
@@ -223,6 +224,7 @@ def create_app(c: Container) -> FastAPI:
         nav_more_groups=nav.more_groups,
         nav_in_more=nav.in_more,
         assistant_enabled=False,  # CLAUDE.md section 16: the assistant is not implemented yet
+        demo_mode=c.settings.demo,  # synthetic data (``financas demo``): the pages say so
     )
 
     # --- security: this app is local, but a web page open in the browser must not drive it ------
@@ -248,6 +250,9 @@ def create_app(c: Container) -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Request-ID"] = request.state.request_id
+        if request.url.path.startswith("/static/"):
+            # no-cache = revalidate (ETag); else an old script may be reused (heuristic freshness)
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     # --- shared page helpers ---------------------------------------------------------------------
