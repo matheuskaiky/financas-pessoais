@@ -813,13 +813,32 @@ def create_app(c: Container) -> FastAPI:
                 return by_status[status][0]
         return views[-1]
 
-    def cards_context(card_id: str | None, month: str | None) -> dict[str, object]:
+    def cards_context(
+        card_id: str | None, month: str | None, ano: str | None = None
+    ) -> dict[str, object]:
         overview = ListCards(c.uow, c.clock).execute()
         data = lookups()
         chosen = next((v for v in overview.cards if v.account.id == card_id), None) or (
             overview.cards[0] if overview.cards else None
         )
-        statement = pick_statement(chosen.statements, month) if chosen else None
+        # Year filter: the statements of one year at a time. ``?ano=`` (lenient) wins, then the
+        # year of ``?month=``, then the year of the statement the default rule picks.
+        years: list[int] = []
+        year: int | None = None
+        shown = chosen.statements if chosen else []
+        if chosen and chosen.statements:
+            years = sorted({v.statement.month.year for v in chosen.statements})
+            wanted: int | None = None
+            if ano and ano.strip().isdigit() and int(ano) in years:
+                wanted = int(ano)
+            elif month and month[:4].isdigit() and int(month[:4]) in years:
+                wanted = int(month[:4])
+            if wanted is None:
+                default = pick_statement(chosen.statements, month)
+                wanted = default.statement.month.year if default else years[-1]
+            year = wanted
+            shown = [v for v in chosen.statements if v.statement.month.year == year]
+        statement = pick_statement(shown, month) if chosen else None
         detail = (
             GetStatementDetail(c.uow, c.clock).execute(statement.statement.id)
             if statement
@@ -833,6 +852,9 @@ def create_app(c: Container) -> FastAPI:
             "plans": plans,
             "overview": overview,
             "chosen": chosen,
+            "years": years,
+            "year": year,
+            "shown_statements": shown,
             "statement": statement,
             "detail": detail,
             "category_by_id": {x.id: x for x in data["categories"]},
@@ -848,8 +870,13 @@ def create_app(c: Container) -> FastAPI:
         }
 
     @app.get("/cards", response_class=HTMLResponse)
-    def cards(request: Request, card: str | None = None, month: str | None = None):
-        return render(request, "cards.html", cards_context(card, month))
+    def cards(
+        request: Request,
+        card: str | None = None,
+        month: str | None = None,
+        ano: str | None = None,
+    ):
+        return render(request, "cards.html", cards_context(card, month, ano))
 
     @app.post("/cards")
     async def add_card(

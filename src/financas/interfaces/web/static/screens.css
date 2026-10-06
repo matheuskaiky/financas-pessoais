@@ -384,3 +384,11 @@ tr.sub-row td details > summary { min-height: 36px; font-size: 13.5px; font-weig
 @media (pointer: coarse) { .side-utilities :is(.fp-priv, .fp-theme) { --fpt-w: 44px; --fpt-h: 44px; height: 48px; }
   .side-utilities .fp-priv-btn { width: 44px; height: 44px; } }
 .side-utilities :is(.fp-priv-btn, .fp-theme button):focus-visible { outline-offset: -2px; }   /* a ring outside the targets would leave the 32 px bar */
+
+/* ---------- /cards: year filter above the statement tabs ---------- */
+.year-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.year-pill { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: 56px; height: 32px; padding: 0 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--solid-1); color: var(--soft); font: 600 13.5px var(--sans); text-decoration: none; font-variant-numeric: lining-nums tabular-nums; }
+.year-pill:hover { border-color: var(--line-3); color: var(--head); }
+.year-pill[aria-current="true"] { background: var(--pos-bg); border-color: var(--forest); color: var(--head); box-shadow: 0 0 0 1px var(--forest); }
+@media (pointer: coarse) { .year-pill { height: 44px; } }

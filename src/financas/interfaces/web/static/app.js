@@ -164,3 +164,21 @@ document.body.addEventListener("htmx:confirm", function (event) {
     exclude(to, from);
   }
 })();
+
+// Statement tabs (/cards): open scrolled to the current statement instead of the oldest month. The tab row is scrolled
+// directly (scrollLeft), not with scrollIntoView, so the page itself never moves; one read, then one write, and the
+// same on every HTMX swap (the year filter) and once the fonts have set the final widths.
+(function () {
+  const center = function (root) {
+    (root && root.querySelectorAll ? root : document).querySelectorAll(".statement-tabs").forEach(function (tabs) {
+      const active = tabs.querySelector('[aria-current="true"], [aria-selected="true"], .is-active');
+      if (!active || tabs.scrollWidth <= tabs.clientWidth) return;
+      const box = tabs.getBoundingClientRect();
+      const tab = active.getBoundingClientRect();
+      tabs.scrollLeft = tabs.scrollLeft + (tab.left - box.left) - (box.width - tab.width) / 2;
+    });
+  };
+  center(document);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { center(document); });
+  document.body.addEventListener("htmx:afterSettle", function (event) { center(event.target); });
+})();

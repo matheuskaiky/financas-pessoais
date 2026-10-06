@@ -13,11 +13,18 @@
 
 /* ── face ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 /* A face is an .ink scope (dark brand surface in both themes): write class="card-face ink card-face--forest". */
-.card-face{position:relative;isolation:isolate;display:flex;flex-direction:column;justify-content:space-between;gap:14px;box-sizing:border-box;min-height:184px;padding:20px 24px;border-radius:20px;color:var(--text-primary);background-color:var(--face-bg,var(--face-forest));background-image:repeating-radial-gradient(circle at 108% -12%,rgba(217,178,95,.07) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.04) 0 1px,transparent 1px 8px);box-shadow:var(--face-ring,0 0 #0000),var(--face-lift,0 0 #0000);-webkit-tap-highlight-color:transparent}
+.card-face{position:relative;isolation:isolate;display:flex;flex-direction:column;justify-content:space-between;gap:14px;box-sizing:border-box;min-height:184px;padding:20px 24px;border-radius:20px;color:var(--text-primary);background-color:var(--card-color,var(--face-bg,var(--face-forest)));background-image:repeating-radial-gradient(circle at 108% -12%,rgba(217,178,95,.07) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.04) 0 1px,transparent 1px 8px);box-shadow:var(--face-ring,0 0 #0000),var(--face-lift,0 0 #0000);-webkit-tap-highlight-color:transparent}
 .card-face--forest{--face-bg:var(--face-forest)}
 .card-face--teal{--face-bg:var(--face-teal)}
 .card-face--slate{--face-bg:var(--face-slate)}
 @supports (corner-shape:squircle){.card-face{corner-shape:squircle}}
+.card-face{--face-glare:#fff}
+/* The user's account colour (--card-color, templates/cards.html) drives the surface, its depth and the glare tint. The depth
+   shades only AWAY from the text colour (--face-depth is the opposite of --face-fg), so it can only raise the text contrast. */
+@supports (background-color:color-mix(in srgb,red,blue)){
+.card-face--tinted{--face-glare:color-mix(in srgb,var(--card-color) 25%,#fff);background-image:repeating-radial-gradient(circle at 108% -12%,rgba(217,178,95,.07) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.04) 0 1px,transparent 1px 8px),linear-gradient(155deg,transparent 0,transparent 35%,color-mix(in srgb,var(--card-color) 80%,var(--face-depth,#000)) 100%)}
+.card-face--tinted .card-glare{background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,50%),color-mix(in srgb,var(--face-glare) 32%,transparent) 0%,transparent 60%)}
+}
 /* selected card (the link wraps the face: a.cf[aria-current="true"]) */
 .cf[aria-current="true"] .card-face,.card-face[aria-current="true"],.card-face.is-selected{--face-ring:0 0 0 3px var(--sel-gap),0 0 0 5px var(--sel-ring)}
 

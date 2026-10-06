@@ -1,6 +1,7 @@
 """The web adapter end to end (synthetic data, temporary database)."""
 
 import datetime as dt
+import re
 from pathlib import Path
 
 import pytest
@@ -1481,3 +1482,96 @@ def test_confirmations_use_the_in_page_dialog_not_the_browser_popup(
     assert "htmx:confirm" in script and "showModal" in script
     for template in Path("src/financas/interfaces/web/templates").glob("*.html"):
         assert "onclick" not in template.read_text(encoding="utf-8")  # no inline handlers (CSP)
+
+
+# --- /cards: account colour, year filter, tab centring -----------------------------------------
+
+
+def _buy(client: TestClient, card: str, day: str, description: str, installments: str) -> None:
+    response = client.post(
+        "/cards/purchase",
+        data={
+            "account_id": card,
+            "date": day,
+            "description": description,
+            "amount": "300,00",
+            "amount_mode": "total",
+            "installments": installments,
+        },
+    )
+    assert response.status_code == 303
+
+
+def _tabs(page: str) -> str:
+    start = page.index('<nav class="statement-tabs"')
+    return page[start : page.index("</nav>", start)]
+
+
+def test_card_face_binds_the_account_colour_and_a_readable_text_colour(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container, color="#2E7D32", use_color="1")
+    page = client.get(f"/cards?card={card}").text
+    face = page[page.index('class="card-face card-face--tinted') :]
+    face = face[: face.index(">")]
+    assert "--card-color: #2E7D32" in face
+    assert (
+        "--face-fg: #FFFFFF" in face and "--face-depth: #000000" in face
+    )  # white text, depth darkens
+    assert "data-card-tilt" in face
+    css = client.get("/static/cards.css").text
+    assert (
+        "var(--card-color" in css and "color-mix(" in css
+    )  # surface, depth and glare derive from it
+
+
+def test_a_light_account_colour_gets_dark_text_and_a_lightening_depth(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container, color="#F7D117", use_color="1")
+    face = client.get(f"/cards?card={card}").text
+    face = face[face.index('class="card-face card-face--tinted') :]
+    face = face[: face.index(">")]
+    assert "--face-fg: #000000" in face and "--face-depth: #FFFFFF" in face
+
+
+def test_cards_year_filter_shows_only_the_months_of_the_chosen_year(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    _buy(client, card, "2026-11-26", "Notebook", "3")  # statements dez/2026, jan/2027, fev/2027
+    page = client.get(f"/cards?card={card}&ano=2027").text
+    tabs = _tabs(page)
+    assert "month=2027-01" in tabs and "month=2027-02" in tabs and "month=2026-12" not in tabs
+    assert page.count('class="year-pill"') == 2
+    assert re.search(r'<a class="year-pill"[^>]*aria-current="true"[^>]*>\s*2027\s*</a>', page)
+    other = _tabs(client.get(f"/cards?card={card}&ano=2026").text)
+    assert "month=2026-12" in other and "month=2027-01" not in other
+    # lenient: garbage or a year without statements falls back to the default year
+    for bad in ("banana", "1999", ""):
+        assert "month=" in _tabs(client.get(f"/cards?card={card}&ano={bad}").text)
+    # a month in the URL selects its year; the pills swap only the statement section (HTMX)
+    by_month = client.get(f"/cards?card={card}&month=2027-02").text
+    assert "month=2026-12" not in _tabs(by_month) and "month=2027-02" in _tabs(by_month)
+    assert 'hx-target="#statement-section"' in page and 'id="statement-section"' in page
+    assert 'hx-select="#statement-section"' in page and 'hx-push-url="true"' in page
+
+
+def test_active_statement_tab_carries_the_marker_the_auto_scroll_reads(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    _buy(client, card, "2026-11-26", "Notebook", "3")
+    tabs = _tabs(client.get(f"/cards?card={card}&month=2027-01").text)
+    assert tabs.count('aria-current="true"') == 1
+    marked = tabs[: tabs.index('aria-current="true"')]
+    assert "month=2027-01" in marked[marked.rindex("<a ") :]
+    script = client.get("/static/app.js").text
+    assert ".statement-tabs" in script and "scrollLeft" in script and "htmx:afterSettle" in script
+
+
+def test_a_single_year_still_shows_its_year_pill(client: TestClient, container: Container) -> None:
+    _, card = make_card(client, container)
+    _buy(client, card, "2026-07-26", "Fone", "1")
+    page = client.get(f"/cards?card={card}").text
+    assert page.count('class="year-pill"') == 1 and "ano=2026" in page

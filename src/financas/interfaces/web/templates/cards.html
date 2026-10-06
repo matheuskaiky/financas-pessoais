@@ -32,9 +32,9 @@
   {% set on = chosen and chosen.account.id == v.account.id %}
   <div class="card-slot">
     {#- Front v3 patch (card-markup.html): the face is the tilt target (data-card-tilt, fp-ui.js) and carries the glare layer;
-        the user's colour and its readable text colour (9.9) stay on the face as --face-bg / --face-fg. -#}
-    <a class="card-face {{ 'on' if on }}" data-card-tilt href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
-       style="--face-bg: {{ look.color }}; --face-fg: {{ look.text_color }}">
+        the user's colour (9.9) is bound as --card-color, its readable text colour as --face-fg. -#}
+    <a class="card-face card-face--tinted {{ 'on' if on }}" data-card-tilt href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
+       style="--card-color: {{ look.color }}; --face-fg: {{ look.text_color }}; --face-depth: {{ '#FFFFFF' if look.text_color == '#000000' else '#000000' }}">
       <span class="card-face__top">{{ avatar(look, 40) }}<span class="card-face__cycle">CRÉDITO</span></span>
       <span class="card-face__body"><strong class="card-face__nick">{{ v.account.nickname }}</strong>
         <span class="card-face__dates">vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes</span></span>
@@ -55,8 +55,17 @@
 {% endif %}
 
 {% if chosen %}
-<nav class="statement-tabs" aria-label="Faturas de {{ chosen.account.nickname }}">
-  {% for st in chosen.statements %}
+<div id="statement-section" class="statement-section">
+{% if years %}
+<div class="year-pills" role="group" aria-label="Ano das faturas">
+  {% for y in years %}
+  <a class="year-pill" href="/cards?card={{ chosen.account.id }}&ano={{ y }}" {% if y == year %}aria-current="true"{% endif %}
+     hx-get="/cards?card={{ chosen.account.id }}&ano={{ y }}" hx-target="#statement-section" hx-select="#statement-section" hx-swap="outerHTML" hx-push-url="true">{{ y }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+<nav class="statement-tabs" aria-label="Faturas de {{ chosen.account.nickname }}{{ ' em ' ~ year if year }}">
+  {% for st in shown_statements %}
   <a href="/cards?card={{ chosen.account.id }}&month={{ st.statement.month }}" {% if statement and statement.statement.id == st.statement.id %}aria-current="true"{% endif %}>
     {{ st.statement.month|month_short }} · {{ status_labels[st.status]|lower }}</a>
   {% else %}<span class="soft">Nenhuma fatura ainda: lance uma compra neste cartão.</span>{% endfor %}
@@ -198,6 +207,7 @@
   </div>
 </div>
 {% endif %}
+</div>
 {% endif %}
 
 <section class="panel" aria-labelledby="h-newcard">
