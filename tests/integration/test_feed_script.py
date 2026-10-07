@@ -68,7 +68,7 @@ def test_template_prints_a_header_that_parses_back_and_examples_that_work(
     assert code == 0 and out == template_text()
     header, *examples = out.splitlines()
     assert header.startswith("date;kind;account;to_account;amount;")
-    assert len(examples) == 8 and all(e.startswith("# ") for e in examples)
+    assert len(examples) == 16 and all(e.startswith("# ") for e in examples)
     assert analyze_feed(out.encode(), synthetic_context()).data_rows == 0
     # uncommented, the examples are valid rows (against the accounts the template names)
     ctx = synthetic_context()
@@ -87,7 +87,7 @@ def test_template_prints_a_header_that_parses_back_and_examples_that_work(
     filled = "\n".join([header, *(e.removeprefix("# ") for e in examples)]) + "\n"
     analysis = analyze_feed(filled.encode(), ctx)
     assert analysis.ok, analysis.issues
-    assert analysis.data_rows == 8
+    assert analysis.data_rows == 16
 
 
 def test_example_file_is_valid_against_the_scratch_accounts(scratch: Container) -> None:

@@ -64,6 +64,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # Vendored from the front v3 handoff (CLDR tables and long pt-BR docstrings); format only.
 "src/financas/interfaces/web/fp_money.py" = ["E501"]
 "src/financas/interfaces/web/fp_charts.py" = ["E501"]
+# CSV fixtures are one long semicolon line per row.
+"tests/unit/test_csv_import.py" = ["E501"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]

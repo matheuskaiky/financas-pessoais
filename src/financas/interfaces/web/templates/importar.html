@@ -23,6 +23,11 @@
     <p class="imp-loading htmx-indicator" role="status"><span class="imp-spin" aria-hidden="true"></span>Analisando o arquivo…</p>
   </form>
   <p class="soft imp-help">O arquivo segue um formato próprio (colunas como data, tipo, conta e valor). <a href="/importar/modelo">Baixar um arquivo de exemplo</a> · guia completo em <code>docs/IMPORTACAO_DADOS.md</code>. Contas e categorias precisam já existir no sistema.</p>
+  <details class="imp-help soft">
+    <summary>Forma de pagamento e desdobramento (PIX, débito, boleto)</summary>
+    <p>A coluna opcional <code>metodo_pagamento</code> (também <code>metodo</code> ou <code>forma_pagamento</code>) aceita <code>pix</code>, <code>debito</code>, <code>boleto</code>, <code>transferencia</code>, <code>dinheiro</code> e <code>outro</code> em contas correntes; compras no cartão são sempre <code>cartao_credito</code>. Se ficar em branco, o sistema usa o cartão, depois palavras da descrição (“PIX TRANSF”, “PAGTO ELETRON COBRANCA”, “COMPRA DEBITO”) e, por fim, <code>pix</code>.</p>
+    <p>Para dividir um PIX (ou qualquer despesa da conta corrente) em itens, repita o mesmo <code>id_agrupamento</code> em linhas seguidas: a primeira é a despesa com o valor total e as demais são os itens (descrição, categoria e valor), que precisam somar o total. A conta é debitada uma vez só. O arquivo de exemplo traz um PIX dividido, um boleto, uma compra parcelada e um desdobramento no cartão.</p>
+  </details>
 </section>
 
 <div id="import-result" class="imp-result" aria-live="polite" aria-atomic="false"></div>

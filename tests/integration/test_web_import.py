@@ -380,3 +380,41 @@ def test_demo_mode_previews_but_never_applies(tmp_path: Path) -> None:
     forced = client.post("/importar/aplicar", data={"token": "a" * 64})
     assert "a importação não grava nada" in forced.text
     assert (row_count(demo), db_digest(demo)) == before
+
+
+def test_a_file_with_payment_methods_and_a_pix_split_is_analysed_and_applied(
+    client: TestClient, container: Container
+) -> None:
+    """The sample with ``metodo_pagamento``: boleto, débito, a PIX split in two items, methods
+    inferred from the wording, and a card purchase that is always a card."""
+    sample = (
+        Path(__file__).parents[2] / "scripts" / "examples" / "entries_payment_methods_example.csv"
+    )
+    page = upload(client, sample.read_bytes(), "pagamentos.csv")
+    assert APPLY_BUTTON in page and "Compras com subitens" in visible(page)
+    applied = client.post("/importar/aplicar", data={"token": token_of(page)})
+    assert applied.status_code == 200 and "Importação concluída" in applied.text
+    with container.uow as work:
+        accounts = {a.nickname: a.id for a in work.accounts.list_all()}
+        rows = {
+            t.description: t
+            for name in ("Conta Corrente", "Cartão Exemplo")
+            for t in work.transactions.list_by_account(accounts[name])
+        }
+        split = work.transactions.splits_for([rows["Feira de sábado"].id])
+    methods = {d: (t.payment_method.value if t.payment_method else None) for d, t in rows.items()}
+    assert methods == {
+        "Condomínio Edifício Solar": "boleto",
+        "Padaria Pão Quente": "debito",
+        "Feira de sábado": "pix",
+        "PIX TRANSF MARIA": "pix",  # from the wording
+        "PAGTO ELETRON COBRANCA ENERGIA": "boleto",
+        "COMPRA DEBITO FARMACIA": "debito",
+        "Salário setembro": "transferencia",
+        "Notebook": "cartao_credito",  # a card is always a card
+    }
+    assert [i.amount_cents for i in split[rows["Feira de sábado"].id]] == [11_000, 7_000]
+    assert (
+        rows["Feira de sábado"].amount_cents == -18_000
+        and rows["Feira de sábado"].category_id is None
+    )

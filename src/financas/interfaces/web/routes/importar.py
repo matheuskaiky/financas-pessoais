@@ -115,6 +115,10 @@ def summary_counts(outcome: FeedOutcome) -> list[tuple[str, int]]:
     ]
     if rows.get(FeedKind.REFUND):
         counts.append((COUNT_LABELS["refund"], rows[FeedKind.REFUND]))
+    if plan.itemized:
+        counts.append((COUNT_LABELS["itemized"], plan.itemized))
+    if plan.refunded:
+        counts.append((COUNT_LABELS["refunded"], plan.refunded))
     if plan.balances:
         counts.append((COUNT_LABELS["balance"], plan.balances))
     return counts

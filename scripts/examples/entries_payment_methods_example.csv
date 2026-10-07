@@ -1,0 +1,14 @@
+# Synthetic example: payment methods, a boleto, a debit purchase and a PIX split in two items.
+# Needs these accounts (checking: Conta Corrente; card: Cartão Exemplo, due on day 5, closing 11
+# days before) and the initial categories. Header names in Portuguese (see docs/IMPORTACAO_DADOS.md).
+data;tipo;conta;valor;descricao;categoria;metodo_pagamento;estabelecimento;estornado;id_agrupamento
+2026-09-01;despesa;Conta Corrente;-650,00;Condomínio Edifício Solar;Casa;boleto;Condomínio Edifício Solar;;
+2026-09-02;despesa;Conta Corrente;-32,50;Padaria Pão Quente;Alimentação;débito;Padaria Pão Quente;;
+2026-09-03;despesa;Conta Corrente;-180,00;Feira de sábado;;pix;Feira Livre;;pix-1
+;;;110,00;Hortifruti;Supermercado;;;;pix-1
+;;;70,00;Açougue;Supermercado;;;;pix-1
+2026-09-04;despesa;Conta Corrente;-45,00;PIX TRANSF MARIA;Outros;;;;
+2026-09-05;despesa;Conta Corrente;-210,00;PAGTO ELETRON COBRANCA ENERGIA;Casa;;;;
+2026-09-06;despesa;Conta Corrente;-27,90;COMPRA DEBITO FARMACIA;Saúde;;;;
+2026-09-07;receita;Conta Corrente;5.000,00;Salário setembro;Salário;transferencia;;;
+2026-09-08;despesa;Cartão Exemplo;1.200,00;Notebook;Compras;;Kabum;;

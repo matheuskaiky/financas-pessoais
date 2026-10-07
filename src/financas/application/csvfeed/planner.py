@@ -26,6 +26,7 @@ from financas.application.csvfeed.model import (
     InstallmentLine,
     PaymentAction,
     PurchaseAction,
+    SplitAction,
     StatementChoice,
     StatementInfo,
     StatementTouch,
@@ -37,6 +38,7 @@ from financas.domain.money import YearMonth
 from financas.domain.rules import (
     validate_category_kind,
     validate_gross_balance,
+    validate_payment_method,
     validate_transfer_accounts,
 )
 from financas.domain.services.card_cycle import (
@@ -47,6 +49,8 @@ from financas.domain.services.card_cycle import (
     statement_dates,
 )
 from financas.domain.services.installments import build_schedule
+from financas.domain.services.merchants import alias_of, canonical_merchant, split_suffix
+from financas.domain.services.payment_methods import default_payment_method
 from financas.domain.services.text import normalize_search
 
 _TX_KIND = {
@@ -90,6 +94,20 @@ class _State:
     )
 
 
+def normalized_merchant(row: FeedRow) -> str | None:
+    """The merchant to store: a typed one goes through the canonical spelling ("mercadolivre" ->
+    "Mercado Livre"); a blank one is inferred from the description by the same rules the app uses
+    (a known alias in the text; a " - Shop" suffix is left for the use case, which moves it out of
+    the description). Incomes only take a typed merchant."""
+    if row.merchant:
+        return canonical_merchant(row.merchant)
+    if row.kind is FeedKind.EXPENSE and split_suffix(row.description) is not None:
+        return None
+    if row.kind in (FeedKind.EXPENSE, FeedKind.REFUND):
+        return alias_of(row.description)
+    return None
+
+
 def _suggest(key: str, names: dict[str, str]) -> str:
     close = difflib.get_close_matches(key, list(names), n=3, cutoff=0.4)
     return " | ".join(dict.fromkeys(names[k] for k in close))
@@ -99,6 +117,8 @@ class _Planner:
     def __init__(self, ctx: FeedContext) -> None:
         self.ctx = ctx
         self.s = _State(ctx)
+        self.itemized = 0
+        self.refunded = 0
         self.stored: dict[tuple[str, YearMonth], StatementInfo] = {
             (s.account_id, s.month): s for s in ctx.statements
         }
@@ -131,21 +151,46 @@ class _Planner:
                 self.issue(row, "UNKNOWN_CATEGORY", "category", suggestions="")
                 return None
             return found[0]
-        key = normalize_search(row.category)
+        return self.category_by_name(row.line, row.category)
+
+    def category_by_name(self, line: int, ref: str) -> CategoryInfo | None:
+        key = normalize_search(ref)
         found = [
             c
             for c in self.ctx.categories
             if key in (normalize_search(c.name), normalize_search(c.slug))
         ]
         if len(found) > 1:
-            self.issue(row, "AMBIGUOUS_CATEGORY", "category")
+            self.s.issues.append(FeedIssue("AMBIGUOUS_CATEGORY", line, "category"))
             return None
         if not found:
             names = {normalize_search(c.name): c.name for c in self.ctx.categories}
             names.update({normalize_search(c.slug): c.name for c in self.ctx.categories})
-            self.issue(row, "UNKNOWN_CATEGORY", "category", suggestions=_suggest(key, names))
+            self.s.issues.append(
+                FeedIssue(
+                    "UNKNOWN_CATEGORY", line, "category", {"suggestions": _suggest(key, names)}
+                )
+            )
             return None
         return found[0]
+
+    def items(self, row: FeedRow) -> tuple[SplitAction, ...] | None:
+        """The items of an itemized purchase with their categories resolved (``None``: a problem,
+        already reported on the item's own line)."""
+        resolved: list[SplitAction] = []
+        for item in row.splits:
+            category = self.category_by_name(item.line, item.category)
+            if category is None:
+                continue
+            try:
+                validate_category_kind(TransactionKind.EXPENSE, category.kind)
+            except DomainError as error:
+                self.s.issues.append(
+                    FeedIssue(error.code, item.line, "category", dict(error.params))
+                )
+                continue
+            resolved.append(SplitAction(item.description, category.id, item.amount_cents))
+        return tuple(resolved) if len(resolved) == len(row.splits) else None
 
     def usable(self, row: FeedRow, account: AccountInfo, column: str) -> bool:
         if not account.is_active:
@@ -220,7 +265,9 @@ class _Planner:
     def entry(self, row: FeedRow) -> FeedAction | None:
         before = len(self.s.issues)
         account = self.account(row, row.account, "account")
-        category = self.category(row)
+        itemized = bool(row.splits)
+        items = self.items(row) if itemized else ()
+        category = None if itemized else self.category(row)
         if category is not None:
             try:
                 validate_category_kind(_TX_KIND[row.kind], category.kind)
@@ -237,14 +284,28 @@ class _Planner:
                 self.issue(row, "STATEMENT_ONLY_FOR_CARDS", "statement")
             if row.installments is not None and row.installments >= 2:
                 self.issue(row, "INSTALLMENTS_ONLY_ON_CARDS", "installments")
-        if len(self.s.issues) > before or category is None:
+        method = row.payment_method
+        if method is not None:  # typed: the account decides whether it fits
+            try:
+                validate_payment_method(account.kind, _TX_KIND[row.kind], method)
+            except DomainError as error:
+                self.issue(row, error.code, "payment_method")
+        else:  # blank: a card is a card, the bank's wording says the rest, PIX is the fallback
+            method = default_payment_method(account.kind, row.description)
+        if len(self.s.issues) > before or items is None or (category is None and not itemized):
             return None
         notes = row.notes or None
+        merchant = normalized_merchant(row)
+        if row.installments is not None and row.installments >= 2 and card:
+            return self.purchase(row, account, category, notes, items)
+        if row.refunded:
+            self.refunded += 1
+        if itemized:
+            self.itemized += 1
+        category_id = category.id if category is not None else None
+        signed = -row.amount_cents if row.kind is FeedKind.EXPENSE else row.amount_cents
         if not card:
-            self.add_total(
-                account.id,
-                row.amount_cents if row.kind is not FeedKind.EXPENSE else -row.amount_cents,
-            )
+            self.add_total(account.id, signed)
             return EntryAction(
                 row.line,
                 account.id,
@@ -252,21 +313,23 @@ class _Planner:
                 row.date,
                 row.amount_cents,
                 row.description,
-                category.id,
+                category_id,
                 row.recurring,
                 notes,
                 None,
+                merchant,
+                row.refunded,
+                items,
+                method,
             )
-        if row.installments is not None and row.installments >= 2:
-            return self.purchase(row, account, category, notes)
         choice = self.choice(account, row.statement, row)
         if self.locked(row, account, choice.month, "statement" if row.statement else "date"):
             return None
         self.note_choice(row, choice)
-        signed = -row.amount_cents if row.kind is FeedKind.EXPENSE else row.amount_cents
         touch = self.touch(account, choice.month)
         touch.entries += 1
-        touch.owed_cents -= signed
+        if not row.refunded:  # a refunded purchase is on the statement's record, but owed nowhere
+            touch.owed_cents -= signed
         touch.signed_sum_cents += signed
         self.add_total(account.id, signed)
         return EntryAction(
@@ -276,14 +339,23 @@ class _Planner:
             row.date,
             row.amount_cents,
             row.description,
-            category.id,
+            category_id,
             row.recurring,
             notes,
             choice,
+            merchant,
+            row.refunded,
+            items,
+            method,
         )
 
     def purchase(
-        self, row: FeedRow, card: AccountInfo, category: CategoryInfo, notes: str | None
+        self,
+        row: FeedRow,
+        card: AccountInfo,
+        category: CategoryInfo | None,
+        notes: str | None,
+        items: tuple[SplitAction, ...] = (),
     ) -> FeedAction | None:
         assert row.installments is not None and row.amount_type is not None
         if row.installment_number > 1 and row.statement is None:
@@ -326,12 +398,14 @@ class _Planner:
             touch.signed_sum_cents -= item.amount_cents
         self.add_total_many(card.id, len(lines), -sum(ln.amount_cents for ln in lines))
         self.note_choice(row, choice)
+        if items:
+            self.itemized += 1
         return PurchaseAction(
             row.line,
             card.id,
             row.date,
             row.description,
-            category.id,
+            category.id if category is not None else None,
             notes,
             row.installments,
             row.installment_number,
@@ -341,6 +415,8 @@ class _Planner:
             choice,
             row.statement,
             tuple(lines),
+            normalized_merchant(row),
+            items,
         )
 
     def add_total_many(self, account_id: str, count: int, amount: int) -> None:
@@ -543,5 +619,7 @@ def build_plan(rows: list[FeedRow], ctx: FeedContext) -> tuple[FeedPlan | None, 
         ),
         reasons=dict(state.reasons),
         duplicate_rows=duplicates,
+        itemized=planner.itemized,
+        refunded=planner.refunded,
     )
     return plan, []

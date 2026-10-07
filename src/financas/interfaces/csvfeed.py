@@ -96,6 +96,8 @@ def _plan_body(plan: FeedPlan, names: Mapping[str, str]) -> list[str]:
             balances=plan.balances,
         ),
     ]
+    if plan.itemized or plan.refunded:
+        lines.append(REPORT["extras"].format(itemized=plan.itemized, refunded=plan.refunded))
     if plan.account_totals:
         lines.append(REPORT["accounts"])
         for total in sorted(plan.account_totals, key=lambda t: names[t.account_id].casefold()):

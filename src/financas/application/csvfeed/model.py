@@ -9,13 +9,20 @@ import datetime as dt
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from financas.domain.models import AccountKind, CategoryKind, InvestmentTracking, TransactionKind
+from financas.domain.models import (
+    AccountKind,
+    CategoryKind,
+    InvestmentTracking,
+    PaymentMethod,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
 from financas.domain.services.card_cycle import AssignmentReason
 
 MAX_DATA_ROWS = 20_000
 MAX_DESCRIPTION_LENGTH = 300
 MAX_NOTES_LENGTH = 2_000
+MAX_MERCHANT_LENGTH = 120
 MAX_AMOUNT_CENTS = 10**12  # exclusive
 MAX_DAYS_AHEAD = 366
 MIN_DATE = dt.date(1900, 1, 1)
@@ -36,6 +43,10 @@ class FeedColumn(StrEnum):
     INSTALLMENT_NUMBER = "installment_number"
     AMOUNT_TYPE = "amount_type"
     GROSS_AMOUNT = "gross_amount"
+    PAYMENT_METHOD = "payment_method"  # optional: pix, debito, boleto, ... (blank: inferred)
+    MERCHANT = "merchant"  # optional (v1.1.0): where the money went
+    REFUNDED = "refunded"  # optional: an expense kept on record but counted nowhere
+    GROUP = "group"  # optional: rows sharing it are ONE itemized purchase (parent row + items)
 
 
 COLUMN_ORDER: tuple[FeedColumn, ...] = tuple(FeedColumn)
@@ -85,6 +96,16 @@ class ParsedTable:
 
 
 @dataclass(frozen=True)
+class FeedSplit:
+    """One item of an itemized purchase: line, description, category reference and amount."""
+
+    line: int
+    description: str
+    category: str  # name or slug as typed
+    amount_cents: int  # magnitude
+
+
+@dataclass(frozen=True)
 class FeedRow:
     """A row that passed the syntax checks. ``amount_cents`` is the magnitude (balance: signed)."""
 
@@ -103,6 +124,11 @@ class FeedRow:
     installment_number: int
     amount_type: AmountType | None
     gross_cents: int | None
+    merchant: str = ""
+    refunded: bool = False
+    group: str = ""  # the shared id of an itemized purchase ("" for a flat row)
+    splits: tuple[FeedSplit, ...] = ()  # the items of an itemized purchase (this row is its parent)
+    payment_method: PaymentMethod | None = None  # as typed; blank is filled by the planner
 
 
 # ---- what the database holds (loaded by the adapter, never queried by the planner) -----------
@@ -167,6 +193,13 @@ class StatementChoice:
 
 
 @dataclass(frozen=True)
+class SplitAction:
+    description: str
+    category_id: str
+    amount_cents: int  # magnitude
+
+
+@dataclass(frozen=True)
 class EntryAction:
     line: int
     account_id: str
@@ -174,10 +207,14 @@ class EntryAction:
     posted_on: dt.date
     amount_cents: int  # magnitude
     description: str
-    category_id: str
+    category_id: str | None  # ``None`` on an itemized purchase
     recurring: bool
     notes: str | None
     statement: StatementChoice | None  # card entries only
+    merchant: str | None = None  # already normalised (canonical name), or ``None``
+    refunded: bool = False
+    splits: tuple[SplitAction, ...] = ()  # an itemized purchase: the entry has no category
+    payment_method: PaymentMethod | None = None  # typed, or inferred (card, wording, else PIX)
 
 
 @dataclass(frozen=True)
@@ -198,7 +235,7 @@ class PurchaseAction:
     account_id: str
     purchased_on: dt.date
     description: str
-    category_id: str
+    category_id: str | None  # ``None`` when the purchase is itemized
     notes: str | None
     installments: int
     first_number: int
@@ -208,6 +245,8 @@ class PurchaseAction:
     statement: StatementChoice  # of the first generated installment
     explicit_statement: YearMonth | None
     lines: tuple[InstallmentLine, ...]
+    merchant: str | None = None
+    splits: tuple[SplitAction, ...] = ()  # items of the whole purchase (see ``distribute_items``)
 
 
 @dataclass(frozen=True)
@@ -279,6 +318,8 @@ class FeedPlan:
     statements: tuple[StatementTouch, ...]
     reasons: dict[AssignmentReason, int]
     duplicate_rows: int
+    itemized: int = 0  # purchases (flat or installments) entered with items
+    refunded: int = 0  # expenses entered as refunded purchases
 
     @property
     def transactions(self) -> int:

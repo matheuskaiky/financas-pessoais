@@ -8,6 +8,8 @@ Para registrar muitas movimentações de uma vez, prepare um arquivo de texto se
 2. **Aplique.** O sistema faz um backup, grava tudo ou nada, e mostra quantos lançamentos entraram. O mesmo arquivo não é aplicado duas vezes.
 3. As contas, os cartões e as categorias citados no arquivo precisam existir antes. Na página, "Baixar um arquivo de exemplo" entrega um modelo com uma linha de cada tipo.
 
+Colunas opcionais: `metodo_pagamento` (pix, debito, boleto, transferencia, dinheiro, outro; em branco o sistema deduz pelo cartão, pela descrição ou usa pix), `estabelecimento`, `estornado` e `id_agrupamento` (linhas seguidas com o mesmo id formam uma compra desdobrada em itens, também em PIX e débito).
+
 No modo demonstração a página confere o arquivo, mas não grava. Pelo terminal o mesmo fluxo existe em `scripts/feed_from_csv.py` (simulação por padrão, `--apply` para gravar). A especificação detalhada, em inglês, segue abaixo.
 
 # CSV feed: loading entries from a file you prepare
@@ -140,6 +142,10 @@ Column names are in English; the Portuguese aliases are accepted in the header.
 | `installment_number` | `parcela_atual` | Integer, the current installment (default 1). Only with `installments`. | never |
 | `amount_type` | `tipo_valor` | `total` (default) or `installment` (`parcela`). Only with `installments` of 2 or more. | never |
 | `gross_amount` | `valor_bruto` | Money. Only on a `balance` of an **investment** account. | never |
+| `payment_method` | `metodo_pagamento`, `metodo`, `forma_pagamento` | How it was paid: `pix`, `debito`, `boleto`, `transferencia` (`ted`, `doc`), `dinheiro`, `outro`, and `cartao_credito` (only on a card). Case and accents ignored. Blank: see section 7.10. Only `expense`, `income`, `refund`. | never |
+| `merchant` | `estabelecimento` | Free text, up to 120 characters: where the money went. A known alias (`mercadolivre`) becomes its canonical name. | never |
+| `refunded` | `estornado`, `estornada` | Boolean (5.3). An `expense` kept on record but counted nowhere. Never on installments. | never |
+| `group` | `id_agrupamento`, `agrupamento`, `grupo` | An id shared by **consecutive rows** = ONE itemized purchase: the first row is the purchase (date, account, total, no category), the next rows are its items (description, category, amount). The items must add up to the total, to the cent. Works on a card **and on a checking account** (PIX, debit, boleto...). | never |
 
 The columns `date`, `kind`, `account` and `amount` must exist in the header. If the file has any
 `transfer` row, give the `to_account` column too (an absent column would silently mean "to an
@@ -149,9 +155,9 @@ Which columns a kind accepts (anything else must be blank, `NOT_ALLOWED_FOR_KIND
 
 | Kind | Accepts |
 |---|---|
-| `expense` | date, account, amount, description, category, recurring, notes, statement (cards), installments, installment_number, amount_type (cards) |
-| `income` | date, account, amount, description, category, recurring, notes |
-| `refund` | date, account, amount, description, category, recurring, notes, statement (cards) |
+| `expense` | date, account, amount, description, category, recurring, notes, statement (cards), installments, installment_number, amount_type (cards), payment_method, merchant, refunded, group |
+| `income` | date, account, amount, description, category, recurring, notes, payment_method, merchant |
+| `refund` | date, account, amount, description, category, recurring, notes, statement (cards), payment_method, merchant |
 | `transfer` | date, account, to_account, amount, description, category (only `Transferência`), notes, statement (payments) |
 | `balance` | date, account, amount, description, notes, gross_amount |
 
@@ -383,6 +389,36 @@ and reduces its total.
 Nothing is deduplicated (CLAUDE.md 13.2: two identical purchases on the same day are normal). The plan
 only warns with the **count** of rows identical to an earlier one (`DUPLICATE_ROWS`).
 
+### 7.10 Payment method and splits on a checking account
+
+`payment_method` says how an entry was paid. It is optional: when the cell is blank the system fills
+it, in this order, and only for `expense`, `income` and `refund`:
+
+1. the account is a **card** → `cartao_credito` (always; a card entry cannot carry another method);
+2. the **description** points to one (accents and case ignored): `PIX…` → `pix`;
+   `PAGTO ELETRON COBRANCA`, `boleto` → `boleto`; `COMPRA DEBITO`, `compra no débito` → `debito`;
+   `TED`, `DOC` → `transferencia`;
+3. otherwise → `pix` (the most common way on a bank account today).
+
+A typed value always wins over the wording. A method that does not fit the account (`pix` on a card,
+`cartao_credito` on a bank account) or an unknown one (`cheque`) is `INVALID_PAYMENT_METHOD`. Transfers
+and balances take no method (`NOT_ALLOWED_FOR_KIND`). The method feeds the filter chips of the entries
+list (Todos, Cartão de Crédito, PIX, Débito, Boleto).
+
+A **PIX (or any expense) of a checking account can be split** the same way as a card purchase, with
+`group`: the account is debited **once**, by the total, on the date of the first row; the items only
+decide the categories. Example (PIX of R$ 180,00 split in two):
+
+```
+data;tipo;conta;valor;descricao;categoria;metodo_pagamento;id_agrupamento
+2026-10-04;despesa;Conta Corrente;-180,00;Feira de sábado;;pix;pix-1
+;;;110,00;Hortifruti;Supermercado;;pix-1
+;;;70,00;Açougue;Supermercado;;pix-1
+```
+
+A sum that does not match is `SPLIT_GROUP_SUM_MISMATCH` (line of the purchase); a method on an item row
+is `NOT_ALLOWED_FOR_SPLIT_ITEM`.
+
 ## 8. One worked example per kind
 
 The file `scripts/examples/entries_example.csv` has all of them (synthetic names). It expects checking
@@ -480,6 +516,7 @@ the app (for example `ACCOUNT_INACTIVE`) are the same as in the app.
 | `SIGN_KIND_MISMATCH` | The sign contradicts the kind. | Section 5.2. |
 | `INVALID_BOOLEAN` | Not a yes/no value. | `sim`/`não`, `yes`/`no`, `1`/`0`, `x`, blank. |
 | `INVALID_CHOICE` | Unknown `kind` or `amount_type`. | Use the listed values. |
+| `INVALID_PAYMENT_METHOD` | Unknown `payment_method`, or one that does not fit the account (a bank method on a card, `cartao_credito` on a bank account). | Use `pix`, `debito`, `boleto`, `transferencia`, `dinheiro`, `outro` (bank) or leave blank. |
 | `INVALID_YEAR_MONTH` | `statement` is not `YYYY-MM`. | `2026-09`, not `09/2026`. |
 | `INVALID_NUMBER` | `installments`/`installment_number` is not a plain integer. | Digits only. |
 | `INVALID_INSTALLMENT_COUNT` | `installments` outside 1 to 120. | Fix. |
