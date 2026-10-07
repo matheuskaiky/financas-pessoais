@@ -1,0 +1,36 @@
+{# The itemized-breakdown editor, shared by the entry edit form and the card purchase form.
+   Needs: split_items (rows already typed or saved), split_categories (expense categories),
+   split_names (the form field names of one row: description, category, amount) and, optionally,
+   split_purchase (true on the card purchase form: the items are the totals of the whole
+   purchase, read from its amount, mode and installments fields) or split_plan (an installment's
+   edit form: a PlanItems with the plan-wide totals, and split_target_cents the installment's
+   own amount). Behaviour: static/app.js (data-split-*). The parent entry's category select
+   (name="category_id" in the same form) is locked while the editor is on. #}
+<fieldset class="split-editor" data-split-editor{% if split_purchase %} data-split-purchase{% endif %}{% if split_plan %} data-plan-total="{{ split_plan.covered_total_cents }}" data-plan-count="{{ split_plan.covered_count }}" data-target-amount="{{ split_target_cents }}"{% endif %}>
+      <input type="hidden" name="splits_present" value="1">
+      <label class="check" data-split-toggle-label><input type="checkbox" data-split-toggle-items {{ 'checked' if split_items }}> Adicionar itens / Dividir categorias</label>
+      <div class="split-items" data-split-items {{ 'hidden' if not split_items }}>
+        <div data-split-rows>
+          {% for item in split_items %}
+          <div class="split-row">
+            <input type="text" name="{{ split_names.description }}" value="{{ item.description }}" placeholder="Descrição do item" maxlength="300" aria-label="Descrição do item" autocomplete="off">
+            <select name="{{ split_names.category }}" aria-label="Categoria do item">{% for o in split_categories %}<option value="{{ o.id }}" {{ 'selected' if o.id == item.category_id }}>{{ o.name }}</option>{% endfor %}</select>
+            <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="split-amount" type="text" name="{{ split_names.amount }}" inputmode="decimal" value="{{ item.amount }}" placeholder="0,00" aria-label="Valor do item" autocomplete="off"></span>
+            <button type="button" class="icon-btn mini" data-split-remove aria-label="Remover item" title="Remover">×</button>
+          </div>
+          {% endfor %}
+        </div>
+        <button type="button" class="secondary" data-split-add>+ Adicionar item</button>
+        <p class="split-remaining" data-split-remaining role="status" aria-live="polite"></p>
+        <p class="hint" data-split-note aria-live="polite"></p>
+        <p class="hint">Os itens precisam somar o valor do lançamento. A fatura, o saldo e o limite continuam vendo o lançamento inteiro; os gastos por categoria seguem os itens.</p>
+      </div>
+      <template data-split-template>
+        <div class="split-row">
+          <input type="text" name="{{ split_names.description }}" placeholder="Descrição do item" maxlength="300" aria-label="Descrição do item" autocomplete="off">
+          <select name="{{ split_names.category }}" aria-label="Categoria do item">{% for o in split_categories %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}</select>
+          <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="split-amount" type="text" name="{{ split_names.amount }}" inputmode="decimal" placeholder="0,00" aria-label="Valor do item" autocomplete="off"></span>
+          <button type="button" class="icon-btn mini" data-split-remove aria-label="Remover item" title="Remover">×</button>
+        </div>
+      </template>
+    </fieldset>

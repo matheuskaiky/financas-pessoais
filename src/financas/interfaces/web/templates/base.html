@@ -31,6 +31,7 @@
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/screens.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/money-mask.js" defer></script>
   <script src="/static/app.js" defer></script>
   <script src="/static/ui.js" defer></script>
   <link rel="stylesheet" href="/static/palette.css">
@@ -62,7 +63,7 @@
         {% for item in group.items %}
         <a class="item" href="{{ item.href }}" {% if item.current %}aria-current="page"{% endif %}>
           <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="{{ item.icon }}"/></svg>
-          <span class="label-text">{{ item.label }}</span>{% if item.badge %}<span class="nav-badge" aria-hidden="true"></span><span class="sr-only">, nova</span>{% endif %}</a>
+          <span class="label-text">{{ item.label }}</span>{% if item.count_key %}{% set pending = nav_count(item.count_key) %}{% if pending %}<span class="nav-count">({{ pending }})</span>{% endif %}{% endif %}{% if item.badge %}<span class="nav-badge" aria-hidden="true"></span><span class="sr-only">, nova</span>{% endif %}</a>
         {% endfor %}
       </div>
       {% endfor %}
@@ -82,8 +83,10 @@
 
   <main>
     {% if demo_mode %}<div class="banner demo-banner" role="note"><span><strong>Modo demonstração</strong> · todos os dados são fictícios e ficam em data/demo.db. Seus dados reais não são abertos.</span></div>{% endif %}
+    <div id="flash" aria-live="polite">
     {% if error %}<div class="banner error" role="alert">{{ error }}</div>{% endif %}
     {% if notice %}<div class="banner ok" role="status">{{ notice }}</div>{% endif %}
+    </div>
     {% block content %}{% endblock %}
   </main>
 </div>

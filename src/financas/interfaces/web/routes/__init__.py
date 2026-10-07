@@ -109,6 +109,14 @@ from financas.interfaces.web.routes import importar  # noqa: E402
 
 MODULES.append(importar)
 
+from financas.interfaces.web.routes import edit  # noqa: E402
+
+MODULES.append(edit)
+
+from financas.interfaces.web.routes import review  # noqa: E402
+
+MODULES.append(review)
+
 __all__ = [
     "MODULES",
     "Lookups",

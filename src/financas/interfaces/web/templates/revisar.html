@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_macros.html" import merchant_datalist %}
+{% block title %}Revisão Rápida{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <span class="eyebrow">Movimento</span><h1>Revisão Rápida</h1>
+    <p>Um lançamento por vez: confirme o estabelecimento e a categoria. Atalhos: ← pular · → ou Enter salvar e avançar.</p>
+  </div>
+</header>
+
+<section class="review-stage" aria-label="Revisão rápida dos lançamentos">
+  <div id="review-deck" aria-live="polite">{% include "_review_card.html" %}</div>
+</section>
+{{ merchant_datalist(merchants) }}
+{% endblock %}

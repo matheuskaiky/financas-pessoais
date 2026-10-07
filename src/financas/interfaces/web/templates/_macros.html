@@ -4,6 +4,46 @@
 </span>
 {% endmacro %}
 
+{# The merchant suggestions every merchant field points at (list="merchants-list"): zero JS, just a
+   native <datalist>. ``merchants`` comes from the page's context; /merchants/suggestions serves the
+   same <option>s for anything that wants to refresh them. #}
+{% macro merchant_datalist(merchants) %}<datalist id="merchants-list">{% for m in merchants or [] %}<option value="{{ m }}"></option>{% endfor %}</datalist>{% endmacro %}
+
+{% macro merchant_input(value="", wide=false) %}<label class="field{{ ' wide' if wide }}"><span>Estabelecimento</span><input type="text" name="merchant" list="merchants-list" value="{{ value }}" maxlength="120" placeholder="Ex: Supermercado Pão de Açúcar, Amazon, Posto Ipiranga" autocomplete="off"></label>{% endmacro %}
+
+{# Itemized expense: the toggle that shows "N categorias", and the hidden breakdown it opens. #}
+{% macro split_toggle(t, items) %}
+{% set n = items|length %}
+<button type="button" class="split-toggle" data-split-toggle aria-expanded="false" aria-controls="split-{{ t.id }}">▾ {{ n }} {{ 'item' if n == 1 else 'itens' }}</button>
+{% endmacro %}
+
+{% macro split_detail(t, items, category_by_id, category_colors, private="transactions") %}
+<div class="split-detail" id="split-{{ t.id }}" hidden>
+  {% for i in items %}<div class="split-line"><span class="with-dot">{{ dot(category_colors[i.category_id]) }}{{ category_by_id[i.category_id].name }}</span><span class="split-desc">{{ i.description }}</span><span class="split-amt">{{ (-i.amount_cents)|money(sign="always", private=private) }}</span></div>{% endfor %}
+</div>
+{% endmacro %}
+
+{# The items of an installment purchase on /entries: each one's total and how it falls on the installments
+   (runs of equal amounts: "3x R$ 116,67", or "2x R$ 116,67 + 1x R$ 116,66"). pp is a PlanPurchase. #}
+{% macro plan_split_toggle(t, pp) %}
+{% set n = pp.items|length %}
+<button type="button" class="split-toggle" data-split-toggle aria-expanded="false" aria-controls="split-{{ t.id }}">▾ {{ n }} {{ 'item' if n == 1 else 'itens' }}</button>
+{% endmacro %}
+
+{% macro plan_split_detail(t, pp, category_by_id, category_colors) %}
+<div class="split-detail" id="split-{{ t.id }}" hidden>
+  {% for i in pp.items %}<div class="split-line"><span class="with-dot">{{ dot(category_colors[i.category_id]) }}{{ category_by_id[i.category_id].name }}</span><span class="split-desc">{{ i.description }}: {{ i.total_cents|money(private="transactions") }} <small>({% for count, cents in i.breakdown %}{% if not loop.first %} + {% endif %}{{ count }}x {{ cents|money(private="transactions") }}{% endfor %})</small></span><span class="split-amt">{{ (-i.total_cents)|money(sign="always", private="transactions") }}</span></div>{% endfor %}
+</div>
+{% endmacro %}
+
+{# A checkbox that picks an entry to merge with others (the toolbar appears with two or more). #}
+{% macro merge_pick(t) %}<input type="checkbox" class="merge-pick" data-merge-id="{{ t.id }}" data-merge-desc="{{ t.description }}" data-merge-date="{{ t.posted_on.isoformat() }}" aria-label="Selecionar {{ t.description }} para mesclar">{% endmacro %}
+
+{# A day cluster's header: the date once, and (optionally) what was spent that day. #}
+{% macro day_group_header(day, total_cents=none, total_label="Total do dia", private="transactions") %}
+<div class="day-head day-group__header"><span class="day-group__title">{{ day|day_title }}</span>{% if total_cents is not none %}<span class="day-group__total">{{ total_label }}: {{ total_cents|money(private=private) }}</span>{% endif %}</div>
+{% endmacro %}
+
 {% macro dot(color) %}<span class="dot" style="background: {{ color }}" aria-hidden="true"></span>{% endmacro %}
 
 {% macro appearance_form(target, entity_id, color, has_image, allow_image=True) %}

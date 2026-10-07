@@ -36,4 +36,38 @@
   {{ state_empty('Nenhuma despesa neste período', 'Quando houver despesas, elas aparecem aqui por categoria.', 'Fazer um lançamento', '/entries#form', 'chart') }}
   {% endif %}
 </section>
+
+<section class="card chart-card pn-cat-wide" aria-labelledby="h-mer" id="merchants">
+  <div class="pn-card-head">
+    <div class="ov" id="h-mer">Principais Estabelecimentos &amp; Vendedores</div>
+    <span class="soft">{{ title }}{% if merchants.merchant_count %} · {{ merchants.merchant_count }} estabelecimento(s) identificado(s){% endif %}</span>
+  </div>
+  {% if merchants.rows or merchants.unidentified %}
+  <table class="mer-table">
+    <thead><tr><th>Estabelecimento</th><th>Categoria principal</th><th class="num">Frequência</th><th class="num">Ticket médio</th><th class="num">Total gasto</th></tr></thead>
+    <tbody>
+    {% for r in merchants.rows %}
+      <tr>
+        <td data-label="Estabelecimento"><span class="mer-name">{{ r.merchant }}</span><span class="mer-share" aria-hidden="true"><i style="width: {{ '%.1f'|format(r.percentage_of_total * 100) }}%"></i></span></td>
+        <td data-label="Categoria principal">{{ r.top_category_name or '—' }}</td>
+        <td class="num" data-label="Frequência">{{ r.transaction_count }}×</td>
+        <td class="num" data-label="Ticket médio">{{ r.average_ticket_cents|money(private="transactions") }}</td>
+        <td class="num" data-label="Total gasto"><span class="mer-total">{{ r.total_spent_cents|money(private="transactions") }}</span><span class="mer-pct">{{ r.percentage_of_total|percent }} da despesa</span></td>
+      </tr>
+    {% endfor %}
+    {% if merchants.unidentified %}{% set r = merchants.unidentified %}
+      <tr class="mer-other">
+        <td data-label="Estabelecimento"><span class="mer-name">Outros / Sem identificação</span><span class="mer-share" aria-hidden="true"><i style="width: {{ '%.1f'|format(r.percentage_of_total * 100) }}%"></i></span></td>
+        <td data-label="Categoria principal">{{ r.top_category_name or '—' }}</td>
+        <td class="num" data-label="Frequência">{{ r.transaction_count }}×</td>
+        <td class="num" data-label="Ticket médio">{{ r.average_ticket_cents|money(private="transactions") }}</td>
+        <td class="num" data-label="Total gasto"><span class="mer-total">{{ r.total_spent_cents|money(private="transactions") }}</span><span class="mer-pct">{{ r.percentage_of_total|percent }} da despesa</span></td>
+      </tr>
+    {% endif %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ state_empty('Nenhuma despesa neste período', 'Informe o estabelecimento ao lançar uma despesa e o ranking aparece aqui.', 'Fazer um lançamento', '/entries#form', 'chart') }}
+  {% endif %}
+</section>
 {% endblock %}

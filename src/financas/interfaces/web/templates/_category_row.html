@@ -1,0 +1,23 @@
+{# One row of the categories table: shown, or in edit mode (inline rename, swapped by HTMX). #}
+{% from "_macros.html" import dot, appearance_form %}
+{% if editing %}
+<tr class="editing" id="cat-{{ c.id }}">
+  <td colspan="5">
+    <form class="inline-edit" method="post" action="/categories/{{ c.id }}/rename" hx-post="/categories/{{ c.id }}/rename" hx-target="closest tr" hx-swap="outerHTML">
+      <label class="field grow"><span class="eyebrow">Novo nome da categoria</span><input type="text" name="name" value="{{ value if value is not none else c.name }}" required maxlength="120" autocomplete="off" autofocus></label>
+      <button type="submit">Salvar</button>
+      <button type="button" class="secondary" hx-get="/categories/{{ c.id }}/row" hx-target="closest tr" hx-swap="outerHTML">Cancelar</button>
+    </form>
+    {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+  </td>
+</tr>
+{% else %}
+<tr id="cat-{{ c.id }}">
+  <td><span class="with-dot">{{ dot(category_colors[c.id]) }}{{ c.name }}</span>
+    <button type="button" class="icon-btn mini" hx-get="/categories/{{ c.id }}/rename" hx-target="closest tr" hx-swap="outerHTML" aria-label="Renomear categoria {{ c.name }}"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></td>
+  <td data-label="Grupo">{{ group_labels[c.group] }}</td>
+  <td data-label="Tipo">{{ category_kind_labels[c.kind] }}</td>
+  <td class="num" data-label="Orçamento mensal">{{ c.monthly_budget_cents|money(private="transactions") if c.monthly_budget_cents is not none else '—' }}</td>
+  <td data-label="Cor"><details><summary>Alterar</summary>{{ appearance_form('category', c.id, c.color, false, false) }}</details></td>
+</tr>
+{% endif %}

@@ -66,6 +66,7 @@ ICONS: dict[str, str] = {
         "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"
     ),
     "categories": "M3 12V4h8l10 10-8 8z M7.5 8.5h.01",
+    "review": "M4 6h16 M4 12h10 M4 18h7 M17 15l2 2 4-4",
     "importar": "M12 15V4 M8 8l4-4 4 4 M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
     "diagnostics": "M12 8v5 M12 16.5h.01 M12 3l9.5 17h-19z",
     "pergunte": (
@@ -95,6 +96,7 @@ class NavEntry:
     sidebar: bool = True
     hint: str = ""  # one line shown next to the entry on the "Mais" page
     aliases: tuple[str, ...] = ()
+    count_key: str = ""  # a live number shown beside the label, "Revisar (3)" (see ``nav_count``)
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,10 @@ class NavItem:
     @property
     def hint(self) -> str:
         return self.entry.hint
+
+    @property
+    def count_key(self) -> str:
+        return self.entry.count_key
 
 
 @dataclass(frozen=True)

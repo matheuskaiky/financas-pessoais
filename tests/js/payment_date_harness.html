@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Payment date bounds on the payment forms (app.js)</title>
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/screens.css">
+</head>
+<body>
+<form id="pay">
+  <label class="field"><span>Data</span>
+    <input type="date" id="d" name="date" value="2026-10-03" required min="2026-09-05" max="2026-10-03" data-payment-date data-min="2026-09-05" data-max="2026-10-03"></label>
+  <div class="payment-date-warning" data-payment-date-warning>
+    <p class="callout warn" id="range" data-pd-range>A data do pagamento deve estar entre 05/09/2026 e hoje (03/10/2026).</p>
+    <p class="callout error" id="future" data-pd-future hidden>Pagamentos futuros não são permitidos no momento.</p>
+    <p class="callout error" id="before" data-pd-before hidden>Data inválida: anterior ao vencimento da fatura anterior (05/09/2026).</p>
+  </div>
+  <button type="submit" id="save">Registrar pagamento</button>
+</form>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message));
+</script>
+<script src="../../src/financas/interfaces/web/static/app.js"></script>
+<script>
+const results = [];
+let failed = 0;
+const check = (name, ok, detail) => { if (!ok) failed++; results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail)); };
+const $ = (id) => document.getElementById(id);
+function type(value) { $("d").value = value; $("d").dispatchEvent(new Event("input", { bubbles: true })); }
+const state = () => [$("future").hidden, $("before").hidden, $("save").disabled, $("d").validationMessage !== ""].join(",");
+try {
+  check("starts valid", state() === "true,true,false,false", state());
+  check("range note always visible", !$("range").hidden, "hidden");
+  type("2026-10-04");
+  check("future: red alert, submit disabled", state() === "false,true,true,true", state());
+  type("2026-09-04");
+  check("before the previous due date: red alert, submit disabled", state() === "true,false,true,true", state());
+  type("2026-09-05");
+  check("exactly the lower bound is valid", state() === "true,true,false,false", state());
+  type("2026-10-03");
+  check("exactly today is valid", state() === "true,true,false,false", state());
+  type("2026-10-04"); type("2026-10-01");
+  check("fixing the date re-enables the form", state() === "true,true,false,false", state());
+  type("");
+  check("an empty date shows no range alert (required handles it)", state().startsWith("true,true,false"), state());
+} catch (e) { failed++; results.push("FAIL harness crashed :: " + e); }
+$("out").textContent = results.join("\n") + "\nDONE " + failed;
+</script>
+</body>
+</html>

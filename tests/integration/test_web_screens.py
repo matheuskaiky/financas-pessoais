@@ -90,7 +90,7 @@ def test_entries_page_uses_the_v3_layout(client: TestClient, container: Containe
     page = client.get("/entries?month=2026-07").text
     assert 'class="filter-bar"' in page and page.count("data-autosubmit") == 3
     assert re.search(r'data-odometer="100000"', page) and re.search(r'data-odometer="-4000"', page)
-    assert 'class="day-head"' in page and 'id="lista"' in page
+    assert "day-group__header" in page and 'id="lista"' in page
     # the quick form: a full-screen target on narrow screens, with a way back and a pair of fields
     assert 'id="form" class="panel quick"' in page and 'href="#lista"' in page
     assert 'class="pair"' in page and 'class="mobile-save"' in page

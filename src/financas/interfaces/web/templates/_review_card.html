@@ -1,0 +1,44 @@
+{# One review card, or the empty state. Replaces #review-deck by itself (HTMX). Needs: deck, pills,
+   plan, account_names, skipped_csv, error, category_colors. #}
+{% from "_macros.html" import dot %}
+{% from "_ui.html" import state_empty %}
+{% if deck.card %}
+{% set e = deck.card.entry %}
+<article class="review-card" id="review-card" data-review-id="{{ e.id }}">
+  <header class="review-top">
+    <span class="eyebrow">{{ deck.remaining }} para revisar{% if deck.pending != deck.remaining %} · {{ deck.pending - deck.remaining }} pulado(s){% endif %}</span>
+    <span class="review-date">{{ e.posted_on|date }}</span>
+  </header>
+  <h2 class="review-desc">{{ e.description }}</h2>
+  <div class="review-badges">
+    <span class="badge badge--subtle">{{ account_names[e.account_id] }}</span>
+    {% if plan %}<span class="badge badge--subtle">Parcela {{ e.installment_number }}/{{ plan.installment_total }}</span>{% endif %}
+  </div>
+  <div class="review-amount c-amt neg">{{ e.amount_cents|money(sign="always", private="transactions") }}</div>
+
+  <form class="review-form" id="review-form" method="post" action="/entries/{{ e.id }}/quick-fill"
+        hx-post="/entries/{{ e.id }}/quick-fill" hx-target="#review-deck" hx-swap="innerHTML swap:180ms">
+    <input type="hidden" name="skipped" value="{{ skipped_csv }}">
+    <label class="field"><span>Estabelecimento{% if deck.card.suggested_merchant and not e.merchant %} <small class="soft">· sugestão: {{ deck.card.suggested_merchant }}</small>{% endif %}</span>
+      <input type="text" name="merchant" list="merchants-list" value="{{ e.merchant or deck.card.suggested_merchant or '' }}" maxlength="120" placeholder="Ex: Supermercado Pão de Açúcar, Amazon, Posto Ipiranga" autocomplete="off"></label>
+    {% if deck.card.itemized %}
+    <p class="hint">Categorizado por item: as categorias deste lançamento estão nos itens dele.</p>
+    {% else %}
+    <fieldset class="review-pills">
+      <legend>Categoria</legend>
+      {% for x in pills %}
+      <label class="pill"><input type="radio" name="category_id" value="{{ x.id }}" {{ 'checked' if x.id == deck.card.suggested_category_id }}><span>{{ dot(category_colors[x.id]) }}{{ x.name }}</span></label>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+    <div class="review-actions">
+      <button type="button" class="secondary" data-review-skip hx-get="/revisar/next?skip_id={{ e.id }}&amp;skipped={{ skipped_csv }}" hx-target="#review-deck" hx-swap="innerHTML swap:180ms">Pular <kbd>←</kbd></button>
+      <button type="submit" data-review-save>Salvar e avançar <kbd>→</kbd></button>
+    </div>
+  </form>
+  <p class="hint review-keys">Atalhos: ← pular · → ou Enter salvar e avançar</p>
+</article>
+{% else %}
+<div class="review-empty">{% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}{{ state_empty('Tudo em dia! Nenhum lançamento precisando de revisão.', 'Quando um lançamento ficar sem estabelecimento ou sem categoria, ele aparece aqui.' if not deck.pending else 'Os lançamentos que você pulou continuam pendentes e voltam na próxima revisão.', 'Ver lançamentos', '/entries', 'inbox') }}</div>
+{% endif %}

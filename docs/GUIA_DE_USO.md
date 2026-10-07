@@ -81,6 +81,27 @@ financas card buy --card "Cartão X" --date 2026-07-26 --total 301,00 --installm
 financas card buy --card "Cartão X" --installment-value 61,88 --current 3 --of 10 --statement 2026-09
 ```
 
+## Corrigir lançamentos, renomear categorias e antecipar parcelas (pelo site)
+
+- **Valores digitados como no caixa eletrônico:** em qualquer campo de valor, os dígitos entram pela direita (`1` vira `0,01`, `1000` vira `10,00`, `100000` vira `1.000,00`). Apagar remove o último dígito.
+- **Editar um lançamento** (Lançamentos → *Editar*): valor, data, descrição, categoria, conta e observações. Transferências não são editáveis (apague e lance de novo); parcelas só permitem ajustar o valor; lançamentos de uma fatura **paga** são histórico e não mudam. Se a fatura já **fechou** (e não foi paga), o sistema avisa e pede a confirmação “Estou ciente de que a fatura já está fechada”. Mudar a data ou o cartão de uma compra recalcula a fatura pela regra de fechamento do cartão.
+- **Renomear categoria** (Categorias → lápis): o nome é único, sem diferenciar maiúsculas e acentos. A chave interna da categoria não muda.
+- **Antecipar parcelas** (Cartões → *Antecipar parcelas*): escolha as parcelas que ainda não foram cobradas e elas passam para a **fatura aberta**. A numeração (`4/10`) e o total da compra não mudam. O desconto é opcional: uma taxa ao mês (calculada pelos dias adiantados) ou o valor que o banco informou; ele entra como um estorno na mesma fatura. Parcelas de faturas já abertas, fechadas ou pagas não podem ser antecipadas.
+
+- **Parcelas:** a pencil abre o formulário completo da parcela (descrição, categoria, valor, observações e estabelecimento). Marque “Aplicar nova descrição e categoria a todas as parcelas” para espalhar a mudança pelas parcelas de faturas ainda abertas ou futuras. “Apagar” remove as parcelas pendentes e mantém as de faturas já pagas.
+- **Compra estornada:** marque a caixa no formulário do lançamento. Ele continua na lista (riscado, com a etiqueta “Estornada”), mas sai da fatura, do limite, dos totais e dos gráficos. Em parcelas, dá para marcar todas as pendentes de uma vez.
+- **Dividir em itens:** em “Adicionar itens / Dividir categorias”, divida uma despesa (por exemplo, R$ 380,00 de mercado) em itens com categorias diferentes. Os itens precisam somar o valor do lançamento (“Restam R$ …”). A fatura e o saldo continuam vendo o lançamento inteiro; os gastos por categoria seguem os itens.
+- **Mesclar lançamentos:** marque duas ou mais despesas da mesma conta (ou da mesma fatura do cartão) e use “Mesclar em um só lançamento”: elas viram um lançamento com a soma, cada original como um item.
+- **Estabelecimento:** campo opcional com sugestões do que você já digitou. Em Análises, “Principais Estabelecimentos & Vendedores” mostra total, frequência, ticket médio e categoria principal de cada um.
+
+- **Pagamento de fatura:** o lápis também aparece nas linhas de pagamento (em Lançamentos e na fatura em Cartões). Dá para mudar o valor, a data, a conta de origem e as observações; as duas pontas do pagamento andam juntas. Se o valor ficar menor que a fatura, ela volta a “Fechada” (a pagar); saldos e limite se recalculam.
+- **Data do pagamento da fatura:** o pagamento não pode ter **data futura** (por enquanto não existem agendamentos: um pagamento futuro distorceria os saldos de hoje e o status da fatura) e não pode ser **anterior ao vencimento da fatura anterior** do mesmo cartão (na primeira fatura do cartão, o limite inferior é o dia em que o ciclo abre). Os dois limites valem inclusive: dá para pagar exatamente no vencimento anterior ou hoje. O campo de data já mostra o intervalo (“A data do pagamento deve estar entre 05/09/2026 (vencimento da fatura anterior) e hoje (03/10/2026)”), avisa em vermelho assim que você digita uma data fora dele e bloqueia o botão de salvar; o servidor confere de novo. Ao editar um pagamento antigo, só a data é conferida quando você a altera.
+- **Compra parcelada em Lançamentos:** a compra aparece **uma vez só**, no dia em que foi feita, com o total (“−R$ 450,00”), o selo “3 x R$ 150,00” e, se tiver itens, a lista “▾ 2 itens” com o valor de cada item e como ele cai nas parcelas (“Monitor Gamer: R$ 350,00 (2x R$ 116,67 + 1x R$ 116,66)”). As parcelas mês a mês continuam na tela **Cartões** (cada fatura mostra sua parcela e os itens dela). Ao editar a compra em Lançamentos dá para mudar a **data da compra**: as parcelas em faturas abertas ou futuras são remarcadas para as faturas certas; parcelas em faturas fechadas ou pagas ficam como estão (e, se a primeira parcela já está numa fatura fechada ou paga, a data não pode mais mudar).
+
+- **Estabelecimento pelo texto:** ao lançar uma despesa, se você escrever a descrição como “Mouse Gamer - Kabum” e deixar o estabelecimento vazio, o sistema separa os dois: descrição “Mouse Gamer”, estabelecimento “Kabum”. Nomes conhecidos (Mercado Livre, Shopee, Uber, iFood, Amazon…) ganham sempre a mesma grafia.
+- **Revisão Rápida (Revisar):** mostra um lançamento por vez para você confirmar o estabelecimento e a categoria, com sugestões. Atalhos: ← pula, → ou Enter salva e avança. Em parcelas, o que você salva vale para todas as parcelas da compra.
+- **Preencher lançamentos antigos:** `financas merchants backfill --dry-run` mostra quantos mudariam; sem `--dry-run` aplica (faça `financas backup` antes). Na primeira vez que o banco é atualizado para esta versão, o mesmo preenchimento roda sozinho, depois de um backup automático.
+
 ## Modo demonstração
 
 Para mostrar o sistema (portfólio, GitHub, apresentações) sem expor dados reais, o modo demonstração sobe o painel com uma
@@ -127,7 +148,8 @@ Sem `--demo`, os comandos continuam usando seus dados reais. `financas import` n
 - **Lançamentos:** de janeiro de 2026 até hoje (salário CLT, aluguel, condomínio, supermercado, iFood, Uber, Netflix,
   Spotify, farmácia...), orçamento por categoria e alertas de recorrentes.
 - **Gráficos e telas:** patrimônio com mais de 20 pontos, ritmo do mês, fluxo de caixa, categorias, Carta do mês e "E se…".
-- **Modo privacidade:** o olho na barra lateral (ou a tecla `P`) desfoca os valores; funciona igual na demo.
+- **Modo privacidade:** o olho na barra lateral (ou a tecla `P`) desfoca os valores; funciona igual na demo. O desfoque é forte (valores grandes, como o saldo do painel e o centro do gráfico de rosca, ficam ainda mais borrados) e o texto não pode ser selecionado. Por padrão, **passar o cursor não revela nada**; para isso, ative em *Ajustes de Privacidade* a opção “Revelar valores temporariamente ao passar o cursor” (a escolha fica guardada neste navegador).
+- **Compra parcelada com itens:** ao lançar uma compra parcelada, use “Adicionar itens” para dividir o total entre categorias (por exemplo, Monitor R$ 350,00 + Cabo R$ 100,00 em 3x). Os itens são distribuídos, centavo a centavo, entre as faturas; a soma dos itens precisa fechar com o total (“Restam R$ …” até fechar). Ao editar uma parcela, “aplicar a todas as parcelas” redistribui os itens nas faturas ainda abertas ou futuras; faturas pagas não mudam.
 
 ### Segurança da demonstração
 

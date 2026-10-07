@@ -1,0 +1,84 @@
+{# Inline edit form of one entry (HTMX swaps it over the row). Needs: state (EntryEditState),
+   accounts (same-kind choices), category_options, form (field values), error, accounts_all. #}
+{% from "_macros.html" import merchant_input %}
+{% set t = state.entry %}
+{% set qs = ("?" ~ origin_qs) if origin_qs else "" %}
+<div class="row entry editing" id="entry-{{ t.id }}">
+  {% if state.payment %}
+  <form class="edit-body" method="post" action="/entries/{{ t.id }}/edit{{ qs }}" hx-post="/entries/{{ t.id }}/edit{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">
+    <p class="badge-line"><span class="badge">Pagamento de Fatura</span> <small>{{ statement_label(state.payment.statement.statement) }}</small></p>
+    <div class="callout warn" role="alert" data-payment-warning>
+      <strong>Atenção:</strong> Alterar o valor ou a conta de origem deste pagamento recalculará o saldo das contas e o status de quitação da fatura.
+    </div>
+    {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+    <div class="edit-grid">
+      <label class="field"><span>Valor pago</span>
+        <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" value="{{ form.amount }}" required autocomplete="off"></span></label>
+      {% with value = form.date %}{% include "snippets/payment-date-field.html" %}{% endwith %}
+      <label class="field"><span>Conta de origem</span>
+        <select name="from_account"><option value="" {{ 'selected' if not form.from_account }}>Conta não controlada</option>
+          {% for a in origin_choices %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.from_account }}>{{ a.nickname }}</option>{% endfor %}
+        </select></label>
+      <label class="field grow"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
+    </div>
+    <div class="edit-actions">
+      <button type="submit">Salvar pagamento</button>
+      <button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Cancelar</button>
+    </div>
+  </form>
+  {% elif state.is_transfer or state.is_locked %}
+  <div class="edit-body">
+    <p class="callout info" role="status">
+      {% if state.is_transfer %}Transferências não podem ser editadas: apague e lance de novo para corrigir.
+      {% else %}A fatura deste lançamento já está paga e faz parte do histórico: não pode ser alterada.{% endif %}
+    </p>
+    <div class="edit-actions"><button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Fechar</button></div>
+  </div>
+  {% else %}
+  <form class="edit-body" method="post" action="/entries/{{ t.id }}/edit{{ qs }}" hx-post="/entries/{{ t.id }}/edit{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">
+    {% if state.is_closed_statement %}
+    <div class="callout warn" role="alert" data-closed-statement>
+      <strong>Atenção:</strong> A fatura deste lançamento já foi fechada. Alterar este valor ou data pode divergir do pagamento já efetuado ou modificar o histórico da fatura.
+      <label class="check"><input type="checkbox" name="ack" value="1" {{ 'checked' if form.ack }} required> Estou ciente de que a fatura já está fechada</label>
+    </div>
+    {% endif %}
+    {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+    {% if state.is_installment %}<p class="badge-line"><span class="tag" data-installment>Parcela {{ t.installment_number }}/{{ state.plan.installment_total }}</span> <small>A data e o cartão seguem a fatura da compra.</small></p>{% endif %}
+    <div class="edit-grid">
+      <label class="field"><span>{{ 'Valor da parcela' if state.is_installment else 'Valor' }}</span>
+        <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" value="{{ form.amount }}" required autocomplete="off"></span></label>
+      {% if not state.is_installment %}<label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>{% endif %}
+      {% if consolidated %}<label class="field"><span>Data da compra</span><input type="date" name="purchase_date" value="{{ form.purchase_date }}" required data-purchase-date><small class="hint" data-purchase-date-note>A alteração da data da compra reajustará os vencimentos das faturas pendentes.</small></label>{% endif %}
+      <label class="field grow"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" maxlength="300" required autocomplete="off"></label>
+      {{ merchant_input(form.merchant, wide=true) }}
+      <label class="field"><span>Categoria</span>
+        <select name="category_id" data-restore="{% for o in category_options if o.slug == 'uncategorized' %}{{ o.id }}{% endfor %}" {{ 'disabled' if form_items }}>
+          {% if form_items %}<option value="" data-split-placeholder selected>Categorizado por item abaixo</option>{% endif %}
+          {% for o in category_options %}<option value="{{ o.id }}" {{ 'selected' if o.id == form.category_id and not form_items }}>{{ o.name }}</option>{% endfor %}</select></label>
+      {% if not state.is_installment %}<label class="field"><span>{{ 'Cartão' if state.statement else 'Conta' }}</span>
+        <select name="account_id">{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.account_id }}>{{ a.nickname }}</option>{% endfor %}</select></label>{% endif %}
+      <label class="field grow"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
+    </div>
+    {% if t.kind.value == 'expense' %}
+    {% set split_items = form_items %}{% set split_categories = category_options %}
+    {% set split_names = {"description": "item_description", "category": "item_category", "amount": "item_amount"} %}
+    {% set split_plan = state.plan_items if state.is_installment else none %}
+    {% set split_target_cents = t.amount_cents|abs %}
+    {% include "_splits_editor.html" %}
+    {% endif %}
+    {% if t.kind.value == 'expense' %}
+    <label class="check"><input type="checkbox" name="refunded" value="1" {{ 'checked' if form.refunded }}> Compra estornada</label>
+    {% if state.is_installment %}<label class="check"><input type="checkbox" name="refund_all" value="1" {{ 'checked' if form.refund_all }}> Marcar todas as parcelas pendentes deste plano como estornadas</label>{% endif %}
+    <p class="hint">Uma compra estornada continua na lista, mas não entra na fatura, no limite, nos totais nem nos gráficos.{% if state.is_installment %} A marcação das parcelas pendentes segue a caixa “Compra estornada”: marcada, estorna; desmarcada, desfaz.{% endif %}</p>
+    {% endif %}
+    {% if state.is_installment %}
+    <label class="check"><input type="checkbox" name="propagate" value="1" {{ 'checked' if form.propagate }}> Aplicar nova descrição e categoria a todas as parcelas deste parcelamento</label>
+    <p class="hint">Só mudam as parcelas de faturas ainda abertas ou futuras; as de faturas fechadas ou pagas ficam como estão. Valor e observações valem só para esta parcela.</p>
+    {% elif state.statement %}<p class="hint">Mudar a data ou o cartão recalcula a fatura pela regra de fechamento do cartão.</p>{% endif %}
+    <div class="edit-actions">
+      <button type="submit">Salvar</button>
+      <button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Cancelar</button>
+    </div>
+  </form>
+  {% endif %}
+</div>

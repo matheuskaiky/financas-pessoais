@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Items editor and merge toolbar (app.js)</title>
+</head>
+<body>
+<form id="f">
+  <span class="money-field"><span class="cur">R$</span><input id="total" type="text" name="amount" value="380,00"></span>
+  <fieldset class="split-editor" data-split-editor>
+    <input type="hidden" name="splits_present" value="1">
+    <label><input id="toggle" type="checkbox" data-split-toggle-items> Adicionar itens</label>
+    <div class="split-items" data-split-items hidden>
+      <div data-split-rows></div>
+      <button type="button" id="add" data-split-add>+ Adicionar item</button>
+      <p id="remaining" data-split-remaining></p>
+    </div>
+    <template data-split-template>
+      <div class="split-row">
+        <input type="text" name="item_description">
+        <select name="item_category"><option value="a">A</option><option value="b">B</option></select>
+        <span class="money-field"><input class="split-amount" type="text" name="item_amount"></span>
+        <button type="button" data-split-remove>×</button>
+      </div>
+    </template>
+  </fieldset>
+  <button type="submit" id="save">Salvar</button>
+</form>
+
+<div>
+  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id1" data-merge-desc="Feira" data-merge-date="2026-10-02"></div>
+  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id2" data-merge-desc="Sabão" data-merge-date="2026-10-05"></div>
+  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id3" data-merge-desc="Pão" data-merge-date="2026-10-03"></div>
+</div>
+<div class="row" id="rowx"><div class="c-desc"><button type="button" id="tg" data-split-toggle aria-expanded="false" aria-controls="split-x">▾ 3 categorias</button></div>
+  <div id="split-x" class="split-detail" hidden>detalhe</div></div>
+<div id="merge-bar" hidden><strong data-merge-count>0</strong><button type="button" data-merge-open>Mesclar</button><button type="button" data-merge-clear>Limpar</button></div>
+<dialog id="merge-dialog">
+  <form id="mf">
+    <div data-merge-ids></div>
+    <input name="description"><input name="date"><input type="checkbox" name="ack">
+    <div id="merge-error"><p>old</p></div>
+    <button type="button" data-merge-cancel>Cancelar</button>
+  </form>
+</dialog>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+</script>
+<script>
+// ?order=app-first loads the scripts the way the page used to (the editor's listener registered
+// before the mask's), the default is the way templates/base.html loads them now; both must work.
+const base = "../../src/financas/interfaces/web/static/";
+const order = new URLSearchParams(location.search).get("order") === "app-first" ? ["app", "money-mask"] : ["money-mask", "app"];
+for (const name of order) document.write('<script src="' + base + name + '.js"><\/script>');
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+const rows = () => document.querySelectorAll("[data-split-rows] .split-row");
+const amounts = () => Array.from(document.querySelectorAll(".split-amount"));
+function type(input, text) {
+  for (const ch of text) {
+    input.value += ch;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+  }
+}
+const fire = (el, name) => el.dispatchEvent(new Event(name, { bubbles: true }));
+
+// the editor is off: nothing to validate, nothing submitted from the rows
+check("starts hidden", document.querySelector("[data-split-items]").hidden, true);
+// switching it on adds two rows
+$("toggle").checked = true; fire($("toggle"), "change");
+check("two rows appear", rows().length, 2);
+check("items visible", document.querySelector("[data-split-items]").hidden, false);
+check("empty items: all remaining", $("remaining").textContent, "Restam R$ 380,00");
+check("blocks the submit when short", amounts()[0].validationMessage !== "", true);
+
+type(amounts()[0], "22000");
+check("first item", amounts()[0].value, "220,00");
+check("remaining after one", $("remaining").textContent, "Restam R$ 160,00");
+type(amounts()[1], "9000");
+check("remaining after two", $("remaining").textContent, "Restam R$ 70,00");
+$("add").click();
+check("third row", rows().length, 3);
+type(amounts()[2], "7000");
+check("exact sum", $("remaining").textContent, "Total distribuído com sucesso");
+check("state ok", $("remaining").dataset.state, "ok");
+check("valid when it adds up", amounts()[0].validationMessage, "");
+check("form is valid", $("f").checkValidity(), true);
+check("save enabled when it adds up", $("save").disabled, false);
+
+amounts()[2].value = ""; type(amounts()[2], "7001");  // 70,01: over by one cent
+check("over by a cent", $("remaining").textContent, "Ultrapassou R$ 0,01");
+check("state bad", $("remaining").dataset.state, "bad");
+check("form invalid", $("f").checkValidity(), false);
+check("save blocked when it does not", $("save").disabled, true);
+
+// changing the total re-evaluates
+$("total").value = "";
+type($("total"), "38001");
+check("total moved: sums match again", $("remaining").textContent, "Total distribuído com sucesso");
+// removing a row
+rows()[2].querySelector("[data-split-remove]").click();
+check("row removed", rows().length, 2);
+check("short again after remove", $("remaining").textContent, "Restam R$ 70,01");
+// one item is not enough
+rows()[1].querySelector("[data-split-remove]").click();
+check("one item is refused", amounts()[0].validationMessage, "Use pelo menos dois itens.");
+// off again: rows disabled so they are not submitted
+$("toggle").checked = false; fire($("toggle"), "change");
+check("hidden again", document.querySelector("[data-split-items]").hidden, true);
+check("rows disabled when off", Array.from(document.querySelectorAll("[data-split-rows] input")).every((i) => i.disabled), true);
+check("submits only the marker", new FormData($("f")).getAll("item_amount").length, 0);
+check("marker still sent", new FormData($("f")).get("splits_present"), "1");
+
+// row breakdown toggle
+$("tg").click();
+check("opens", $("split-x").hidden, false);
+check("aria-expanded", $("tg").getAttribute("aria-expanded"), "true");
+check("arrow flips", $("tg").textContent.startsWith("▴"), true);
+$("tg").click();
+check("closes", $("split-x").hidden, true);
+check("arrow back", $("tg").textContent.startsWith("▾"), true);
+
+// merge toolbar: appears with two picks
+const picks = document.querySelectorAll(".merge-pick");
+check("bar hidden at 0", $("merge-bar").hidden, true);
+picks[0].checked = true; fire(picks[0], "change");
+check("bar hidden at 1", $("merge-bar").hidden, true);
+picks[1].checked = true; fire(picks[1], "change");
+check("bar shown at 2", $("merge-bar").hidden, false);
+check("count", document.querySelector("[data-merge-count]").textContent, "2");
+document.querySelector("[data-merge-open]").click();
+check("dialog open", $("merge-dialog").open, true);
+check("hidden ids", Array.from(document.querySelectorAll('#mf input[name="ids"]')).map((i) => i.value).join(","), "id1,id2");
+check("default description is the first picked", $("mf").elements["description"].value, "Feira");
+check("default date is the latest", $("mf").elements["date"].value, "2026-10-05");
+check("old error cleared", $("merge-error").children.length, 0);
+document.querySelector("[data-merge-cancel]").click();
+check("dialog closed", $("merge-dialog").open, false);
+document.querySelector("[data-merge-clear]").click();
+check("cleared", document.querySelectorAll(".merge-pick:checked").length, 0);
+check("bar hidden after clear", $("merge-bar").hidden, true);
+
+// --- cases from the bug report: typed one digit at a time, the way a person does ---
+function fresh(totalDigits) {
+  $("toggle").checked = true; fire($("toggle"), "change");
+  while (rows().length > 0) rows()[0].querySelector("[data-split-remove]").click();
+  $("total").value = ""; type($("total"), totalDigits);
+  $("add").click(); $("add").click();
+}
+fresh("2552");  // R$ 25,52
+check("total typed", $("total").value, "25,52");
+type(amounts()[0], "1552"); type(amounts()[1], "1000");
+check("15,52 typed", amounts()[0].value, "15,52");
+check("10,00 typed", amounts()[1].value, "10,00");
+check("25,52 = 15,52 + 10,00", $("remaining").textContent, "Total distribuído com sucesso");
+check("save enabled", $("save").disabled, false);
+check("valid", $("f").checkValidity(), true);
+amounts()[1].value = ""; type(amounts()[1], "999");
+check("a cent short", $("remaining").textContent, "Restam R$ 0,01");
+
+fresh("125000");  // R$ 1.250,00
+check("thousands total", $("total").value, "1.250,00");
+type(amounts()[0], "100000"); type(amounts()[1], "25000");
+check("1.000,00 typed", amounts()[0].value, "1.000,00");
+check("1.250,00 = 1.000,00 + 250,00", $("remaining").textContent, "Total distribuído com sucesso");
+check("thousands valid", $("f").checkValidity(), true);
+amounts()[1].value = ""; type(amounts()[1], "30000");
+check("over by 50,00", $("remaining").textContent, "Ultrapassou R$ 50,00");
+
+// a negative parent against positive items: the sign never counts
+fresh("");
+$("total").value = ""; type($("total"), "-2552");
+check("negative total is masked", $("total").value, "-25,52");
+type(amounts()[0], "1552"); type(amounts()[1], "1000");
+check("-25,52 against 15,52 + 10,00", $("remaining").textContent, "Total distribuído com sucesso");
+// a pasted "R$ 1.000,00"
+fresh("125000");
+amounts()[0].value = ""; amounts()[0].dispatchEvent(new Event("input", { bubbles: true }));
+const paste = new Event("paste", { bubbles: true, cancelable: true });
+paste.clipboardData = { getData: () => "R$ 1.000,00" };
+amounts()[0].dispatchEvent(paste);
+check("pasted R$ 1.000,00", amounts()[0].value, "1.000,00");
+check("remaining after the paste", $("remaining").textContent, "Restam R$ 250,00");
+
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+});
+</script>
+</body>
+</html>

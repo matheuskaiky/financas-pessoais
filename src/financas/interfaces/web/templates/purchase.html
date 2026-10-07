@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_ui.html" import state_empty %}
+{% from "_macros.html" import merchant_input, merchant_datalist %}
 {% block title %}Nova compra no cartão{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -22,9 +23,12 @@
         </select></label>
       <label class="field"><span>Data da compra</span><input type="date" name="date" value="{{ form.date }}"></label>
       <label class="field wide"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" required maxlength="300" autocomplete="off"></label>
+      {{ merchant_input(form.merchant, wide=true) }}
       <label class="field"><span>Categoria</span>
-        <select name="category_id"><option value="">Não categorizado</option>
-          {% for x in expense_categories if x.slug != 'uncategorized' %}<option value="{{ x.id }}" {{ 'selected' if form.category_id == x.id }}>{{ x.name }}</option>{% endfor %}
+        <select name="category_id" {{ 'disabled' if form_items }}>
+          {% if form_items %}<option value="" data-split-placeholder selected>Categorizado por item abaixo</option>{% endif %}
+          <option value="">Não categorizado</option>
+          {% for x in expense_categories if x.slug != 'uncategorized' %}<option value="{{ x.id }}" {{ 'selected' if form.category_id == x.id and not form_items }}>{{ x.name }}</option>{% endfor %}
         </select></label>
       <label class="field"><span>Parcelas</span><input type="text" name="installments" inputmode="numeric" value="{{ form.installments }}"><small>1 = à vista</small></label>
     </div>
@@ -35,6 +39,12 @@
     </div>
     <label class="field"><span>Valor</span>
       <span class="money-field big"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span></label>
+
+    {#- Itemized breakdown of a single payment: the parent category above is locked while it is on -#}
+    {% set split_items = form_items %}{% set split_categories = expense_categories|rejectattr('slug', 'equalto', 'uncategorized')|list %}
+    {% set split_names = {"description": "split_descriptions", "category": "split_categories", "amount": "split_amounts"} %}
+    {% set split_purchase = true %}
+    {% include "_splits_editor.html" %}
 
     <details {{ 'open' if form.statement_month or form.current_installment != '1' }}>
       <summary>Compra já em andamento ou fatura diferente</summary>
@@ -60,5 +70,6 @@
     <div id="preview" {% if form.amount %}hx-post="/cards/purchase/preview" hx-trigger="load" hx-include="#purchase" hx-target="this"{% endif %}></div>
   </section>
 </form>
+{{ merchant_datalist(merchants) }}
 {% endif %}
 {% endblock %}

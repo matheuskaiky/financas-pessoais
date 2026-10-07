@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import FormData
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from financas.application.queries.balances import ListAccountBalances
@@ -29,12 +30,15 @@ from financas.application.queries.investments import (
     ListHoldings,
     ListInvestments,
 )
+from financas.application.queries.merchants import ListMerchants
+from financas.application.queries.plan_purchases import ListPlanPurchases
 from financas.application.queries.planning import (
     BudgetRange,
     GetBudget,
     GetDailyFlow,
     GetRecurring,
 )
+from financas.application.queries.review import CountPendingReview
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.budget import SetCategoryBudgets
@@ -84,6 +88,7 @@ from financas.application.use_cases.transactions import (
     RegisterTransactionCommand,
     RegisterTransfer,
     RegisterTransferCommand,
+    SplitItem,
     SuggestCategory,
 )
 from financas.container import Container
@@ -100,15 +105,18 @@ from financas.domain.models import (
     Liquidity,
     RateMode,
     StatementStatus,
+    Transaction,
     TransactionKind,
 )
 from financas.domain.money import YearMonth, format_brl, parse_brl
 from financas.domain.services.images import MAX_IMAGE_BYTES, detect_image_type
+from financas.domain.services.splits import allocations, split_ids
 from financas.domain.services.text import normalize_search
 from financas.interfaces import appearance, messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
+    format_day_header,
     format_day_label,
     format_decimal_comma,
     format_month,
@@ -119,6 +127,7 @@ from financas.interfaces.formatting import (
     parse_percent_bps,
 )
 from financas.interfaces.web import fp_charts, fp_money, nav
+from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import MODULES, WebContext
 from financas.interfaces.web.shared import Lookups
 from financas.interfaces.web.shared import enum_of as _enum
@@ -189,6 +198,7 @@ def create_app(c: Container) -> FastAPI:
         date=format_date,
         date_short=format_date_short,
         day_label=format_day_label,
+        day_title=lambda day: format_day_header(day, c.clock.today()),
         signed=format_signed,
         month_short=format_month,
         percent=format_percent,
@@ -197,6 +207,7 @@ def create_app(c: Container) -> FastAPI:
     # markup the privacy mode blurs; `currency`/`amount` are text forms; `config` feeds the head.
     fp_money.install(templates.env, locale="pt-BR", currency="BRL")
     fp_charts.install(templates.env)  # after fp_money: cx_* filters of the v3 patch
+    templates.env.globals["card_text_color"] = appearance.card_text_color
     templates.env.globals.update(
         kind_labels=messages.TRANSACTION_KIND_LABELS,
         group_labels=messages.CATEGORY_GROUP_LABELS,
@@ -206,6 +217,8 @@ def create_app(c: Container) -> FastAPI:
         explain=messages.explain_assignment,
         best_day=messages.best_day_hint,
         statement_label=messages.statement_label,
+        closing_countdown=messages.closing_countdown,
+        due_countdown=messages.due_countdown,
         alert_labels=messages.ALERT_KIND_LABELS,
         describe_alert=messages.describe_alert,
         asset_labels=messages.ASSET_CLASS_LABELS,
@@ -220,6 +233,7 @@ def create_app(c: Container) -> FastAPI:
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
         nav_groups=nav.groups,
+        nav_count=lambda key: CountPendingReview(c.uow).execute() if key == "review" else 0,
         nav_current=nav.resolve,
         nav_more_groups=nav.more_groups,
         nav_in_more=nav.in_more,
@@ -443,16 +457,45 @@ def create_app(c: Container) -> FastAPI:
         data = lookups()
         categories = {x.id: x for x in data["categories"]}
         with c.uow as work:
-            month_rows = work.transactions.list_between(period.start, period.end)
+            # refunded entries are listed (struck through) but the summary below never counts them
+            month_rows = work.transactions.list_between(
+                period.start, period.end, include_refunded=True
+            )
             recent = work.transactions.list_between(today() - dt.timedelta(days=120), today())
+            splits = work.transactions.splits_for(split_ids(month_rows))
         wanted = normalize_search(filters.get("q", ""))
+        # an installment purchase is ONE row, on its purchase date (the card screen keeps the
+        # monthly installments); its figures come from the plan (queries/plan_purchases.py)
+        purchases = {p.plan.id: p for p in ListPlanPurchases(c.uow).execute()}
+        in_month = [p for p in purchases.values() if period.start <= p.purchased_on <= period.end]
+        plan_rows = [p.as_entry() for p in in_month]
+        plan_by_anchor = {p.anchor.id: p for p in in_month}
+        plain_rows = [t for t in month_rows if t.plan_id not in purchases]
+        month_rows = sorted(
+            [*plain_rows, *plan_rows], key=lambda t: t.posted_on, reverse=True
+        )  # stable: the order inside a day is kept
+
+        def category_matches(t: Transaction) -> bool:
+            plan_purchase = plan_by_anchor.get(t.id)
+            if plan_purchase is not None:
+                return filters["category"] in plan_purchase.category_ids
+            # an itemized entry matches the category of the entry or of any of its items
+            return (
+                filters["category"] in {cid for cid, _ in allocations(t, splits)}
+                or t.category_id == filters["category"]
+            )
+
         rows = [
             t
             for t in month_rows
             if (not filters.get("account") or t.account_id == filters["account"])
             and (not filters.get("kind") or t.kind.value == filters["kind"])
-            and (not filters.get("category") or t.category_id == filters["category"])
-            and (not wanted or wanted in t.description_search)
+            and (not filters.get("category") or category_matches(t))
+            and (
+                not wanted
+                or wanted in t.description_search
+                or wanted in normalize_search(t.merchant or "")
+            )
         ]
         summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
         accounts = data["accounts"]
@@ -480,6 +523,8 @@ def create_app(c: Container) -> FastAPI:
         return {
             **data,
             "rows": rows[:limit],
+            "splits": splits,
+            "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
             "month_count": len(month_rows),
             "next_limit": limit + PAGE_SIZE,
@@ -503,7 +548,9 @@ def create_app(c: Container) -> FastAPI:
                 "category_id": form.get("category_id", ""),
                 "recurring": form.get("recurring", ""),
                 "notes": form.get("notes", ""),
+                "merchant": form.get("merchant", ""),
             },
+            "merchants": ListMerchants(c.uow).execute(),
             "category_options": category_options("expense" if kind == "transfer" else kind),
             "entry_kinds": _ENTRY_KINDS,
         }
@@ -581,6 +628,7 @@ def create_app(c: Container) -> FastAPI:
         category_id: Annotated[str, Form()] = "",
         recurring: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
+        merchant: Annotated[str, Form()] = "",
     ):
         form = {k: v for k, v in locals().items() if isinstance(v, str)}
         try:
@@ -608,6 +656,7 @@ def create_app(c: Container) -> FastAPI:
                     category_id=category_id or None,
                     is_recurring=bool(recurring),
                     notes=notes or None,
+                    merchant=merchant or None,
                 )
             )
         except DomainError as error:
@@ -847,9 +896,11 @@ def create_app(c: Container) -> FastAPI:
         checking = [a for a in data["accounts"] if a.kind is AccountKind.CHECKING and a.is_active]
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
+            splits = work.transactions.splits_for(split_ids(detail.entries)) if detail else {}
         return {
             **data,
             "plans": plans,
+            "splits": splits,
             "overview": overview,
             "chosen": chosen,
             "years": years,
@@ -859,6 +910,10 @@ def create_app(c: Container) -> FastAPI:
             "detail": detail,
             "category_by_id": {x.id: x for x in data["categories"]},
             "checking_accounts": checking,
+            "payment_bounds": payment_window(c.uow, statement.statement, today())
+            if statement
+            else None,
+            "merchants": ListMerchants(c.uow).execute(),
             "installments": ListActiveInstallments(c.uow, c.clock).execute(chosen.account.id)
             if chosen
             else [],
@@ -1037,7 +1092,9 @@ def create_app(c: Container) -> FastAPI:
         first = YearMonth.from_date(today()).add_months(-3)
         return [(str(m), format_month(m)) for m in (first.add_months(n) for n in range(0, 20))]
 
-    def purchase_context(form: dict[str, str] | None = None) -> dict[str, object]:
+    def purchase_context(
+        form: dict[str, str] | None = None, items: list[dict[str, str]] | None = None
+    ) -> dict[str, object]:
         data = lookups()
         form = form or {}
         card_list = [
@@ -1049,6 +1106,8 @@ def create_app(c: Container) -> FastAPI:
             "card_list": card_list,
             "expense_categories": expense_categories,
             "months": purchase_months(),
+            "form_items": items or [],
+            "merchants": ListMerchants(c.uow).execute(),
             "form": {
                 "account_id": form.get(
                     "account_id", card_list[0].id if len(card_list) == 1 else ""
@@ -1062,10 +1121,27 @@ def create_app(c: Container) -> FastAPI:
                 "current_installment": form.get("current_installment", "1"),
                 "statement_month": form.get("statement_month", ""),
                 "recurring": form.get("recurring", ""),
+                "merchant": form.get("merchant", ""),
             },
         }
 
-    def purchase_command(form: dict[str, str]) -> CardPurchaseCommand:
+    def typed_items(data: FormData) -> list[dict[str, str]]:
+        """The rows of the items editor, as typed (rows left empty are dropped)."""
+        rows = zip(
+            data.getlist("split_descriptions"),
+            data.getlist("split_categories"),
+            data.getlist("split_amounts"),
+            strict=False,
+        )
+        return [
+            {"description": str(d), "category_id": str(k), "amount": str(a)}
+            for d, k, a in rows
+            if str(d).strip() or str(a).strip()
+        ]
+
+    def purchase_command(
+        form: dict[str, str], items: list[dict[str, str]] | None = None
+    ) -> CardPurchaseCommand:
         amount = parse_brl(form.get("amount", "")) if form.get("amount", "").strip() else None
         by_installment = form.get("amount_mode") == "installment"
         count = _int(form.get("installments") or "1", "INVALID_INSTALLMENT_COUNT")
@@ -1084,6 +1160,13 @@ def create_app(c: Container) -> FastAPI:
             if form.get("statement_month")
             else None,
             is_recurring=bool(form.get("recurring")),
+            merchant=form.get("merchant") or None,
+            splits=tuple(
+                SplitItem(i["description"], i["category_id"], abs(parse_brl(i["amount"])))
+                for i in (items or [])
+            )
+            if form.get("splits_present")
+            else (),
         )
 
     @app.get("/cards/purchase", response_class=HTMLResponse)
@@ -1127,16 +1210,18 @@ def create_app(c: Container) -> FastAPI:
 
     @app.post("/cards/purchase")
     async def purchase_save(request: Request):
-        form = {k: str(v) for k, v in (await request.form()).items()}
+        data = await request.form()
+        form = {k: str(v) for k, v in data.items()}
+        items = typed_items(data)
         try:
-            result = RegisterCardPurchase(c.uow).execute(purchase_command(form))
+            result = RegisterCardPurchase(c.uow).execute(purchase_command(form, items))
         except DomainError as error:
-            return render(request, "purchase.html", purchase_context(form), error=error)
+            return render(request, "purchase.html", purchase_context(form, items), error=error)
         except ValueError:
             return render(
                 request,
                 "purchase.html",
-                purchase_context(form),
+                purchase_context(form, items),
                 error=DomainError("INVALID_AMOUNT"),
             )
         first = result.transactions[0]

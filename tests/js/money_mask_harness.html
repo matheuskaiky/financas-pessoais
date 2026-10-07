@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>ATM-style money mask (money-mask.js)</title>
+</head>
+<body>
+<form id="f">
+  <span class="money-field"><span class="cur">R$</span><input id="a" type="text" name="amount" inputmode="decimal"></span>
+  <span class="money-field"><span class="cur">R$</span><input id="pre" type="text" name="pre" inputmode="decimal" value="1234,50"></span>
+  <span class="money-field"><span class="cur">R$</span><input id="free" type="text" name="free" data-money-free></span>
+  <input id="plain" type="text" name="plain">
+</form>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+</script>
+<script src="../../src/financas/interfaces/web/static/money-mask.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {  // after money-mask.js prepared the fields
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+
+function type(input, text) {
+  for (const ch of text) {
+    input.value += ch;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
+  }
+}
+function backspace(input, times = 1) {
+  for (let i = 0; i < times; i++) {
+    input.value = input.value.slice(0, -1);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+  }
+}
+function reset(input) { input.value = ""; }
+
+const a = $("a");
+// the cash-machine sequence from the spec: each digit pushes the others to the left
+for (const [digits, want] of [["1", "0,01"], ["10", "0,10"], ["100", "1,00"], ["1000", "10,00"],
+  ["10000", "100,00"], ["100000", "1.000,00"], ["1234567", "12.345,67"], ["0", "0,00"], ["00", "0,00"],
+  ["007", "0,07"]]) {
+  reset(a); type(a, digits);
+  check("typing " + digits, a.value, want);
+}
+// digit by digit, the value is always the mask of everything typed so far
+reset(a);
+const steps = ["0,01", "0,12", "1,23", "12,34", "123,45", "1.234,56"];
+"123456".split("").forEach((ch, i) => { type(a, ch); check("step " + (i + 1), a.value, steps[i]); });
+// backspace drops the least-significant digit
+backspace(a); check("backspace 1", a.value, "123,45");
+backspace(a, 2); check("backspace 3", a.value, "1,23");
+backspace(a, 3); check("backspace to empty", a.value, "");
+reset(a); type(a, "100"); backspace(a); check("1,00 then backspace", a.value, "0,10");
+// letters and symbols are ignored
+reset(a); type(a, "R$ 1a2.b3"); check("noise is dropped", a.value, "1,23");
+// a minus keeps it negative
+reset(a); type(a, "-"); check("lone minus", a.value, "-");
+type(a, "5"); check("negative", a.value, "-0,05");
+// a long run stays bounded
+reset(a); type(a, "9".repeat(20)); check("bounded", a.value, "99.999.999.999,99");
+
+// a value rendered by the server is formatted on load (and stays what the server meant)
+check("prefilled", $("pre").value, "1.234,50");
+check("input mode is numeric", $("pre").getAttribute("inputmode"), "numeric");
+// opt-out and non-money fields are untouched
+type($("free"), "12ab"); check("data-money-free untouched", $("free").value, "12ab");
+type($("plain"), "12ab"); check("outside .money-field untouched", $("plain").value, "12ab");
+
+// what the form submits is what the server's parse_brl reads
+reset(a); type(a, "123456");
+check("submitted text", new FormData($("f")).get("amount"), "1.234,56");
+
+// the pure helpers
+check("centsDigits 12,34", fpMoneyMask.centsDigits("12,34"), "1234");
+check("centsDigits 1.234,5", fpMoneyMask.centsDigits("1.234,5"), "123450");
+check("centsDigits 12.5", fpMoneyMask.centsDigits("12.5"), "1250");
+check("centsDigits 1.234", fpMoneyMask.centsDigits("1.234"), "123400");
+check("centsDigits R$ 1.000,00", fpMoneyMask.centsDigits("R$ 1.000,00"), "100000");
+check("centsDigits 100", fpMoneyMask.centsDigits("100"), "10000");
+
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+});
+</script>
+</body>
+</html>

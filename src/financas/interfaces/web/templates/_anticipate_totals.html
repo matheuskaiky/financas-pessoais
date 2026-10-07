@@ -1,0 +1,12 @@
+{# The amounts block of the anticipation form (re-rendered by HTMX when the choice changes). #}
+{% if error %}
+<p class="hint" data-tone="error" role="alert">{{ error }}</p>
+{% elif preview %}
+<dl class="ant-sum">
+  <div><dt>Parcelas escolhidas</dt><dd>{{ preview.selected|length }}</dd></div>
+  <div><dt>Valor nominal</dt><dd>{{ preview.nominal_cents|money(private="cards") }}</dd></div>
+  <div><dt>Desconto</dt><dd>{{ ('−' ~ (preview.discount_cents|currency)) if preview.discount_cents else '—' }}</dd></div>
+  <div class="final"><dt>Total na fatura de {{ preview.target_month|month_short }}</dt><dd>{{ preview.final_cents|money(private="cards") }}</dd></div>
+</dl>
+<p class="hint">Entram na fatura {{ preview.target_month|month_short }} · fecha {{ preview.target_closing_date|date_short }} · vence {{ preview.target_due_date|date_short }}.</p>
+{% endif %}

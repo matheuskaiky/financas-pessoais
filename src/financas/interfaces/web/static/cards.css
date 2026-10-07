@@ -19,12 +19,19 @@
 .card-face--slate{--face-bg:var(--face-slate)}
 @supports (corner-shape:squircle){.card-face{corner-shape:squircle}}
 .card-face{--face-glare:#fff}
-/* The user's account colour (--card-color, templates/cards.html) drives the surface, its depth and the glare tint. The depth
-   shades only AWAY from the text colour (--face-depth is the opposite of --face-fg), so it can only raise the text contrast. */
-@supports (background-color:color-mix(in srgb,red,blue)){
-.card-face--tinted{--face-glare:color-mix(in srgb,var(--card-color) 25%,#fff);background-image:repeating-radial-gradient(circle at 108% -12%,rgba(217,178,95,.07) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.04) 0 1px,transparent 1px 8px),linear-gradient(155deg,transparent 0,transparent 35%,color-mix(in srgb,var(--card-color) 80%,var(--face-depth,#000)) 100%)}
-.card-face--tinted .card-glare{background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,50%),color-mix(in srgb,var(--face-glare) 32%,transparent) 0%,transparent 60%)}
+/* The user's account colour (--card-color, templates/cards.html) IS the surface: no mixing with black. Depth is the same hue
+   and chroma at a slightly different lightness (--face-shade: darker for white text, lighter for dark text, so it can only keep
+   or raise the text contrast), plus a soft specular highlight from the top-left. Fallbacks: oklch mix, then the flat colour. */
+.card-face--tinted{--face-glare:color-mix(in srgb,var(--card-color) 25%,#fff);background-image:radial-gradient(120% 90% at 0% 0%,rgba(255,255,255,.18),transparent 55%)}
+@supports (color:color-mix(in oklch,red,blue)){
+.card-face--tinted{background-image:radial-gradient(120% 90% at 0% 0%,rgba(255,255,255,.18),transparent 55%),linear-gradient(145deg,var(--card-color) 0%,color-mix(in oklch,var(--card-color) 90%,var(--face-depth,#000)) 100%)}
 }
+@supports (color:oklch(from red calc(l + .1) c h)){
+.card-face--tinted{background-image:radial-gradient(120% 90% at 0% 0%,rgba(255,255,255,.18),transparent 55%),linear-gradient(145deg,var(--card-color) 0%,oklch(from var(--card-color) calc(l + var(--face-shade,-.06)) c h) 100%)}
+}
+/* guilloché: fine white lines blended softly over the colour (the colour stays the hero); behind the content (z-index -1 in the face's own stacking context) */
+.card-face--tinted::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;pointer-events:none;mix-blend-mode:soft-light;background-image:repeating-radial-gradient(circle at 108% -12%,rgba(255,255,255,.16) 0 1px,transparent 1px 9px),repeating-radial-gradient(circle at -6% 130%,rgba(255,255,255,.12) 0 1px,transparent 1px 8px)}
+.card-face--tinted .card-glare{background:radial-gradient(circle at var(--glare-x,50%) var(--glare-y,50%),color-mix(in srgb,var(--face-glare) 32%,transparent) 0%,transparent 60%)}
 /* selected card (the link wraps the face: a.cf[aria-current="true"]) */
 .cf[aria-current="true"] .card-face,.card-face[aria-current="true"],.card-face.is-selected{--face-ring:0 0 0 3px var(--sel-gap),0 0 0 5px var(--sel-ring)}
 
@@ -62,3 +69,10 @@
 .seal-face.ink{background:none}   /* .ink paints a surface; the sealed face is only a token scope (dark in both themes) for the SVG drawn on it */
 .seal-face>svg{display:block}
 .seal-r2{animation-delay:120ms}
+
+/* Card face telemetry: the open statement's running total and the day counts */
+.card-face__balance{display:flex;flex-direction:column;gap:2px;min-width:0}
+.card-face__label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;opacity:.82}
+.card-face__amount{font-size:24px;font-weight:600;line-height:1.15;letter-spacing:-.01em;font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.card-face__dates{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";font-size:12px;line-height:1.4}
+.card-face__pending{font-weight:600;opacity:1}

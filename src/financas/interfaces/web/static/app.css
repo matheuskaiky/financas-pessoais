@@ -261,8 +261,10 @@ tr.subtotal td { background: var(--page); }
 /* confirmation dialog */
 .dialog { border: 0; border-radius: 20px; padding: 28px 30px 24px; width: min(440px, calc(100vw - 32px)); background: var(--surface, #fff); color: var(--text);
   box-shadow: var(--sh-3); }
-.dialog[open] { animation: dialin var(--d-soft) var(--sp-soft) backwards; }
-.dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
+.dialog { contain: paint; }
+.dialog[open] { animation: dialin var(--dlg-ms) var(--dlg-ease) backwards; }
+.dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: var(--dlg-blur); backdrop-filter: var(--dlg-blur); }
+.dialog[open]::backdrop { animation: dlg-scrim var(--dlg-ms) ease-out backwards; }
 .dialog h2 { margin: 0 0 8px; font: 400 24px var(--serif); letter-spacing: -.01em; color: var(--head); }
 .dialog p { margin: 0 0 22px; font-size: 15px; line-height: 1.5; color: var(--soft); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }

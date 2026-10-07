@@ -22,6 +22,7 @@ from financas.application.queries.charts import (
     pending_items,
 )
 from financas.application.queries.investments import GetNetWorth, ListInvestments
+from financas.application.queries.merchants import GetTopMerchants
 from financas.application.queries.planning import GetRecurring
 from financas.application.queries.summary import GetSummary, Period, Summary
 from financas.domain.errors import DomainError
@@ -446,6 +447,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "year": chosen.year,
             "month_nav": month_nav(chosen, "/analises"),
             "summary": summary,
+            "merchants": GetTopMerchants(c.uow).execute(Period.month(chosen)),
             "nw_island": net_worth_island(),
             **card_figures(chosen),
             **donut_context(summary, data),

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import avatar, status_pill, dot, color_fields %}
+{% from "_macros.html" import avatar, status_pill, dot, color_fields, day_group_header, merchant_datalist %}
 {% from "_ui.html" import odometer, stroke_gauge, delta_chip, state_empty %}
 {% block title %}Cartões{% endblock %}
 {% block content %}
@@ -33,11 +33,18 @@
   <div class="card-slot">
     {#- Front v3 patch (card-markup.html): the face is the tilt target (data-card-tilt, fp-ui.js) and carries the glare layer;
         the user's colour (9.9) is bound as --card-color, its readable text colour as --face-fg. -#}
+    {#- Text colour: deep slate on bright colours, white on rich ones (WCAG AA, appearance.card_text_color). The surface is never
+        darkened to make white text fit: --face-shade only nudges the lightness of the same hue at the far corner. -#}
+    {% set ink = card_text_color(look.color) %}
     <a class="card-face card-face--tinted {{ 'on' if on }}" data-card-tilt href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
-       style="--card-color: {{ look.color }}; --face-fg: {{ look.text_color }}; --face-depth: {{ '#FFFFFF' if look.text_color == '#000000' else '#000000' }}">
+       style="--card-color: {{ look.color }}; --face-fg: {{ ink }}; --face-shade: {{ '-.06' if ink == '#FFFFFF' else '.04' }}">
       <span class="card-face__top">{{ avatar(look, 40) }}<span class="card-face__cycle">CRÉDITO</span></span>
+      {% set tel = v.telemetry %}
+      <span class="card-face__balance"><span class="card-face__label">Fatura atual</span>
+        <span class="card-face__amount">{{ tel.open_balance_cents|money(private="cards") }}</span></span>
       <span class="card-face__body"><strong class="card-face__nick">{{ v.account.nickname }}</strong>
-        <span class="card-face__dates">vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes</span></span>
+        <span class="card-face__dates" title="Vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes">{{ closing_countdown(tel.closing) }} · {{ due_countdown(tel.due) }}</span>
+        {% if tel.pending_due %}<span class="card-face__dates card-face__pending" title="Fatura {{ tel.pending_month|month_short }}">Fechada · {{ due_countdown(tel.pending_due) }}</span>{% endif %}</span>
       <span class="card-glare" aria-hidden="true"></span>
     </a>
     {% if v.usage.alert.value == 'not_informed' %}
@@ -83,20 +90,14 @@
 
     <div class="entries-box">
       {% if detail.entries %}
-      <div class="rowhead card-head"><span>Data</span><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
-      {% for t in detail.entries %}
-      <div class="row card-entry">
-        <span class="c-date soft">{{ t.posted_on|date_short }}</span>
-        <div class="c-desc"><span>{{ t.description or kind_labels[t.kind] }}{% if t.transfer_id %} <span class="tag">pagamento</span>{% endif %}</span></div>
-        <span class="c-cat with-dot soft">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
-        <span class="c-inst soft">{% if t.plan_id %}{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}{% else %}—{% endif %}</span>
-        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|money(sign="always", private="cards") }}</span>
-        {% if t.plan_id and statement.status.value != 'paid' %}
-        <details class="c-adjust"><summary>Ajustar valor</summary>
-          <form method="post" action="/entries/{{ t.id }}/amount" class="row-form">
-            <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(-t.amount_cents) }}" aria-label="Novo valor da parcela"></span>
-            <button type="submit" class="secondary">Salvar</button></form></details>
-        {% endif %}
+      <div class="rowhead card-head"><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
+      {% set locked = statement.status.value == 'paid' %}
+      {% set origin_qs = 'from=cards&card=' ~ chosen.account.id ~ '&month=' ~ statement.statement.month ~ ('&ano=' ~ year if year else '') %}
+      {% for day, day_entries in detail.entries|groupby('posted_on')|reverse %}
+      {% set spent = day_entries|rejectattr('transfer_id')|rejectattr('is_refunded')|list %}
+      <div class="day-group">
+        {{ day_group_header(day, (-(spent|sum(attribute='amount_cents')) if spent else none), 'Total do dia', 'cards') }}
+        {% for t in day_entries %}{% include "_card_entry_row.html" %}{% endfor %}
       </div>
       {% endfor %}
       {% else %}{{ state_empty('Esta fatura ainda não tem lançamentos.', 'As compras feitas neste cartão entram na fatura do mês em que fecham.', 'Nova compra no cartão', '/cards/purchase?card=' ~ chosen.account.id, 'card', inline=True) }}{% endif %}
@@ -116,7 +117,7 @@
           <select name="from_account">{% for a in checking_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
         <label class="field"><span>Valor (vazio = o que falta)</span>
           <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="amount" inputmode="decimal" value="{{ decimal(statement.outstanding_cents) if statement.outstanding_cents > 0 }}"></span></label>
-        <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
+        {% with value = today, label = 'Data' %}{% include "snippets/payment-date-field.html" %}{% endwith %}
         <button type="submit">Registrar pagamento</button>
       </form>
       <p class="hint">É uma transferência da conta para o cartão: não conta de novo como despesa. Pagamentos parciais são aceitos.</p>
@@ -171,7 +172,9 @@
             {% for i in range(p.paid_count + p.remaining_count) %}<i class="{{ 'paid' if i < p.paid_count else ('next' if i == p.paid_count else '') }}"></i>{% endfor %}
           </div>
           <div class="plan-bottom"><small>{{ p.paid_count }}/{{ p.plan.installment_total }} pagas · restam {{ p.remaining_count }}{% if p.next_statement_month %} · próxima: {{ p.next_statement_month|month_short }}{% endif %}</small>
-            <form method="post" action="/plans/{{ p.plan.id }}/delete" data-confirm="A compra e todas as suas parcelas serão apagadas. Não dá para desfazer." data-confirm-title="Apagar compra parcelada" data-confirm-ok="Apagar" data-confirm-danger><button type="submit" class="link danger" aria-label="Apagar compra {{ p.plan.description }}">Apagar</button></form></div>
+            <button type="button" class="link danger" hx-delete="/installments/plan/{{ p.plan.id }}" hx-confirm="Deseja apagar as parcelas pendentes deste parcelamento?{{ ' Parcelas de faturas já pagas serão mantidas no histórico.' if p.paid_count }}" data-confirm-title="Apagar parcelas pendentes" data-confirm-ok="Apagar" data-confirm-danger aria-label="Apagar parcelas pendentes de {{ p.plan.description }}"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>Apagar</button></div>
+          {% if p.future_count %}<button type="button" class="link ant-open" hx-get="/plans/{{ p.plan.id }}/anticipate" hx-target="#anticipate-{{ p.plan.id }}" hx-swap="innerHTML">Antecipar parcelas</button>{% endif %}
+          <div id="anticipate-{{ p.plan.id }}" class="anticipate-slot"></div>
         </li>
         {% endfor %}
       </ul>
@@ -232,4 +235,6 @@
   </details>
   {% endif %}
 </section>
+{% include "_merge_bar.html" %}
+{{ merchant_datalist(merchants) }}
 {% endblock %}

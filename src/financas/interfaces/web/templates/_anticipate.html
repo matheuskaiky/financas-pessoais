@@ -1,0 +1,32 @@
+{# "Antecipar parcelas": choose the installments to bring into the open statement. #}
+{% set pid = plan.id %}
+<form class="anticipate" method="post" action="/plans/{{ pid }}/anticipate"
+      hx-post="/plans/{{ pid }}/anticipate/preview" hx-trigger="change, input delay:300ms" hx-target="#ant-totals-{{ pid }}" hx-swap="innerHTML">
+  <h3>Antecipar parcelas · {{ plan.description }}</h3>
+  {% if error and not preview %}
+  <p class="hint" data-tone="error" role="alert">{{ error }}</p>
+  <div class="edit-actions"><button type="button" class="secondary" hx-get="/plans/{{ pid }}/anticipate/close" hx-target="#anticipate-{{ pid }}" hx-swap="innerHTML">Fechar</button></div>
+  {% else %}
+  <p class="hint">As parcelas escolhidas passam para a fatura aberta (a de {{ preview.target_month|month_short }}). A numeração e o total da compra não mudam.</p>
+  <fieldset class="ant-list">
+    <legend class="sr-only">Parcelas que ainda dá para antecipar</legend>
+    {% for line in preview.lines %}
+    <label class="check ant-row"><input type="checkbox" name="n" value="{{ line.number }}" {{ 'checked' if line.selected }}>
+      <span>Parcela {{ line.number }}/{{ plan.installment_total }}</span>
+      <small>vence {{ line.from_due_date|date_short }}/{{ line.from_due_date.year }} · fatura {{ line.from_month|month_short }}</small>
+      <strong class="num">{{ line.amount_cents|money(private="cards") }}</strong></label>
+    {% endfor %}
+  </fieldset>
+  <div class="pair">
+    <label class="field"><span>Taxa de desconto ao mês (opcional)</span><input type="text" name="rate" inputmode="decimal" placeholder="ex.: 1,5" value="{{ form.rate }}" autocomplete="off"></label>
+    <label class="field"><span>ou desconto informado pelo banco</span>
+      <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="discount" inputmode="decimal" placeholder="0,00" value="{{ form.discount }}" autocomplete="off"></span></label>
+  </div>
+  <p class="hint">Com taxa, o desconto é o valor presente das parcelas pelos dias adiantados. O desconto vira um estorno na fatura aberta.</p>
+  <div id="ant-totals-{{ pid }}" aria-live="polite">{% include "_anticipate_totals.html" %}</div>
+  <div class="edit-actions">
+    <button type="submit" hx-post="/plans/{{ pid }}/anticipate" hx-target="#anticipate-{{ pid }}" hx-swap="innerHTML">Confirmar antecipação</button>
+    <button type="button" class="secondary" hx-get="/plans/{{ pid }}/anticipate/close" hx-target="#anticipate-{{ pid }}" hx-swap="innerHTML">Cancelar</button>
+  </div>
+  {% endif %}
+</form>

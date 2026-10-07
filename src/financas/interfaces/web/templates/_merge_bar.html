@@ -1,0 +1,22 @@
+{# Merge toolbar (docked, shown with two or more picked entries) and its confirmation dialog.
+   Behaviour: static/app.js (data-merge-*). #}
+<div class="merge-bar" id="merge-bar" role="region" aria-label="Mesclar lançamentos" hidden>
+  <span class="merge-count"><strong data-merge-count>0</strong> selecionados</span>
+  <button type="button" data-merge-open>Mesclar em um só lançamento</button>
+  <button type="button" class="secondary" data-merge-clear>Limpar</button>
+</div>
+<dialog class="merge-dialog" id="merge-dialog" aria-labelledby="merge-title">
+  <form method="post" action="/entries/merge" hx-post="/entries/merge" hx-target="#merge-error" hx-swap="innerHTML">
+    <h2 id="merge-title">Mesclar lançamentos</h2>
+    <p class="hint">Os lançamentos escolhidos viram um só, com a soma dos valores. Cada um continua como um item, na sua categoria.</p>
+    <div data-merge-ids></div>
+    <label class="field"><span>Descrição do lançamento unificado</span><input type="text" name="description" required maxlength="300" autocomplete="off"></label>
+    <label class="field"><span>Data</span><input type="date" name="date" required></label>
+    <label class="check"><input type="checkbox" name="ack" value="1"> Estou ciente de que a fatura já está fechada (se for o caso)</label>
+    <div id="merge-error" aria-live="polite"></div>
+    <div class="edit-actions">
+      <button type="submit">Confirmar mesclagem</button>
+      <button type="button" class="secondary" data-merge-cancel>Cancelar</button>
+    </div>
+  </form>
+</dialog>

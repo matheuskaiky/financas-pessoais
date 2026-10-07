@@ -1,0 +1,14 @@
+{# The date of a statement payment, bounded: from the previous statement's due date (or the opening
+   of the card's first cycle) up to today. Needs: payment_bounds (min, max, min_label), value (the
+   date shown) and, optionally, label. The browser checks it as the user types (static/app.js,
+   data-payment-date); the server enforces it either way. #}
+<label class="field"><span>{{ label or 'Data do pagamento' }}</span>
+  <input type="date" name="date" value="{{ value }}" required
+         {% if payment_bounds %}min="{{ payment_bounds.min.isoformat() }}" max="{{ payment_bounds.max.isoformat() }}" data-payment-date data-min="{{ payment_bounds.min.isoformat() }}" data-max="{{ payment_bounds.max.isoformat() }}"{% endif %}></label>
+{% if payment_bounds %}
+<div class="payment-date-warning" data-payment-date-warning>
+  <p class="callout warn" data-pd-range role="note">A data do pagamento deve estar entre {{ payment_bounds.min|date }} ({{ payment_bounds.min_label }}) e hoje ({{ payment_bounds.max|date }}).</p>
+  <p class="callout error" data-pd-future role="alert" hidden>Pagamentos futuros não são permitidos no momento.</p>
+  <p class="callout error" data-pd-before role="alert" hidden>Data inválida: anterior {{ payment_bounds.min_before }} ({{ payment_bounds.min|date }}).</p>
+</div>
+{% endif %}

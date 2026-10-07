@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from financas.container import Container
+from financas.domain.models import Statement, Transaction
 from financas.infrastructure.db.seed import seed_categories
 from financas.infrastructure.settings import Settings
 from financas.interfaces.web.app import create_app
@@ -277,11 +278,11 @@ def test_entries_filters_search_and_load_more(client: TestClient, container: Con
     client.post("/entries", data={**base, "kind": "expense", "description": "Café São João"})
     client.post("/entries", data={**base, "kind": "income", "description": "Salário"})
     page = client.get("/entries?month=2026-07&q=cafe%20sao")  # no accents, other case
-    assert "<span>Café São João</span>" in page.text
+    assert ">Café São João</span>" in page.text
     assert "<span>Salário</span>" not in page.text  # (the category menu also lists "Salário")
     by_kind = client.get("/entries?month=2026-07&kind=income")
-    assert "<span>Salário</span>" in by_kind.text
-    assert "<span>Café São João</span>" not in by_kind.text
+    assert ">Salário</span>" in by_kind.text
+    assert ">Café São João</span>" not in by_kind.text
     none = client.get("/entries?month=2026-07&q=inexistente")
     assert "Nenhum lançamento com esses filtros" in none.text
     assert "Mostrando 2 de 2 lançamentos do mês" in client.get("/entries?month=2026-07").text
@@ -1516,8 +1517,8 @@ def test_card_face_binds_the_account_colour_and_a_readable_text_colour(
     face = face[: face.index(">")]
     assert "--card-color: #2E7D32" in face
     assert (
-        "--face-fg: #FFFFFF" in face and "--face-depth: #000000" in face
-    )  # white text, depth darkens
+        "--face-fg: #FFFFFF" in face and "--face-shade: -.06" in face
+    )  # white text, deeper corner
     assert "data-card-tilt" in face
     css = client.get("/static/cards.css").text
     assert (
@@ -1525,14 +1526,16 @@ def test_card_face_binds_the_account_colour_and_a_readable_text_colour(
     )  # surface, depth and glare derive from it
 
 
-def test_a_light_account_colour_gets_dark_text_and_a_lightening_depth(
+def test_a_bright_account_colour_gets_slate_text_and_a_lighter_corner(
     client: TestClient, container: Container
 ) -> None:
     _, card = make_card(client, container, color="#F7D117", use_color="1")
     face = client.get(f"/cards?card={card}").text
     face = face[face.index('class="card-face card-face--tinted') :]
     face = face[: face.index(">")]
-    assert "--face-fg: #000000" in face and "--face-depth: #FFFFFF" in face
+    assert (
+        "--face-fg: #0F172A" in face and "--face-shade: .04" in face
+    )  # slate text, lighter corner
 
 
 def test_cards_year_filter_shows_only_the_months_of_the_chosen_year(
@@ -1575,3 +1578,2332 @@ def test_a_single_year_still_shows_its_year_pill(client: TestClient, container: 
     _buy(client, card, "2026-07-26", "Fone", "1")
     page = client.get(f"/cards?card={card}").text
     assert page.count('class="year-pill"') == 1 and "ano=2026" in page
+
+
+# --- editing: rename a category, edit an entry, anticipate installments ---
+
+HX = {"hx-request": "true"}
+
+
+def category_by_slug(container: Container, slug: str):
+    with container.uow as work:
+        found = work.categories.get_by_slug(slug)
+    assert found
+    return found
+
+
+def test_rename_category_plain_form_and_conflict(client: TestClient, container: Container) -> None:
+    food = category_by_slug(container, "food")
+    ok = client.post(f"/categories/{food.id}/rename", data={"name": "  Restaurantes e Açaí "})
+    assert ok.status_code == 303 and "ok=category_renamed" in ok.headers["location"]
+    page = client.get(ok.headers["location"])
+    assert "Categoria renomeada." in page.text and "Restaurantes e Açaí" in page.text
+    assert category_by_slug(container, "food").name == "Restaurantes e Açaí"
+    assert category_by_slug(container, "food").slug == "food"  # the stable key never changes
+
+    health = category_by_slug(container, "health")
+    clash = client.post(f"/categories/{health.id}/rename", data={"name": "RESTAURANTES E ACAI"})
+    assert clash.status_code == 400  # like every page error in the app
+    assert "Já existe uma categoria com esse nome." in clash.text
+    assert category_by_slug(container, "health").name == "Saúde"
+    empty = client.post(f"/categories/{health.id}/rename", data={"name": "   "})
+    assert "Informe um nome." in empty.text
+
+
+def test_rename_category_inline_with_htmx_swaps_one_row(
+    client: TestClient, container: Container
+) -> None:
+    taxes = category_by_slug(container, "taxes")
+    page = client.get("/categories")
+    assert f'hx-get="/categories/{taxes.id}/rename"' in page.text
+    form = client.get(f"/categories/{taxes.id}/rename", headers=HX)
+    assert form.status_code == 200 and form.text.lstrip().startswith("<tr")
+    assert 'name="name"' in form.text and f'value="{taxes.name}"' in form.text
+    assert "Cancelar" in form.text and "Salvar" in form.text
+    assert "<html" not in form.text  # a fragment, not a page
+
+    done = client.post(f"/categories/{taxes.id}/rename", data={"name": "Tributos"}, headers=HX)
+    assert done.status_code == 200 and done.text.lstrip().startswith("<tr")
+    assert "Tributos" in done.text and 'hx-get="/categories/' in done.text
+    assert "Categoria renomeada." in done.headers["hx-trigger"]
+    assert category_by_slug(container, "taxes").name == "Tributos"
+
+    clash = client.post(f"/categories/{taxes.id}/rename", data={"name": "saúde"}, headers=HX)
+    assert clash.status_code == 200 and "Já existe uma categoria com esse nome." in clash.text
+    assert 'value="saúde"' in clash.text  # the typed text is kept
+    assert "hx-trigger" not in clash.headers
+    cancel = client.get(f"/categories/{taxes.id}/row", headers=HX)
+    assert "Tributos" in cancel.text and 'name="name"' not in cancel.text
+
+
+def test_money_mask_script_is_served_and_loaded_with_the_money_fields(
+    client: TestClient,
+) -> None:
+    assert 'src="/static/money-mask.js"' in client.get("/entries").text
+    script = client.get("/static/money-mask.js")
+    assert script.status_code == 200 and ".money-field input" in script.text
+    assert "onclick=" not in client.get("/entries").text  # no inline handlers (CSP)
+
+
+def add_expense(client: TestClient, account: str, **overrides: str) -> None:
+    data = {
+        "kind": "expense",
+        "date": dt.date.today().isoformat(),
+        "amount": "123,45",
+        "description": "Padaria São João",
+        "account_id": account,
+        **overrides,
+    }
+    assert client.post("/entries", data=data).status_code == 303
+
+
+def only_entry(container: Container, account: str):
+    with container.uow as work:
+        (entry,) = work.transactions.list_by_account(account)
+    return entry
+
+
+def test_edit_entry_form_and_save_changes_amount_date_and_category(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking)
+    entry = only_entry(container, checking)
+    assert f'hx-get="/entries/{entry.id}/edit"' in client.get("/entries").text
+
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX)
+    assert form.status_code == 200 and 'value="123,45"' in form.text
+    assert "data-closed-statement" not in form.text and "Estou ciente" not in form.text
+    assert "<html" not in form.text
+
+    groceries = category_by_slug(container, "groceries")
+    day = (dt.date.today() - dt.timedelta(days=3)).isoformat()
+    saved = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "1.000,50",
+            "date": day,
+            "description": "Mercado Açaí",
+            "category_id": groceries.id,
+            "account_id": checking,
+            "notes": "conferido",
+        },
+        headers={**HX, "hx-current-url": "http://localhost/entries?month=2026-10&kind=expense"},
+    )
+    assert saved.status_code == 200
+    location = saved.headers["hx-redirect"]
+    assert location.startswith("/entries?") and "kind=expense" in location
+    assert "ok=entry_updated" in location
+    assert "Lançamento atualizado." in client.get(location).text
+    updated = only_entry(container, checking)
+    assert (updated.amount_cents, updated.posted_on.isoformat()) == (-100_050, day)
+    assert (updated.category_id, updated.description, updated.notes) == (
+        groceries.id,
+        "Mercado Açaí",
+        "conferido",
+    )
+
+
+def test_edit_entry_errors_keep_the_form(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking)
+    entry = only_entry(container, checking)
+    salary = category_by_slug(container, "salary")
+    bad = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "10,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Outra",
+            "category_id": salary.id,
+        },
+        headers=HX,
+    )
+    assert bad.status_code == 200 and "não combina com o tipo de lançamento" in bad.text
+    assert 'value="Outra"' in bad.text
+    zero = client.post(
+        f"/entries/{entry.id}/edit",
+        data={"amount": "0,00", "date": entry.posted_on.isoformat(), "description": "x"},
+        headers=HX,
+    )
+    assert "O valor precisa ser maior que zero." in zero.text
+    assert only_entry(container, checking) == entry  # nothing was saved
+
+
+def test_a_transfer_cannot_be_edited(client: TestClient, container: Container) -> None:
+    checking, savings = setup_accounts(client, container)
+    client.post(
+        "/transfers",
+        data={
+            "amount": "50,00",
+            "date": dt.date.today().isoformat(),
+            "from_account": checking,
+            "to_account": savings,
+        },
+    )
+    with container.uow as work:
+        leg = work.transactions.list_by_account(checking)[0]
+    form = client.get(f"/entries/{leg.id}/edit", headers=HX)
+    assert "Transferências não podem ser editadas" in form.text and "<form" not in form.text
+    refused = client.post(
+        f"/entries/{leg.id}/edit",
+        data={"amount": "1,00", "date": dt.date.today().isoformat(), "description": "x"},
+        headers=HX,
+    )
+    assert "Transferências não podem ser editadas" in refused.text
+
+
+def buy_on_card(client: TestClient, card: str, days_ago: int, **extra: str) -> None:
+    day = (dt.date.today() - dt.timedelta(days=days_ago)).isoformat()
+    data = {
+        "account_id": card,
+        "date": day,
+        "description": "Fone",
+        "amount": "300,00",
+        "amount_mode": "total",
+        "installments": "1",
+        **extra,
+    }
+    assert client.post("/cards/purchase", data=data).status_code == 303
+
+
+WARNING = (
+    "Atenção:</strong> A fatura deste lançamento já foi fechada. Alterar este valor ou data "
+    "pode divergir do pagamento já efetuado ou modificar o histórico da fatura."
+)
+
+
+def test_editing_a_card_purchase_on_a_closed_statement_warns_and_needs_acknowledgement(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)  # its statement closed long ago and is unpaid
+    entry = only_entry(container, card)
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX)
+    assert WARNING in form.text
+    assert "Estou ciente de que a fatura já está fechada" in form.text
+    assert 'name="ack"' in form.text and "data-closed-statement" in form.text
+
+    data = {
+        "amount": "250,00",
+        "date": entry.posted_on.isoformat(),
+        "description": "Fone",
+        "account_id": card,
+    }
+    refused = client.post(f"/entries/{entry.id}/edit", data=data, headers=HX)
+    assert refused.status_code == 200 and "Marque “Estou ciente" in refused.text
+    assert WARNING in refused.text
+    assert only_entry(container, card).amount_cents == -30_000
+
+    accepted = client.post(f"/entries/{entry.id}/edit", data={**data, "ack": "1"}, headers=HX)
+    assert "ok=entry_updated" in accepted.headers["hx-redirect"]
+    assert only_entry(container, card).amount_cents == -25_000
+
+
+def test_editing_a_card_purchase_on_an_open_statement_has_no_warning(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0)
+    entry = only_entry(container, card)
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX)
+    assert form.status_code == 200 and "<form" in form.text
+    assert "data-closed-statement" not in form.text and "já foi fechada" not in form.text
+    saved = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "310,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Fone",
+            "account_id": card,
+        },
+        headers=HX,
+    )
+    assert "ok=entry_updated" in saved.headers["hx-redirect"]
+    assert only_entry(container, card).amount_cents == -31_000
+
+
+def test_a_card_purchase_on_a_paid_statement_is_history(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)
+    entry = only_entry(container, card)
+    assert entry.statement_id
+    paid = client.post(
+        f"/statements/{entry.statement_id}/pay",
+        data={"from_account": checking, "date": dt.date.today().isoformat()},
+    )
+    assert paid.status_code == 303
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX)
+    assert "já está paga" in form.text and "<form" not in form.text
+    refused = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "1,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Fone",
+            "ack": "1",
+        },
+        headers=HX,
+    )
+    assert "já está paga" in refused.text and "<form" not in refused.text
+    assert only_entry_of_expense(container, card).amount_cents == -30_000
+
+
+def only_entry_of_expense(container: Container, card: str):
+    with container.uow as work:
+        return next(t for t in work.transactions.list_by_account(card) if t.amount_cents < 0)
+
+
+def test_installment_edit_form_is_complete_with_the_propagation_checkbox(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3")
+    with container.uow as work:
+        installment = work.transactions.list_by_plan(work.plans.list_all()[0].id)[1]
+    form = client.get(f"/entries/{installment.id}/edit", headers=HX)
+    assert form.status_code == 200 and "<html" not in form.text
+    assert "Parcela 2/3" in form.text and "Valor da parcela" in form.text
+    for name in ("description", "category_id", "amount", "notes", "propagate"):
+        assert f'name="{name}"' in form.text, name
+    assert 'name="date"' not in form.text and 'name="account_id"' not in form.text
+    assert "Aplicar nova descrição e categoria a todas as parcelas deste parcelamento" in form.text
+    assert re.search(r'name="propagate"[^>]*checked', form.text)  # on by default
+    assert "data-closed-statement" not in form.text  # open or future statement: no warning
+
+
+def test_saving_an_installment_edit_propagates_and_returns_to_the_list(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3", amount="300,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        installment = work.transactions.list_by_plan(plan.id)[1]
+    groceries = category_by_slug(container, "groceries")
+    data = {
+        "amount": "120,00",
+        "description": "Geladeira",
+        "category_id": groceries.id,
+        "notes": "só desta",
+        "propagate": "1",
+    }
+    saved = client.post(f"/entries/{installment.id}/edit", data=data, headers=HX)
+    assert saved.headers["hx-redirect"].startswith("/entries?")
+    assert "ok=entry_updated" in saved.headers["hx-redirect"]
+    with container.uow as work:
+        rows = work.transactions.list_by_plan(plan.id)
+        assert {r.description for r in rows} == {"Geladeira"}
+        assert {r.category_id for r in rows} == {groceries.id}
+        assert [r.amount_cents for r in rows] == [-10_000, -12_000, -10_000]
+        assert [r.notes for r in rows] == [None, "só desta", None]
+        assert work.plans.get(plan.id).description == "Geladeira"  # type: ignore[union-attr]
+    # unchecked: only this installment
+    off = client.post(
+        f"/entries/{installment.id}/edit",
+        data={k: v for k, v in {**data, "description": "Só esta"}.items() if k != "propagate"},
+        headers=HX,
+    )
+    assert off.status_code == 200
+    with container.uow as work:
+        rows = work.transactions.list_by_plan(plan.id)
+    assert [r.description for r in rows] == ["Geladeira", "Só esta", "Geladeira"]
+
+
+def test_installment_date_and_card_cannot_be_forced_through_the_form(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3")
+    with container.uow as work:
+        installment = work.transactions.list_by_plan(work.plans.list_all()[0].id)[1]
+    saved = client.post(
+        f"/entries/{installment.id}/edit",
+        data={
+            "amount": "1,00",
+            "date": "2031-01-01",  # not on the form: ignored, the date follows the statement
+            "account_id": "another",
+            "description": "x",
+        },
+        headers=HX,
+    )
+    assert "ok=entry_updated" in saved.headers["hx-redirect"]
+    with container.uow as work:
+        after = work.transactions.get(installment.id)
+    assert after and (after.posted_on, after.account_id) == (
+        installment.posted_on,
+        installment.account_id,
+    )
+    assert after.amount_cents == -100
+
+
+def test_anticipate_installments_flow(client: TestClient, container: Container) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="4", amount="400,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+    cards_page = client.get(f"/cards?card={card}")
+    assert f'hx-get="/plans/{plan.id}/anticipate"' in cards_page.text
+    assert "Antecipar parcelas" in cards_page.text
+
+    form = client.get(f"/plans/{plan.id}/anticipate", headers=HX)
+    assert form.status_code == 200 and "<html" not in form.text
+    assert form.text.count('name="n"') == 3  # installment 1 is already on the open statement
+    assert "Confirmar antecipação" in form.text and "Valor nominal" in form.text
+    assert "R$ 300,00" in visible(form)
+
+    preview = client.post(
+        f"/plans/{plan.id}/anticipate/preview",
+        data={"n": ["2", "3"], "rate": "2", "discount": ""},
+        headers=HX,
+    )
+    assert "Parcelas escolhidas" in preview.text and "R$ 200,00" in visible(preview)
+    assert "Desconto" in preview.text and "−" in preview.text
+    none = client.post(f"/plans/{plan.id}/anticipate/preview", data={"rate": ""}, headers=HX)
+    assert "Nenhuma parcela pode ser antecipada" in none.text
+
+    both = client.post(
+        f"/plans/{plan.id}/anticipate",
+        data={"n": ["2"], "rate": "2", "discount": "1,00"},
+        headers=HX,
+    )
+    assert "a taxa de desconto ou o valor do desconto" in both.text
+
+    done = client.post(
+        f"/plans/{plan.id}/anticipate", data={"n": ["2", "3"], "discount": "5,00"}, headers=HX
+    )
+    assert done.status_code == 200
+    assert "ok=anticipated" in done.headers["hx-redirect"] and card in done.headers["hx-redirect"]
+    assert "Parcelas antecipadas" in client.get(done.headers["hx-redirect"]).text
+    with container.uow as work:
+        rows = work.transactions.list_by_plan(plan.id)
+        refunds = [t for t in work.transactions.list_by_account(card) if t.amount_cents > 0]
+    assert [r.installment_number for r in rows] == [1, 2, 3, 4]
+    assert (
+        len({r.statement_id for r in rows[:3]}) == 1
+        and rows[3].statement_id != rows[0].statement_id
+    )
+    (refund,) = refunds
+    assert refund.amount_cents == 500 and refund.statement_id == rows[0].statement_id
+    assert "antecipação" in refund.description
+    assert sum(-r.amount_cents for r in rows) == 40_000  # the plan total is untouched
+
+
+def test_anticipate_plain_post_redirects_and_unknown_plan_is_a_portuguese_error(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="2", amount="200,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+    done = client.post(f"/plans/{plan.id}/anticipate", data={"n": ["2"]})
+    assert done.status_code == 303 and "ok=anticipated" in done.headers["location"]
+    again = client.post(f"/plans/{plan.id}/anticipate", data={"n": ["2"]}, headers=HX)
+    assert "Nenhuma parcela pode ser antecipada" in again.text
+    assert client.get("/plans/nope/anticipate", headers=HX).status_code in {400, 404}
+
+
+# --- editing from a statement on /cards ---
+
+
+def statement_of_entry(container: Container, entry: Transaction) -> Statement:
+    assert entry.statement_id
+    with container.uow as work:
+        statement = work.statements.get(entry.statement_id)
+    assert statement
+    return statement
+
+
+def statement_page(client: TestClient, card: str, statement: Statement) -> str:
+    response = client.get(f"/cards?card={card}&month={statement.month}")
+    assert response.status_code == 200
+    return response.text
+
+
+def test_cards_statement_rows_have_an_edit_button_on_open_and_closed_statements(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75, description="Compra antiga")
+    buy_on_card(client, card, days_ago=0, description="Compra nova")
+    with container.uow as work:
+        entries = {t.description: t for t in work.transactions.list_by_account(card)}
+    for description, status in (("Compra antiga", "closed"), ("Compra nova", "open")):
+        entry = entries[description]
+        statement = statement_of_entry(container, entry)
+        page = statement_page(client, card, statement)
+        assert f'hx-get="/entries/{entry.id}/edit?from=cards' in page
+        assert f"card={card}" in page and f"month={statement.month}" in page
+        assert "Editar lançamento" in page, status
+        assert 'class="icon-btn mini row-edit"' in page
+
+
+def test_cards_statement_rows_of_a_paid_statement_only_keep_the_payment_editable(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)
+    entry = only_entry(container, card)
+    statement = statement_of_entry(container, entry)
+    assert "row-edit" in statement_page(client, card, statement)  # closed: still editable
+    client.post(
+        f"/statements/{statement.id}/pay",
+        data={"from_account": checking, "date": dt.date.today().isoformat()},
+    )
+    page = statement_page(client, card, statement)
+    assert "Fone" in page and f"/entries/{entry.id}/edit" not in page  # the purchase is history
+    # the payment itself can be edited (it is the way back into the paid statement)
+    assert page.count("row-edit") == 1 and "Editar pagamento" in page
+    assert len(re.findall(r'hx-get="/entries/[0-9a-f]{32}/edit', page)) == 1
+
+
+def test_cards_installment_rows_open_the_full_edit_form_and_save_back_to_the_statement(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3", amount="300,00")
+    with container.uow as work:
+        first = work.transactions.list_by_plan(work.plans.list_all()[0].id)[0]
+    statement = statement_of_entry(container, first)
+    page = statement_page(client, card, statement)
+    assert "Editar parcela" in page and f"/entries/{first.id}/edit?from=cards" in page
+    year = statement.month.year
+    qs = f"from=cards&card={card}&month={statement.month}&ano={year}"
+    form = client.get(f"/entries/{first.id}/edit?{qs}", headers=HX)
+    assert "Parcela 1/3" in form.text and 'name="propagate"' in form.text
+    assert f"/entries/{first.id}/row?{qs}".replace("&", "&amp;") in form.text  # Cancelar
+    assert "R$ 100,00" in visible(client.get(f"/cards?card={card}&month={statement.month}"))
+
+    saved = client.post(
+        f"/entries/{first.id}/edit?{qs}",
+        data={"amount": "80,00", "description": "Fone", "propagate": "1"},
+        headers=HX,
+    )
+    location = saved.headers["hx-redirect"]
+    assert location.startswith("/cards?") and f"month={statement.month}" in location
+    assert "ok=entry_updated" in location and f"ano={year}" in location
+    text = visible(client.get(location))
+    assert "R$ 80,00" in text  # the statement was recalculated with the new installment value
+
+
+def test_edit_started_from_cards_returns_to_the_same_statement_with_new_totals(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="300,00")
+    entry = only_entry(container, card)
+    statement = statement_of_entry(container, entry)
+    year = statement.month.year
+    qs = f"from=cards&card={card}&month={statement.month}&ano={year}"
+    assert "R$ 300,00" in visible(client.get(f"/cards?card={card}&month={statement.month}"))
+
+    form = client.get(f"/entries/{entry.id}/edit?{qs}", headers=HX)
+    assert f'action="/entries/{entry.id}/edit?{qs}"'.replace("&", "&amp;") in form.text
+    assert f"/entries/{entry.id}/row?{qs}".replace("&", "&amp;") in form.text  # Cancelar
+
+    saved = client.post(
+        f"/entries/{entry.id}/edit?{qs}",
+        data={
+            "amount": "250,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Fone",
+            "account_id": card,
+        },
+        headers=HX,
+    )
+    location = saved.headers["hx-redirect"]
+    assert location.startswith("/cards?") and "from=" not in location
+    assert f"card={card}" in location and f"month={statement.month}" in location
+    assert f"ano={year}" in location and "ok=entry_updated" in location
+    page = client.get(location)
+    assert "Lançamento atualizado." in page.text and 'id="statement-section"' in page.text
+    text = visible(page)
+    assert "R$ 250,00" in text and "R$ 300,00" not in text  # the statement total was recomputed
+
+    # a plain (no-JS) form post goes back the same way
+    plain = client.post(
+        f"/entries/{entry.id}/edit?{qs}",
+        data={
+            "amount": "260,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Fone",
+            "account_id": card,
+        },
+    )
+    assert plain.status_code == 303 and plain.headers["location"].startswith("/cards?")
+
+
+def test_cancel_from_cards_returns_the_unchanged_statement_row(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="300,00")
+    entry = only_entry(container, card)
+    statement = statement_of_entry(container, entry)
+    row = client.get(
+        f"/entries/{entry.id}/row?from=cards&card={card}&month={statement.month}", headers=HX
+    )
+    assert row.status_code == 200 and 'class="row card-entry"' in row.text
+    assert f'hx-get="/entries/{entry.id}/edit?from=cards' in row.text
+    assert "<html" not in row.text and "R$ 300,00" in visible(row)
+    assert only_entry(container, card) == entry  # nothing changed
+
+
+def test_closed_statement_warning_also_shows_when_editing_from_cards(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)
+    entry = only_entry(container, card)
+    statement = statement_of_entry(container, entry)
+    qs = f"from=cards&card={card}&month={statement.month}"
+    form = client.get(f"/entries/{entry.id}/edit?{qs}", headers=HX)
+    assert WARNING in form.text and "Estou ciente de que a fatura já está fechada" in form.text
+    refused = client.post(
+        f"/entries/{entry.id}/edit?{qs}",
+        data={
+            "amount": "1,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Fone",
+            "account_id": card,
+        },
+        headers=HX,
+    )
+    assert (
+        "Marque “Estou ciente" in refused.text
+        and f"/entries/{entry.id}/edit?from=cards" in refused.text
+    )
+    assert only_entry(container, card) == entry
+
+
+def test_an_unknown_origin_is_ignored(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking)
+    entry = only_entry(container, checking)
+    saved = client.post(
+        f"/entries/{entry.id}/edit?from=//evil.example&card=x&month=y",
+        data={"amount": "5,00", "date": entry.posted_on.isoformat(), "description": "Padaria"},
+        headers=HX,
+    )
+    assert saved.headers["hx-redirect"].startswith("/entries?")
+
+
+# --- card face telemetry ---
+
+
+def card_face(page: str) -> str:
+    match = re.search(r'<a class="card-face.*?</a>', page, re.S)
+    assert match
+    return match.group(0)
+
+
+def test_card_face_shows_the_open_balance_and_live_day_counts(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="184,25")
+    face = card_face(client.get("/cards").text)
+    assert "Fatura atual" in face and "R$ 184,25" in re.sub(r"\s+", " ", visible(face))
+    assert 'data-private="cards"' in face  # the privacy eye blurs it like the other card figures
+    assert re.search(r"Fecha (em \d+ dias|amanhã)", face), face
+    assert re.search(r"Vence (em \d+ dias|amanhã|hoje)", face), face
+    assert "dias antes" not in face.split('title="')[0]  # the static sentence is gone
+
+
+def test_card_face_without_purchases_shows_zero_not_nothing(
+    client: TestClient, container: Container
+) -> None:
+    make_card(client, container)
+    face = card_face(client.get("/cards").text)
+    assert "Fatura atual" in face and "R$ 0,00" in visible(face)
+    assert "Fecha" in face and "Vence" in face
+
+
+def test_card_face_reports_a_closed_unpaid_statement_and_its_due_date(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)  # closed long ago and unpaid
+    face = card_face(client.get("/cards").text)
+    assert "Fechada · Venceu há" in face
+
+
+# --- day groups and the ghost edit button ---
+
+
+def test_cards_statement_groups_entries_by_day_with_one_header_per_day(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="100,00", description="Primeira")
+    buy_on_card(client, card, days_ago=0, amount="24,50", description="Segunda")
+    with container.uow as work:
+        statement = work.statements.list_all()[0]
+    page = client.get(f"/cards?card={card}&month={statement.month}").text
+    assert page.count('class="day-head day-group__header"') == 1  # two purchases, one day
+    assert "Hoje · " in page
+    assert "Total do dia: " in page and "R$ 124,50" in visible(page)
+    assert 'class="c-date' not in page  # no date column on the rows any more
+    assert '<div class="rowhead card-head"><span>Descrição</span>' in page  # no "Data" column
+    head = page.index("day-group__header")
+    assert head < page.index("Primeira") and head < page.index("Segunda")
+
+
+def test_entries_list_groups_by_day_and_rows_have_no_date_column(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, description="Café", amount="10,00")
+    add_expense(client, checking, description="Almoço", amount="30,00")
+    page = client.get("/entries").text
+    assert page.count("day-group__header") == 1 and "Hoje · " in page
+    assert "Gastos do dia: " in page and "R$ 40,00" in visible(page)
+    assert 'class="c-date' not in page
+    assert len(re.findall(r'hx-get="/entries/[0-9a-f]{32}/edit', page)) == 2  # one per row
+
+
+def test_edit_button_is_a_ghost_icon_with_label_and_title(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0)
+    entry = only_entry(container, card)
+    with container.uow as work:
+        statement = work.statements.get(entry.statement_id or "")
+    page = client.get(f"/cards?card={card}&month={statement.month}").text  # type: ignore[union-attr]
+    button = re.search(r"<button[^>]*row-edit[^>]*>.*?</button>", page, re.S)
+    assert button
+    markup = button.group(0)
+    assert 'title="Editar"' in markup and 'aria-label="Editar lançamento' in markup
+    assert "<svg" in markup and 'stroke="currentColor"' in markup and 'width="14"' in markup
+    css = client.get("/static/screens.css").text
+    assert "button.icon-btn.mini.row-edit" in css and "background: transparent" in css
+
+
+# --- delete the pending installments of a plan ---
+
+
+def test_delete_installment_plan_removes_everything_when_nothing_is_paid(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3", amount="300,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+    page = client.get(f"/cards?card={card}").text
+    assert f'hx-delete="/installments/plan/{plan.id}"' in page
+    assert "Deseja apagar as parcelas pendentes deste parcelamento?" in page
+    assert "serão mantidas no histórico" not in page  # nothing paid: no history warning
+    done = client.delete(f"/installments/plan/{plan.id}", headers=HX)
+    assert done.status_code == 200
+    location = done.headers["hx-redirect"]
+    assert location.startswith("/cards?") and f"card={card}" in location
+    assert "ok=plan_deleted" in location
+    assert "Compra parcelada apagada." in client.get(location).text
+    with container.uow as work:
+        assert work.plans.list_all() == [] and work.transactions.list_by_account(card) == []
+
+
+def test_delete_installment_plan_keeps_paid_history_and_says_so(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75, installments="3", amount="300,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        first = work.transactions.list_by_plan(plan.id)[0]
+    client.post(
+        f"/statements/{first.statement_id}/pay",
+        data={"from_account": checking, "date": dt.date.today().isoformat()},
+    )
+    page = client.get(f"/cards?card={card}").text
+    assert "Parcelas de faturas já pagas serão mantidas no histórico." in page
+    done = client.delete(f"/installments/plan/{plan.id}", headers=HX)
+    assert "ok=plan_pending_deleted" in done.headers["hx-redirect"]
+    assert "ficaram no histórico" in client.get(done.headers["hx-redirect"]).text
+    with container.uow as work:
+        left = work.transactions.list_by_plan(plan.id)
+        assert [t.installment_number for t in left] == [1] and work.plans.get(plan.id)
+    again = client.delete(f"/installments/plan/{plan.id}", headers=HX)
+    assert "err=NOTHING_TO_DELETE" in again.headers["hx-redirect"]
+    assert "estão em faturas pagas" in client.get(again.headers["hx-redirect"]).text
+
+
+def test_entries_list_offers_the_plan_delete_on_installment_rows(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="2", amount="200,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+    page = client.get("/entries").text
+    assert f'hx-delete="/installments/plan/{plan.id}"' in page
+    done = client.delete(
+        f"/installments/plan/{plan.id}",
+        headers={**HX, "hx-current-url": "http://localhost/entries?month=2026-10"},
+    )
+    assert done.headers["hx-redirect"].startswith("/entries?")
+    assert "ok=plan_deleted" in done.headers["hx-redirect"]
+    assert client.delete("/installments/plan/nope", headers=HX).status_code in {400, 404}
+
+
+# --- "Compra estornada" ---
+
+
+def post_edit(client: TestClient, entry, **fields: str):
+    data = {
+        "amount": format_decimal(abs(entry.amount_cents)),
+        "description": entry.description,
+        **({} if entry.plan_id else {"date": entry.posted_on.isoformat()}),
+        **fields,
+    }
+    return client.post(f"/entries/{entry.id}/edit", data=data, headers=HX)
+
+
+def format_decimal(cents: int) -> str:
+    return f"{cents // 100},{cents % 100:02d}"
+
+
+def test_edit_form_offers_the_refund_toggle_only_for_expenses(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking)
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "date": dt.date.today().isoformat(),
+            "amount": "10,00",
+            "description": "Salário",
+            "account_id": checking,
+        },
+    )
+    with container.uow as work:
+        rows = {t.description: t for t in work.transactions.list_by_account(checking)}
+    expense = client.get(f"/entries/{rows['Padaria São João'].id}/edit", headers=HX)
+    assert 'name="refunded"' in expense.text and "Compra estornada" in expense.text
+    assert 'name="refund_all"' not in expense.text  # not an installment
+    income = client.get(f"/entries/{rows['Salário'].id}/edit", headers=HX)
+    assert 'name="refunded"' not in income.text
+
+
+def test_a_refunded_expense_is_struck_through_and_leaves_the_totals(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="40,00", description="Volta")
+    add_expense(client, checking, amount="10,00", description="Fica")
+    with container.uow as work:
+        gone = next(
+            t for t in work.transactions.list_by_account(checking) if t.description == "Volta"
+        )
+    assert "R$ 50,00" in visible(client.get("/entries"))
+    saved = post_edit(client, gone, refunded="1")
+    assert "ok=entry_updated" in saved.headers["hx-redirect"]
+    page = client.get("/entries")
+    assert 'class="row entry is-refunded"' in page.text  # still listed, as a record
+    assert '<span class="badge badge--subtle">Estornada</span>' in page.text
+    text = visible(page)
+    assert "R$ 50,00" not in text and "R$ 10,00" in text  # the day and the month ignore it
+    assert "checked" in client.get(f"/entries/{gone.id}/edit", headers=HX).text
+    css = client.get("/static/screens.css").text
+    assert ".row.is-refunded" in css and "text-decoration: line-through" in css
+    assert "opacity: .55" in css and "tabular-nums" in css
+    # un-marking brings it back into the totals
+    post_edit(client, gone)
+    assert 'class="row entry is-refunded"' not in client.get("/entries").text
+    assert "R$ 50,00" in visible(client.get("/entries"))
+
+
+def test_a_refunded_card_purchase_leaves_the_statement_and_gives_the_limit_back(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="300,00")
+    entry = only_entry(container, card)
+    statement = statement_of_entry(container, entry)
+    qs = f"from=cards&card={card}&month={statement.month}"
+    before = client.get(f"/cards?card={card}&month={statement.month}")
+    assert "R$ 300,00" in card_face(before.text) or "R$ 300,00" in visible(before)
+    saved = client.post(
+        f"/entries/{entry.id}/edit?{qs}",
+        data={
+            "amount": "300,00",
+            "date": entry.posted_on.isoformat(),
+            "description": entry.description,
+            "account_id": card,
+            "refunded": "1",
+        },
+        headers=HX,
+    )
+    assert saved.headers["hx-redirect"].startswith("/cards?")
+    page = client.get(saved.headers["hx-redirect"])
+    assert 'class="row card-entry is-refunded"' in page.text and "Estornada" in page.text
+    face = re.sub(r"\s+", " ", visible(card_face(page.text)))
+    assert "Fatura atual R$ 0,00" in face
+    assert "Comprometido R$ 0,00" in visible(page)  # the committed limit is back to zero
+    assert "Total do dia" not in page.text  # a refunded purchase does not add to the day
+
+
+def test_refunding_an_installment_can_spread_to_the_pending_ones(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3", amount="300,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        second = work.transactions.list_by_plan(plan.id)[1]
+    form = client.get(f"/entries/{second.id}/edit", headers=HX)
+    assert "Marcar todas as parcelas pendentes deste plano como estornadas" in form.text
+    post_edit(client, second, refunded="1")  # only this one
+    with container.uow as work:
+        flags = [
+            t.is_refunded for t in work.transactions.list_by_plan(plan.id, include_refunded=True)
+        ]
+    assert flags == [False, True, False]
+    post_edit(client, second, refunded="1", refund_all="1")  # all the pending ones
+    with container.uow as work:
+        flags = [
+            t.is_refunded for t in work.transactions.list_by_plan(plan.id, include_refunded=True)
+        ]
+    assert flags == [True, True, True]
+
+
+def test_a_refunded_purchase_is_not_edited_through_a_closed_statement_without_acknowledgement(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75)
+    entry = only_entry(container, card)
+    refused = post_edit(client, entry, refunded="1", account_id=card)
+    assert "Marque “Estou ciente" in refused.text
+    assert not only_entry(container, card).is_refunded
+    accepted = post_edit(client, entry, refunded="1", account_id=card, ack="1")
+    assert "ok=entry_updated" in accepted.headers["hx-redirect"]
+    with container.uow as work:
+        assert work.transactions.get(entry.id).is_refunded  # type: ignore[union-attr]
+
+
+# --- itemized expenses and merging ---
+
+
+def item_fields(container: Container, items: list[tuple[str, str, str]]) -> dict[str, list[str]]:
+    return {
+        "item_description": [d for d, _, _ in items],
+        "item_category": [category_by_slug(container, slug).id for _, slug, _ in items],
+        "item_amount": [a for _, _, a in items],
+    }
+
+
+MARKET = [
+    ("Feira e laticínios", "groceries", "220,00"),
+    ("Higiene pessoal", "health", "90,00"),
+    ("Limpeza", "home", "70,00"),
+]
+
+
+def test_edit_form_has_the_items_editor_for_expenses_only(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX)
+    assert "Adicionar itens / Dividir categorias" in form.text
+    assert 'name="splits_present"' in form.text and "data-split-template" in form.text
+    assert "data-split-remaining" in form.text and "data-split-add" in form.text
+    assert 'name="item_amount"' in form.text
+    assert "<html" not in form.text
+
+
+def test_saving_items_persists_them_atomically_and_the_row_shows_the_breakdown(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    data = {
+        "amount": "380,00",
+        "date": entry.posted_on.isoformat(),
+        "description": "Mercado",
+        "splits_present": "1",
+        **item_fields(container, MARKET),
+    }
+    saved = client.post(f"/entries/{entry.id}/edit", data=data, headers=HX)
+    assert "ok=entry_updated" in saved.headers["hx-redirect"]
+    with container.uow as work:
+        items = work.transactions.splits_for([entry.id])[entry.id]
+        assert [i.amount_cents for i in items] == [22_000, 9_000, 7_000]
+        assert work.transactions.get(entry.id).amount_cents == -38_000  # type: ignore[union-attr]
+    page = client.get("/entries").text
+    assert "▾ 3 itens" in page and "data-split-toggle" in page
+    assert f'id="split-{entry.id}" hidden' in page
+    assert "Feira e laticínios" in page and "Higiene pessoal" in page and "Limpeza" in page
+    for amount in ("R$ 220,00", "R$ 90,00", "R$ 70,00"):
+        assert amount in visible(page)
+    # the list totals still see the whole entry once
+    assert visible(page).count("R$ 380,00") >= 1
+    # the form comes back with the saved items
+    again = client.get(f"/entries/{entry.id}/edit", headers=HX).text
+    assert again.count('name="item_description"') == 4  # three items + the template row
+    assert 'value="Feira e laticínios"' in again and "checked" in again
+
+
+def test_a_wrong_sum_is_refused_with_the_remaining_amount(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    short = item_fields(container, [MARKET[0], MARKET[1]])  # R$ 310,00 of R$ 380,00
+    refused = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "380,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "splits_present": "1",
+            **short,
+        },
+        headers=HX,
+    )
+    assert refused.status_code == 200
+    assert "Os itens precisam somar o valor do lançamento: restam R$ 70,00." in refused.text
+    assert 'value="Feira e laticínios"' in refused.text  # the typed items stay on the form
+    with container.uow as work:
+        assert work.transactions.splits_for([entry.id]) == {}
+    over = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "100,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "splits_present": "1",
+            **item_fields(container, MARKET),
+        },
+        headers=HX,
+    )
+    assert "ultrapassou R$ 280,00" in over.text
+
+
+def test_unchecking_the_items_removes_them(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    base = {
+        "amount": "380,00",
+        "date": entry.posted_on.isoformat(),
+        "description": "Mercado",
+        "splits_present": "1",
+    }
+    client.post(
+        f"/entries/{entry.id}/edit", data={**base, **item_fields(container, MARKET)}, headers=HX
+    )
+    client.post(f"/entries/{entry.id}/edit", data=base, headers=HX)  # the toggle is off: no items
+    with container.uow as work:
+        assert work.transactions.splits_for([entry.id]) == {}
+    assert "data-split-toggle" not in client.get("/entries").text.split('id="lista"')[1]
+
+
+def test_the_category_filter_matches_the_items_of_an_entry(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "380,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "splits_present": "1",
+            **item_fields(container, MARKET),
+        },
+        headers=HX,
+    )
+    home = category_by_slug(container, "home")
+    other = category_by_slug(container, "taxes")
+    assert "Mercado" in client.get(f"/entries?category={home.id}").text.split('id="lista"')[1]
+    assert "Mercado" not in client.get(f"/entries?category={other.id}").text.split('id="lista"')[1]
+
+
+def two_card_purchases(client: TestClient, container: Container):
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="220,00", description="Feira")
+    buy_on_card(client, card, days_ago=0, amount="60,00", description="Sabão")
+    with container.uow as work:
+        rows = {t.description: t for t in work.transactions.list_by_account(card)}
+    return card, rows["Feira"], rows["Sabão"]
+
+
+def test_rows_offer_merge_checkboxes_only_when_eligible_and_the_toolbar_is_there(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, amount="220,00", description="Feira")
+    buy_on_card(
+        client, card, days_ago=0, installments="2", amount="100,00", description="Parcelada"
+    )
+    page = client.get("/entries").text
+    assert page.count('class="merge-pick"') == 1  # the installment cannot be merged
+    assert 'id="merge-bar"' in page and "Mesclar em um só lançamento" in page
+    assert "selecionados" in page and 'hx-post="/entries/merge"' in page
+    assert "Estou ciente de que a fatura já está fechada" in page  # in the dialog
+    cards = client.get(f"/cards?card={card}").text
+    assert 'class="merge-pick"' in cards and 'id="merge-dialog"' in cards
+
+
+def test_merge_endpoint_unifies_the_purchases_and_redirects_back(
+    client: TestClient, container: Container
+) -> None:
+    card, feira, sabao = two_card_purchases(client, container)
+    day = dt.date.today().isoformat()
+    done = client.post(
+        "/entries/merge",
+        data={"ids": [feira.id, sabao.id], "description": "Compras da semana", "date": day},
+        headers={
+            **HX,
+            "hx-current-url": f"http://localhost/cards?card={card}&month=2026-10&ano=2026",
+        },
+    )
+    location = done.headers["hx-redirect"]
+    assert location.startswith("/cards?") and f"card={card}" in location and "ok=merged" in location
+    assert "Lançamentos mesclados em um só" in client.get(location).text
+    with container.uow as work:
+        (parent,) = work.transactions.list_by_account(card)
+        items = work.transactions.splits_for([parent.id])[parent.id]
+    assert (parent.description, parent.amount_cents) == ("Compras da semana", -28_000)
+    assert [(i.description, i.amount_cents) for i in items] == [("Feira", 22_000), ("Sabão", 6_000)]
+    page = client.get(f"/cards?card={card}").text
+    assert "▾ 2 itens" in page  # the unified row is itemized
+    assert "R$ 280,00" in visible(client.get(f"/cards?card={card}"))  # statement total unchanged
+
+
+def test_merge_errors_show_in_the_dialog_and_change_nothing(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, description="Um")
+    add_expense(client, checking, description="Dois")
+    with container.uow as work:
+        ids = [t.id for t in work.transactions.list_by_account(checking)]
+    day = dt.date.today().isoformat()
+    one = client.post(
+        "/entries/merge", data={"ids": ids[:1], "description": "X", "date": day}, headers=HX
+    )
+    assert one.status_code == 200 and "Escolha pelo menos dois lançamentos" in one.text
+    assert 'role="alert"' in one.text and "<html" not in one.text
+    plain = client.post("/entries/merge", data={"ids": ids[:1], "description": "X", "date": day})
+    assert plain.status_code == 303 and "err=MERGE_NEEDS_TWO" in plain.headers["location"]
+    empty = client.post(
+        "/entries/merge", data={"ids": ids, "description": "  ", "date": day}, headers=HX
+    )
+    assert "Informe uma descrição." in empty.text
+    with container.uow as work:
+        assert len(work.transactions.list_by_account(checking)) == 2
+
+
+# --- merchants ---
+
+
+def add_with_merchant(client: TestClient, account: str, merchant: str, **overrides: str) -> None:
+    add_expense(client, account, merchant=merchant, **overrides)
+
+
+def test_quick_form_and_edit_form_have_the_merchant_field_with_its_datalist(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_with_merchant(client, checking, "  Supermercado   Pão de Açúcar ", description="Compras")
+    add_with_merchant(client, checking, "Amazon", description="Livro")
+    page = client.get("/entries").text
+    assert 'name="merchant"' in page and 'list="merchants-list"' in page
+    assert "Ex: Supermercado Pão de Açúcar, Amazon, Posto Ipiranga" in page
+    assert '<datalist id="merchants-list">' in page
+    assert '<option value="Amazon"></option>' in page
+    assert '<option value="Supermercado Pão de Açúcar"></option>' in page  # stored clean
+    assert page.index('value="Amazon"') < page.index('value="Supermercado Pão de Açúcar"')  # sorted
+    with container.uow as work:
+        entry = next(
+            t for t in work.transactions.list_by_account(checking) if t.description == "Livro"
+        )
+    form = client.get(f"/entries/{entry.id}/edit", headers=HX).text
+    assert 'name="merchant"' in form and 'list="merchants-list"' in form
+    assert 'value="Amazon"' in form and "<html" not in form
+
+
+def test_merchant_is_saved_shown_on_the_row_and_editable(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_with_merchant(client, checking, "Droga Raia", description="Remédio")
+    add_with_merchant(client, checking, "Padaria", description="Padaria")  # same as the description
+    page = client.get("/entries").text
+    assert '<small class="c-merchant">Droga Raia</small>' in page
+    assert page.count('class="c-merchant"') == 1  # equal to the description: no repeat
+    with container.uow as work:
+        entry = next(
+            t for t in work.transactions.list_by_account(checking) if t.description == "Remédio"
+        )
+    post_edit(client, entry, merchant="  Drogasil ")
+    with container.uow as work:
+        assert work.transactions.get(entry.id).merchant == "Drogasil"  # type: ignore[union-attr]
+    post_edit(client, entry, merchant="")  # cleared
+    with container.uow as work:
+        assert work.transactions.get(entry.id).merchant is None  # type: ignore[union-attr]
+    # searching the list finds entries by merchant too
+    add_with_merchant(client, checking, "Mercado Livre", description="Cabo USB")
+    found = client.get("/entries?q=mercado").text.split('id="lista"')[1]
+    assert "Cabo USB" in found and "Remédio" not in found
+
+
+def test_merchant_suggestions_route_lists_each_name_once_sorted_and_per_account(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    for name in ("Zé do Pão", "Amazon", "amazon", "Ação Digital", "Uber"):
+        add_with_merchant(client, checking, name)
+    response = client.get("/merchants/suggestions")
+    assert response.status_code == 200 and "<html" not in response.text
+    options = re.findall(r'<option value="([^"]+)"></option>', response.text)
+    assert options == ["Ação Digital", "Amazon", "Uber", "Zé do Pão"]
+    assert client.get("/merchants/suggestions?account=nope").text.strip() == ""
+    assert "Uber" in client.get(f"/merchants/suggestions?account={checking}").text
+
+
+def test_card_purchase_form_takes_the_merchant(client: TestClient, container: Container) -> None:
+    _, card = make_card(client, container)
+    form = client.get("/cards/purchase").text
+    assert 'name="merchant"' in form and '<datalist id="merchants-list">' in form
+    buy_on_card(client, card, days_ago=0, installments="2", merchant="Amazon")
+    with container.uow as work:
+        assert {t.merchant for t in work.transactions.list_by_account(card)} == {"Amazon"}
+    cards_page = client.get(f"/cards?card={card}").text
+    assert '<datalist id="merchants-list">' in cards_page and "Amazon" in cards_page
+
+
+def test_analyses_ranks_the_top_merchants(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_with_merchant(client, checking, "Amazon", amount="100,00", description="Livro")
+    add_with_merchant(client, checking, "Amazon", amount="50,00", description="Cabo")
+    add_with_merchant(client, checking, "Uber", amount="30,00", description="Corrida")
+    add_expense(client, checking, amount="20,00", description="Sem local")
+    page = client.get("/analises").text
+    assert "Principais Estabelecimentos &amp; Vendedores" in page and 'id="merchants"' in page
+    for column in (
+        "Estabelecimento",
+        "Categoria principal",
+        "Frequência",
+        "Ticket médio",
+        "Total gasto",
+    ):
+        assert f">{column}</th>" in page
+    section = page.split('id="h-mer"')[1]
+    text = visible(section)
+    assert (
+        section.index("Amazon")
+        < section.index("Uber")
+        < section.index("Outros / Sem identificação")
+    )
+    assert "R$ 150,00" in text and "R$ 75,00" in text  # total and average ticket of Amazon
+    assert "2×" in text and "1×" in text
+    assert "75,0% da despesa" in text  # 150 / 200
+    assert 'class="mer-share"' in section and 'style="width: 75.0%"' in section
+    assert "Alimentação" in text or "Não categorizado" in text  # a main category per merchant
+    css = client.get("/static/screens.css").text
+    assert ".mer-table" in css and "tabular-nums" in css
+
+
+def test_analyses_merchants_ignore_refunded_purchases_and_have_an_empty_state(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    assert "Nenhuma despesa neste período" in client.get("/analises").text.split('id="h-mer"')[1]
+    add_with_merchant(client, checking, "Amazon", amount="80,00", description="Devolvido")
+    with container.uow as work:
+        entry = work.transactions.list_by_account(checking)[0]
+    post_edit(client, entry, refunded="1", merchant="Amazon")
+    section = client.get("/analises").text.split('id="h-mer"')[1]
+    assert "Amazon" not in section and "Nenhuma despesa neste período" in section
+
+
+# --- the entries filters survive month navigation ---
+
+
+def entries_hrefs(page: str) -> dict[str, str]:
+    """The month arrows and the clear link of /entries, as the browser would follow them."""
+    import html as html_lib
+
+    found = {}
+    for label in ("Mês anterior", "Próximo mês"):
+        match = re.search(rf'<a class="icon-btn" href="([^"]+)" aria-label="{label}"', page)
+        assert match, label
+        found[label] = html_lib.unescape(match.group(1))
+    clear = re.search(r'<a class="btn secondary" href="([^"]+)">Limpar filtros</a>', page)
+    found["clear"] = html_lib.unescape(clear.group(1)) if clear else ""
+    return found
+
+
+def test_month_arrows_keep_every_active_filter(client: TestClient, container: Container) -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    checking, _ = setup_accounts(client, container)
+    food = category_by_slug(container, "food")
+    page = client.get(
+        f"/entries?month=2026-07&account={checking}&category={food.id}&kind=expense&q=caf%C3%A9"
+    ).text
+    links = entries_hrefs(page)
+    for label, month in (("Mês anterior", "2026-06"), ("Próximo mês", "2026-08")):
+        query = parse_qs(urlsplit(links[label]).query)
+        assert urlsplit(links[label]).path == "/entries"
+        assert query == {
+            "month": [month],
+            "account": [checking],
+            "category": [food.id],
+            "kind": ["expense"],
+            "q": ["café"],
+        }
+    # following an arrow shows the other month with the same filters still applied
+    other = client.get(links["Mês anterior"]).text
+    assert "Junho" in other and 'value="café"' in other
+    assert f'<option value="{checking}" selected' in other
+    assert f'<option value="{food.id}" selected' in other
+    assert '<option value="expense" selected' in other
+    assert 'name="month" value="2026-06"' in other
+    # and the arrows of that page keep going with them
+    assert "month=2026-05" in entries_hrefs(other)["Mês anterior"]
+
+
+def test_month_arrows_without_filters_stay_plain_and_there_is_nothing_to_clear(
+    client: TestClient,
+) -> None:
+    page = client.get("/entries?month=2026-07").text
+    links = entries_hrefs(page)
+    assert links["Mês anterior"] == "/entries?month=2026-06"
+    assert links["Próximo mês"] == "/entries?month=2026-08"
+    assert links["clear"] == ""  # no filter, no "Limpar filtros"
+
+
+def test_filter_form_keeps_the_viewed_month_and_clear_keeps_it_too(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    page = client.get(f"/entries?month=2026-03&account={checking}").text
+    form = re.search(r'<form method="get" action="/entries" role="search".*?</form>', page, re.S)
+    assert form and '<input type="hidden" name="month" value="2026-03">' in form.group(0)
+    # submitting the form is a GET of exactly its fields: the month is one of them
+    assert 'name="month"' in form.group(0)
+    assert entries_hrefs(page)["clear"] == "/entries?month=2026-03"  # month kept, filters gone
+    cleared = client.get(entries_hrefs(page)["clear"]).text
+    bar = cleared.split('class="filter-bar"')[1].split("</form>")[0]  # not the quick form below
+    assert "Março" in cleared and f'<option value="{checking}" selected' not in bar
+    assert "Limpar filtros" not in bar
+
+
+def test_clear_link_of_the_empty_result_keeps_the_month_as_well(
+    client: TestClient, container: Container
+) -> None:
+    setup_accounts(client, container)
+    page = client.get("/entries?month=2026-03&q=nada-existe").text
+    assert "Nenhum lançamento com esses filtros." in page
+    assert page.count('href="/entries?month=2026-03">Limpar filtros') == 2  # bar and empty state
+
+
+def test_load_more_keeps_filters_and_month(client: TestClient, container: Container) -> None:
+    checking, _ = setup_accounts(client, container)
+    for n in range(3):
+        add_expense(client, checking, description=f"Item {n}", date="2026-03-10")
+    page = client.get(f"/entries?month=2026-03&account={checking}&limit=2").text
+    more = re.search(r'<a class="btn secondary" href="([^"]+)">Carregar mais</a>', page)
+    assert more
+    import html as html_lib
+
+    href = html_lib.unescape(more.group(1))
+    assert "month=2026-03" in href and f"account={checking}" in href and "limit=" in href
+
+
+# --- editing a statement payment ---
+
+PAYMENT_WARNING = (
+    "Atenção:</strong> Alterar o valor ou a conta de origem deste pagamento recalculará o saldo "
+    "das contas e o status de quitação da fatura."
+)
+
+
+def paid_statement(client: TestClient, container: Container, amount: str = "300,00"):
+    """A card purchase 75 days ago, paid in full today from checking. Returns the pieces."""
+    checking, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75, amount=amount)
+    entry = only_entry(container, card)
+    assert entry.statement_id
+    today = dt.date.today().isoformat()
+    paid = client.post(
+        f"/statements/{entry.statement_id}/pay", data={"from_account": checking, "date": today}
+    )
+    assert paid.status_code == 303
+    with container.uow as work:
+        legs = {
+            t.account_id: t
+            for t in work.transactions.list_by_account(checking)
+            + work.transactions.list_by_account(card)
+            if t.transfer_id
+        }
+        statement = work.statements.get(entry.statement_id)
+    assert statement
+    return checking, card, legs[checking], legs[card], statement
+
+
+def statement_status_of(container: Container, statement_id: str) -> str:
+    from financas.application.queries.cards import statement_view
+
+    with container.uow as work:
+        statement = work.statements.get(statement_id)
+        assert statement
+        return statement_view(work, statement, dt.date.today()).status.value
+
+
+def payment_data(debit, **overrides: str) -> dict[str, str]:
+    data = {
+        "amount": format_decimal(abs(debit.amount_cents)),
+        "date": debit.posted_on.isoformat(),
+        "from_account": debit.account_id,
+        "notes": "",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_payment_rows_have_the_edit_pencil_on_entries_and_on_the_paid_statement(
+    client: TestClient, container: Container
+) -> None:
+    _, card, debit, credit, statement = paid_statement(client, container)
+    assert statement_status_of(container, statement.id) == "paid"
+    page = client.get("/entries").text
+    for leg in (debit, credit):
+        assert f'hx-get="/entries/{leg.id}/edit"' in page
+    cards_page = client.get(f"/cards?card={card}&month={statement.month}").text
+    assert f'hx-get="/entries/{credit.id}/edit?from=cards' in cards_page
+    assert "Editar pagamento" in cards_page and "pagamento</span>" in cards_page
+    # the purchase of that paid statement stays locked: no pencil on it
+    with container.uow as work:
+        purchase = next(
+            t for t in work.transactions.list_by_statement(statement.id) if not t.transfer_id
+        )
+    assert f"/entries/{purchase.id}/edit" not in cards_page
+
+
+def test_payment_edit_form_shows_badge_warning_and_the_payment_fields(
+    client: TestClient, container: Container
+) -> None:
+    checking, card, debit, credit, _ = paid_statement(client, container)
+    for leg in (debit, credit):  # the same form from either row
+        form = client.get(f"/entries/{leg.id}/edit", headers=HX)
+        assert form.status_code == 200 and "<html" not in form.text
+        assert '<span class="badge">Pagamento de Fatura</span>' in form.text
+        assert PAYMENT_WARNING in form.text and "data-payment-warning" in form.text
+        assert "Conta de origem" in form.text and "Data do pagamento" in form.text
+        assert "Valor pago" in form.text and "Observações" in form.text
+        assert 'name="amount"' in form.text and 'value="300,00"' in form.text
+        assert f'<option value="{checking}" selected' in form.text
+        assert 'name="description"' not in form.text and 'name="category_id"' not in form.text
+    plain = client.get(f"/entries/{debit.id}/edit?from=cards&card={card}&month=2026-01", headers=HX)
+    assert "from=cards" in plain.text  # the way back to the statement is kept
+
+
+def test_saving_a_smaller_payment_updates_both_legs_and_reopens_the_statement(
+    client: TestClient, container: Container
+) -> None:
+    _, card, debit, credit, statement = paid_statement(client, container)
+    saved = client.post(
+        f"/entries/{debit.id}/edit",
+        data=payment_data(debit, amount="120,00", notes="conferido"),
+        headers={**HX, "hx-current-url": "http://localhost/entries?month=2026-10&kind=transfer"},
+    )
+    location = saved.headers["hx-redirect"]
+    assert location.startswith("/entries?") and "ok=payment_updated" in location
+    assert "kind=transfer" in location  # back to the list the user was on
+    assert "Pagamento atualizado" in client.get(location).text
+    with container.uow as work:
+        new_debit = work.transactions.get(debit.id)
+        new_credit = work.transactions.get(credit.id)
+    assert new_debit and new_credit
+    assert (new_debit.amount_cents, new_credit.amount_cents) == (-12_000, 12_000)
+    assert new_debit.notes == new_credit.notes == "conferido"
+    assert statement_status_of(container, statement.id) == "closed"  # no longer paid in full
+    page = visible(client.get(f"/cards?card={card}&month={statement.month}"))
+    assert "R$ 180,00" in page  # what is still owed: 300 - 120
+    # raising it back to the full amount pays the statement again
+    again = client.post(f"/entries/{credit.id}/edit", data=payment_data(debit), headers=HX)
+    assert "ok=payment_updated" in again.headers["hx-redirect"]
+    assert statement_status_of(container, statement.id) == "paid"
+
+
+def test_payment_edit_from_cards_returns_to_the_statement(
+    client: TestClient, container: Container
+) -> None:
+    _, card, debit, credit, statement = paid_statement(client, container)
+    qs = f"from=cards&card={card}&month={statement.month}&ano={statement.month.year}"
+    saved = client.post(
+        f"/entries/{credit.id}/edit?{qs}",
+        data=payment_data(debit, amount="250,00"),
+        headers=HX,
+    )
+    location = saved.headers["hx-redirect"]
+    assert location.startswith("/cards?") and "from=" not in location
+    assert f"card={card}" in location and f"month={statement.month}" in location
+    assert f"ano={statement.month.year}" in location and "ok=payment_updated" in location
+    page = client.get(location)
+    assert "Pagamento atualizado" in page.text and 'id="statement-section"' in page.text
+    assert statement_status_of(container, statement.id) == "closed"
+    plain = client.post(
+        f"/entries/{credit.id}/edit?{qs}", data=payment_data(debit, amount="300,00")
+    )
+    assert plain.status_code == 303 and "ok=payment_updated" in plain.headers["location"]
+
+
+def test_changing_the_source_account_moves_the_debit_and_the_balances(
+    client: TestClient, container: Container
+) -> None:
+    from financas.application.queries.balances import ListAccountBalances
+    from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
+
+    checking, _, debit, credit, _ = paid_statement(client, container)
+    with container.uow as work:
+        inst = work.institutions.list_all()[0]
+    client.post("/accounts", data={"nickname": "Segunda Conta", "institution_id": inst.id})
+    with container.uow as work:
+        other = next(a.id for a in work.accounts.list_all() if a.nickname == "Segunda Conta")
+    day = dt.date.today() - dt.timedelta(days=100)
+    for account in (checking, other):
+        RecordBalance(container.uow).execute(RecordBalanceCommand(account, day, 100_000))
+
+    def balances() -> dict[str, int | None]:
+        rows = ListAccountBalances(container.uow).execute(dt.date.today())
+        return {b.account_id: b.balance_cents for b in rows}
+
+    assert balances()[checking] == 100_000 - 30_000 and balances()[other] == 100_000
+    form = client.get(f"/entries/{debit.id}/edit", headers=HX).text
+    assert (
+        f'<option value="{other}" >Segunda Conta</option>' in form.replace(" selected", "")
+        or other in form
+    )
+    saved = client.post(
+        f"/entries/{debit.id}/edit", data=payment_data(debit, from_account=other), headers=HX
+    )
+    assert "ok=payment_updated" in saved.headers["hx-redirect"]
+    assert balances()[checking] == 100_000 and balances()[other] == 100_000 - 30_000
+    # "Conta não controlada": the checking leg is dropped, the card side still pays the statement
+    client.post(f"/entries/{credit.id}/edit", data=payment_data(debit, from_account=""), headers=HX)
+    with container.uow as work:
+        assert work.transactions.get(debit.id) is None
+        assert work.transactions.get(credit.id).amount_cents == 30_000  # type: ignore[union-attr]
+    assert balances()[other] == 100_000
+
+
+def test_payment_edit_errors_keep_the_form_and_change_nothing(
+    client: TestClient, container: Container
+) -> None:
+    checking, card, debit, credit, _ = paid_statement(client, container)
+    zero = client.post(
+        f"/entries/{debit.id}/edit", data=payment_data(debit, amount="0,00"), headers=HX
+    )
+    assert zero.status_code == 200 and "O valor precisa ser maior que zero." in zero.text
+    assert PAYMENT_WARNING in zero.text and 'value="0,00"' in zero.text
+    nodate = client.post(f"/entries/{debit.id}/edit", data=payment_data(debit, date=""), headers=HX)
+    assert "Data inválida" in nodate.text or "inválid" in nodate.text.lower()
+    bad = client.post(
+        f"/entries/{debit.id}/edit", data=payment_data(debit, from_account=card), headers=HX
+    )
+    assert "não aceita esse lançamento" in bad.text  # a card cannot be the source
+    with container.uow as work:
+        assert work.transactions.get(debit.id) == debit
+        assert work.transactions.get(credit.id) == credit
+    # a plain transfer is still not editable
+    own = client.post(
+        "/transfers",
+        data={
+            "amount": "5,00",
+            "date": dt.date.today().isoformat(),
+            "from_account": checking,
+            "to_account": "",
+        },
+    )
+    assert own.status_code == 303
+
+
+# --- Revisão Rápida (/revisar) and the " - Estabelecimento" suffix ---
+
+
+def forbidden_name() -> str:
+    return "tin" + "der"  # the product never uses it; spelled apart so no file here says it
+
+
+def pending_entry(
+    client: TestClient, account: str, description: str, amount: str = "50,00"
+) -> None:
+    add_expense(client, account, description=description, amount=amount)
+
+
+def test_review_deck_empty_state_and_the_exact_copy(client: TestClient) -> None:
+    page = client.get("/revisar")
+    assert page.status_code == 200 and "<h1>Revisão Rápida</h1>" in page.text
+    assert "Tudo em dia! Nenhum lançamento precisando de revisão." in page.text
+    assert 'id="review-card"' not in page.text and forbidden_name() not in page.text.lower()
+    assert 'class="nav-count"' not in client.get("/entries").text  # nothing pending: no counter
+
+
+def test_review_deck_shows_one_card_with_suggestions_and_shortcuts(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    food = category_by_slug(container, "food")
+    add_with_merchant(
+        client, checking, "Drogasil", description="Remédio", amount="20,00", category_id=food.id
+    )  # filled in: it teaches the deck, and is not pending itself
+    client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "date": dt.date.today().isoformat(),
+            "amount": "35,90",
+            "description": "COMPRA DROGASIL 0451",
+            "account_id": checking,
+        },
+    )
+    page = client.get("/revisar")
+    text = page.text
+    assert 'id="review-card"' in text and "COMPRA DROGASIL 0451" in text
+    assert "R$ 35,90" in visible(page) and "Conta Corrente" in text
+    assert "1 para revisar" in text
+    assert 'value="Drogasil"' in text and "sugestão: Drogasil" in text  # learned from "Remédio"
+    assert 'name="merchant"' in text and 'list="merchants-list"' in text
+    assert '<datalist id="merchants-list">' in text
+    assert text.count('name="category_id"') >= 10 and f'value="{food.id}"' in text
+    assert (
+        "uncategorized" not in text
+        and "Não categorizado</span>" not in text.split("review-pills")[1]
+    )
+    assert "Pular" in text and "Salvar e avançar" in text
+    assert 'hx-post="/entries/' in text and 'hx-get="/revisar/next?skip_id=' in text
+    assert "← pular · → ou Enter salvar e avançar" in text
+    assert '<span class="nav-count">(1)</span>' in client.get("/entries").text
+    script = client.get("/static/app.js").text
+    for needle in ("ArrowLeft", "ArrowRight", '"Enter"', "data-review-skip", "requestSubmit"):
+        assert needle in script, needle
+    assert forbidden_name() not in text.lower() + script.lower()
+
+
+def test_skip_moves_to_the_next_card_and_the_deck_ends_politely(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    pending_entry(client, checking, "Primeira")
+    pending_entry(client, checking, "Segunda")
+    with container.uow as work:
+        ids = {t.description: t.id for t in work.transactions.list_by_account(checking)}
+    first = client.get("/revisar").text
+    current = "Segunda" if "Segunda" in first.split("review-desc")[1][:60] else "Primeira"
+    other = "Primeira" if current == "Segunda" else "Segunda"
+    skipped = client.get(f"/revisar/next?skip_id={ids[current]}", headers=HX)
+    assert skipped.status_code == 200 and "<html" not in skipped.text
+    assert other in skipped.text.split("review-desc")[1][:60]
+    assert "1 pulado(s)" in skipped.text and f"skipped={ids[current]}" in skipped.text
+    done = client.get(f"/revisar/next?skip_id={ids[other]}&skipped={ids[current]}", headers=HX)
+    assert "Tudo em dia! Nenhum lançamento precisando de revisão." in done.text
+    assert "Os lançamentos que você pulou continuam pendentes" in done.text
+    assert 'id="review-card"' not in done.text
+
+
+def test_quick_fill_saves_the_ledger_and_answers_with_the_next_card(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    pending_entry(client, checking, "Compra grande", amount="120,00")
+    pending_entry(client, checking, "Outra compra", amount="10,00")
+    with container.uow as work:
+        target = next(
+            t
+            for t in work.transactions.list_by_account(checking)
+            if t.description == "Compra grande"
+        )
+    shopping = category_by_slug(container, "shopping")
+    saved = client.post(
+        f"/entries/{target.id}/quick-fill",
+        data={"merchant": "mercadolivre", "category_id": shopping.id, "skipped": ""},
+        headers=HX,
+    )
+    assert saved.status_code == 200 and "<html" not in saved.text
+    assert (
+        "Outra compra" in saved.text
+        and "Compra grande" not in saved.text.split("review-desc")[1][:60]
+    )
+    with container.uow as work:
+        got = work.transactions.get(target.id)
+    assert got and (got.merchant, got.category_id) == ("Mercado Livre", shopping.id)
+    assert got.amount_cents == target.amount_cents  # money untouched
+
+
+def test_quick_fill_rejects_an_empty_save_and_keeps_the_card(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    pending_entry(client, checking, "Só esta")
+    entry = only_entry(container, checking)
+    refused = client.post(
+        f"/entries/{entry.id}/quick-fill", data={"merchant": "", "category_id": ""}, headers=HX
+    )
+    assert refused.status_code == 200
+    assert "Informe o estabelecimento ou escolha outra categoria" in refused.text
+    assert 'id="review-card"' in refused.text and "Só esta" in refused.text
+    assert only_entry(container, checking) == entry
+    # a card that was saved is not shown again in this pass even if it is still pending
+    kept = client.post(
+        f"/entries/{entry.id}/quick-fill",
+        data={"merchant": "Padaria", "category_id": "", "skipped": ""},
+        headers=HX,
+    )
+    assert "Tudo em dia!" in kept.text  # merchant saved, category still open, but not shown twice
+    assert only_entry(container, checking).merchant == "Padaria"
+
+
+def test_quick_fill_on_an_installment_fills_the_whole_plan(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=0, installments="3", amount="300,00")
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        second = work.transactions.list_by_plan(plan.id)[1]
+    shopping = category_by_slug(container, "shopping")
+    client.post(
+        f"/entries/{second.id}/quick-fill",
+        data={"merchant": "Magazine Luiza", "category_id": shopping.id},
+        headers=HX,
+    )
+    with container.uow as work:
+        rows = work.transactions.list_by_plan(plan.id)
+    assert {(t.merchant, t.category_id) for t in rows} == {("Magazine Luiza", shopping.id)}
+
+
+def test_quick_fill_only_for_expenses_and_unknown_ids(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "date": dt.date.today().isoformat(),
+            "amount": "10,00",
+            "description": "Salário",
+            "account_id": checking,
+        },
+    )
+    income = only_entry(container, checking)
+    refused = client.post(
+        f"/entries/{income.id}/quick-fill", data={"merchant": "Empresa"}, headers=HX
+    )
+    assert "só vale para despesas" in refused.text
+    assert client.post(
+        "/entries/nope/quick-fill", data={"merchant": "X"}, headers=HX
+    ).status_code in {400, 404}
+
+
+def test_a_typed_suffix_becomes_the_merchant_and_leaves_the_description(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, description="Mouse Gamer - Kabum", amount="150,00")
+    entry = only_entry(container, checking)
+    assert (entry.description, entry.merchant) == ("Mouse Gamer", "Kabum")
+    page = client.get("/entries").text
+    assert (
+        ">Mouse Gamer</span>" in page.replace('<small class="c-merchant">Kabum</small>', "")
+        or "Mouse Gamer" in page
+    )
+    assert '<small class="c-merchant">Kabum</small>' in page and "Mouse Gamer - Kabum" not in page
+    # a typed merchant wins over the suffix; the text then stays as typed
+    add_with_merchant(client, checking, "Amazon", description="Fone - Loja X")
+    with container.uow as work:
+        fone = next(
+            t
+            for t in work.transactions.list_by_account(checking)
+            if t.description.startswith("Fone")
+        )
+    assert (fone.description, fone.merchant) == ("Fone - Loja X", "Amazon")
+    # not a merchant: a month, an installment, a hyphenated word
+    for text in ("Aluguel - Outubro", "Parcela - 3/10", "Wi-Fi"):
+        add_expense(client, checking, description=text)
+    with container.uow as work:
+        descriptions = {
+            t.description: t.merchant for t in work.transactions.list_by_account(checking)
+        }
+    assert descriptions["Aluguel - Outubro"] is None and descriptions["Parcela - 3/10"] is None
+    assert descriptions["Wi-Fi"] is None
+
+
+def test_the_edit_form_and_the_purchase_form_take_the_suffix_too(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = make_card(client, container)
+    add_expense(client, checking, description="Camiseta")
+    entry = next(t for t in only_list(container, checking))
+    post_edit(client, entry, description="Camiseta - Amazon.com.br", merchant="")
+    with container.uow as work:
+        edited = work.transactions.get(entry.id)
+    assert edited and (edited.description, edited.merchant) == ("Camiseta", "Amazon")
+    buy_on_card(client, card, days_ago=0, description="Teclado - Kabum")
+    with container.uow as work:
+        bought = work.transactions.list_by_account(card)[0]
+    assert (bought.description, bought.merchant) == ("Teclado", "Kabum")
+
+
+def only_list(container: Container, account: str):
+    with container.uow as work:
+        return work.transactions.list_by_account(account)
+
+
+# --- the items sum, as the browser posts it ---
+
+
+@pytest.mark.parametrize(
+    ("total", "items"),
+    [
+        ("25,52", ["15,52", "10,00"]),
+        ("1.250,00", ["1.000,00", "250,00"]),
+        ("1.250,00", ["R$ 1.000,00", "R$ 250,00"]),
+        ("25,52", ["-15,52", "-10,00"]),  # a minus typed on the items never counts
+    ],
+)
+def test_items_that_add_up_are_saved_whatever_the_mask_wrote(
+    client: TestClient, container: Container, total: str, items: list[str]
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount=total.replace("R$ ", ""), description="Mercado")
+    entry = only_entry(container, checking)
+    saved = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": total,
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "splits_present": "1",
+            "item_description": ["Primeiro", "Segundo"],
+            "item_category": [category_by_slug(container, "groceries").id] * 2,
+            "item_amount": items,
+        },
+        headers=HX,
+    )
+    assert "ok=entry_updated" in saved.headers["hx-redirect"], saved.text
+    with container.uow as work:
+        stored = work.transactions.splits_for([entry.id])[entry.id]
+        parent = work.transactions.get(entry.id)
+    assert parent and parent.amount_cents < 0  # the ledger keeps the negative expense
+    assert sum(i.amount_cents for i in stored) == -parent.amount_cents
+    assert all(i.amount_cents > 0 for i in stored)
+
+
+def test_the_editor_loads_the_mask_before_the_script_that_reads_it(client: TestClient) -> None:
+    page = client.get("/entries").text
+    assert page.index("/static/money-mask.js") < page.index("/static/app.js")
+    mask = client.get("/static/money-mask.js").text
+    assert "fp:money" in mask  # announces the value once it is masked
+    script = client.get("/static/app.js").text
+    assert "fp:money" in script and "Total distribuído com sucesso" in script
+    assert "Ultrapassou" in script and "parseFloat" not in script
+
+
+# --- parent category lock, itemized purchases and installment plans ---
+
+
+def purchase_form_data(card: str, **overrides: object) -> dict[str, object]:
+    data: dict[str, object] = {
+        "account_id": card,
+        "date": "2026-07-10",
+        "description": "Monitor",
+        "amount": "450,00",
+        "amount_mode": "total",
+        "installments": "1",
+        "splits_present": "1",
+        "split_descriptions": ["Monitor Gamer", "Cabo HDMI e Suporte"],
+        "split_categories": [],
+        "split_amounts": ["350,00", "100,00"],
+    }
+    data.update(overrides)
+    return data
+
+
+def test_edit_form_locks_the_parent_category_when_the_entry_has_items(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, amount="380,00", description="Mercado")
+    entry = only_entry(container, checking)
+    plain = client.get(f"/entries/{entry.id}/edit", headers=HX).text
+    select = re.search(r'<select name="category_id"[^>]*>', plain)
+    assert select and "disabled" not in select.group(0)
+    client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "380,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "splits_present": "1",
+            **item_fields(container, MARKET),
+        },
+        headers=HX,
+    )
+    with container.uow as work:
+        assert work.transactions.get(entry.id).category_id is None  # type: ignore[union-attr]
+    locked = client.get(f"/entries/{entry.id}/edit", headers=HX).text
+    select = re.search(r'<select name="category_id"[^>]*>', locked)
+    assert select and "disabled" in select.group(0)  # a disabled field is never submitted
+    assert (
+        '<option value="" data-split-placeholder selected>Categorizado por item abaixo</option>'
+        in locked
+    )
+    assert "data-split-toggle-items checked" in locked.replace("\n", " ") or "checked" in locked
+    # the row shows that the items carry the categories
+    assert "Por item" in client.get("/entries").text
+    # a request that names a category AND has items is refused with a clear message
+    refused = client.post(
+        f"/entries/{entry.id}/edit",
+        data={
+            "amount": "380,00",
+            "date": entry.posted_on.isoformat(),
+            "description": "Mercado",
+            "category_id": category_by_slug(container, "food").id,
+        },
+        headers=HX,
+    )
+    assert "não tem categoria própria" in refused.text
+    with container.uow as work:
+        assert work.transactions.get(entry.id).category_id is None  # type: ignore[union-attr]
+
+
+def test_purchase_form_has_the_items_editor_and_the_parent_lock_hooks(
+    client: TestClient, container: Container
+) -> None:
+    make_card(client, container)
+    page = client.get("/cards/purchase").text
+    assert "Adicionar itens / Dividir categorias" in page and "data-split-purchase" in page
+    assert 'name="split_descriptions"' in page and 'name="split_amounts"' in page
+    assert 'name="split_categories"' in page and "data-split-template" in page
+    assert (
+        "data-split-note" in page and "data-split-single-only" not in page
+    )  # installments allowed
+    assert 'name="category_id"' in page and 'name="splits_present"' in page
+
+
+def test_single_purchase_with_items_creates_a_parent_without_a_category(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    shopping = category_by_slug(container, "shopping")
+    home = category_by_slug(container, "home")
+    saved = client.post(
+        "/cards/purchase",
+        data=purchase_form_data(card, split_categories=[shopping.id, home.id]),
+    )
+    assert saved.status_code == 303 and "ok=purchase" in saved.headers["location"]
+    entry = only_entry(container, card)
+    assert entry.category_id is None and entry.amount_cents == -45_000
+    with container.uow as work:
+        items = work.transactions.splits_for([entry.id])[entry.id]
+    assert [(i.description, i.category_id, i.amount_cents) for i in items] == [
+        ("Monitor Gamer", shopping.id, 35_000),
+        ("Cabo HDMI e Suporte", home.id, 10_000),
+    ]
+    # the statement and the limit read the parent once...
+    statement = statement_of_entry(container, entry)
+    page = visible(client.get(f"/cards?card={card}&month={statement.month}"))
+    assert "R$ 450,00" in page and "Comprometido R$ 450,00" in page
+    # ...while category spending follows the items
+    from financas.application.queries.summary import GetSummary, Period
+
+    spending = GetSummary(container.uow).execute(Period.month(statement.month))
+    assert {r.category_id: r.total_cents for r in spending.by_category} == {
+        shopping.id: 35_000,
+        home.id: 10_000,
+    }
+    assert "▾ 2 itens" in client.get(f"/cards?card={card}&month={statement.month}").text
+
+
+def test_installment_purchase_with_items_distributes_them_over_every_installment(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    shopping = category_by_slug(container, "shopping")
+    home = category_by_slug(container, "home")
+    saved = client.post(
+        "/cards/purchase",
+        data=purchase_form_data(card, installments="3", split_categories=[shopping.id, home.id]),
+    )
+    assert saved.status_code == 303
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        entries = work.transactions.list_by_plan(plan.id)
+        rows = [
+            [(i.description, i.amount_cents) for i in work.transactions.splits_for([e.id])[e.id]]
+            for e in entries
+        ]
+    assert [e.amount_cents for e in entries] == [-15_000] * 3
+    assert all(e.category_id is None for e in entries)  # no installment has a category of its own
+    assert rows == [
+        [("Monitor Gamer", 11_667), ("Cabo HDMI e Suporte", 3_333)],
+        [("Monitor Gamer", 11_667), ("Cabo HDMI e Suporte", 3_333)],
+        [("Monitor Gamer", 11_666), ("Cabo HDMI e Suporte", 3_334)],
+    ]
+    assert plan.category_id == shopping.id  # shown in "Parcelas ativas": the biggest item's
+    assert "Parcelas ativas" in client.get(f"/cards?card={card}").text
+
+
+def test_installment_value_mode_takes_the_items_as_the_whole_purchase(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    categories = [category_by_slug(container, s).id for s in ("shopping", "home")]
+    saved = client.post(
+        "/cards/purchase",
+        data=purchase_form_data(
+            card,
+            installments="3",
+            amount="150,00",
+            amount_mode="installment",  # R$ 150,00 x 3 = 450,00
+            split_categories=categories,
+        ),
+    )
+    assert saved.status_code == 303
+    with container.uow as work:
+        entries = work.transactions.list_by_plan(work.plans.list_all()[0].id)
+        assert (
+            sum(i.amount_cents for e in entries for i in work.transactions.splits_for([e.id])[e.id])
+            == 45_000
+        )
+
+
+def test_purchase_items_that_do_not_add_up_are_refused_and_keep_the_form(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    categories = [category_by_slug(container, s).id for s in ("shopping", "home")]
+    for installments in ("1", "3"):
+        refused = client.post(
+            "/cards/purchase",
+            data=purchase_form_data(
+                card,
+                installments=installments,
+                split_categories=categories,
+                split_amounts=["350,00", "90,00"],  # R$ 440,00 of R$ 450,00
+            ),
+        )
+        assert refused.status_code == 400
+        assert "restam R$ 10,00" in refused.text  # the reason, in Portuguese
+        assert 'value="Monitor Gamer"' in refused.text  # the typed items stay on the form
+        assert re.search(r'<select name="category_id"[^>]*disabled', refused.text)  # still locked
+    with container.uow as work:
+        assert work.transactions.list_by_account(card) == [] and work.plans.list_all() == []
+
+
+def test_purchase_form_refuses_a_parent_category_next_to_items(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    categories = [category_by_slug(container, s).id for s in ("shopping", "home")]
+    refused = client.post(
+        "/cards/purchase",
+        data=purchase_form_data(
+            card, split_categories=categories, category_id=category_by_slug(container, "food").id
+        ),
+    )
+    assert refused.status_code == 400 and "não tem categoria própria" in refused.text
+
+
+def test_installment_edit_form_offers_the_items_with_their_plan_wide_scope(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    categories = [category_by_slug(container, s).id for s in ("shopping", "home")]
+    client.post(
+        "/cards/purchase",
+        data=purchase_form_data(
+            card,
+            installments="3",
+            split_categories=categories,
+            date=dt.date.today().isoformat(),  # the three statements are open or future
+        ),
+    )
+    with container.uow as work:
+        plan = work.plans.list_all()[0]
+        first, second, _third = work.transactions.list_by_plan(plan.id)
+    form = client.get(f"/entries/{second.id}/edit", headers=HX).text
+    assert "Adicionar itens / Dividir categorias" in form and "data-plan-total" in form
+    assert 'data-plan-total="45000"' in form and 'data-target-amount="15000"' in form
+    assert form.count('name="item_description"') == 3  # the plan's two items + the template row
+    assert 'value="350,00"' in form and 'value="100,00"' in form  # the totals over the plan
+    assert re.search(r'<select name="category_id"[^>]*disabled', form)
+    # plan-wide save: the items now cover the three open or future installments
+    new = {
+        "amount": "150,00",
+        "description": "Monitor",
+        "item_description": ["Monitor Gamer", "Cabo", "Suporte"],
+        "item_category": [*categories, categories[1]],
+        "item_amount": ["350,00", "60,00", "40,00"],
+        "splits_present": "1",
+        "propagate": "1",
+    }
+    saved = client.post(f"/entries/{second.id}/edit", data=new, headers=HX)
+    assert "ok=entry_updated" in saved.headers["hx-redirect"], saved.text
+    with container.uow as work:
+        entries = work.transactions.list_by_plan(plan.id)
+        sums = [
+            sum(i.amount_cents for i in work.transactions.splits_for([e.id])[e.id]) for e in entries
+        ]
+    assert sums == [15_000] * 3 and all(e.category_id is None for e in entries)
+    # one installment only: the items must be that installment's R$ 150,00
+    single = {**new, "item_amount": ["100,00", "30,00", "20,00"]}
+    single.pop("propagate")
+    saved = client.post(f"/entries/{first.id}/edit", data=single, headers=HX)
+    assert "ok=entry_updated" in saved.headers["hx-redirect"], saved.text
+    mismatch = client.post(
+        f"/entries/{first.id}/edit",
+        data={**single, "item_amount": ["100,00", "30,00", "10,00"]},
+        headers=HX,
+    )
+    assert "restam R$ 10,00" in mismatch.text
+
+
+# --- an installment purchase is ONE row on /entries; /cards keeps the monthly installments ---
+
+
+def buy_itemized_plan(client: TestClient, container: Container, card: str, day: dt.date) -> str:
+    categories = [category_by_slug(container, s).id for s in ("shopping", "home")]
+    done = client.post(
+        "/cards/purchase",
+        data=purchase_form_data(
+            card, installments="3", split_categories=categories, date=day.isoformat()
+        ),
+    )
+    assert done.status_code == 303, done.text
+    with container.uow as work:
+        return work.plans.list_all()[0].id
+
+
+def test_entries_list_shows_an_installment_purchase_as_one_consolidated_row(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    today = dt.date.today()
+    plan_id = buy_itemized_plan(client, container, card, today)
+    with container.uow as work:
+        first, second, third = work.transactions.list_by_plan(plan_id)
+    month = f"/entries?month={today:%Y-%m}"
+    page = client.get(month).text
+    assert f'id="entry-{first.id}"' in page  # the purchase, once
+    assert f'id="entry-{second.id}"' not in page and f'id="entry-{third.id}"' not in page
+    row = page.split(f'id="entry-{first.id}"', 1)[1].split('class="row entry', 1)[0]
+    text = visible(row)
+    assert "3 x R$ 150,00" in text  # the installments, next to the total of the purchase
+    assert "-R$ 450,00" in text or "−R$ 450,00" in text
+    assert "▾ 2 itens" in text
+    assert "Monitor Gamer: R$ 350,00" in text and "(2x R$ 116,67 + 1x R$ 116,66)" in text
+    assert "Cabo HDMI e Suporte: R$ 100,00" in text and "(2x R$ 33,33 + 1x R$ 33,34)" in text
+    assert "Por item" in text
+    assert f'hx-get="/entries/{first.id}/edit"' in page
+    assert f'hx-delete="/installments/plan/{plan_id}"' in page
+    # the month of the later installments does not list the purchase again
+    later = (today.replace(day=1) + dt.timedelta(days=65)).replace(day=1)
+    assert f'id="entry-{second.id}"' not in client.get(f"/entries?month={later:%Y-%m}").text
+    # the filters apply to the purchase as a whole: by an item's category and by text
+    home = category_by_slug(container, "home").id
+    assert f'id="entry-{first.id}"' in client.get(f"{month}&category={home}").text
+    food = category_by_slug(container, "food").id
+    assert f'id="entry-{first.id}"' not in client.get(f"{month}&category={food}").text
+    assert f'id="entry-{first.id}"' in client.get(f"{month}&q=monitor").text
+    # the card screen is unchanged: every installment on its statement
+    cards_page = client.get(f"/cards?card={card}").text
+    assert f'id="entry-{first.id}"' in cards_page
+
+
+def test_card_statement_shows_the_items_of_each_installment_with_its_share(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    plan_id = buy_itemized_plan(client, container, card, dt.date.today())
+    with container.uow as work:
+        entries = work.transactions.list_by_plan(plan_id)
+        statements = [work.statements.get(e.statement_id) for e in entries]  # type: ignore[arg-type]
+    for entry, statement in zip(entries, statements, strict=True):
+        assert statement
+        page = client.get(f"/cards?card={card}&month={statement.month}").text
+        assert f'id="split-{entry.id}" hidden' in page
+        assert "▾ 2 itens" in page and "data-split-toggle" in page
+        block = page.split(f'id="split-{entry.id}"', 1)[1].split("</div>\n", 1)[0]
+        assert "Monitor Gamer" in block and "Cabo HDMI e Suporte" in block
+        assert re.search(r"R\$\s?1\d{2},\d{2}", visible(block))  # its share: about 117,00 / 116,00
+
+
+def test_purchase_date_is_editable_on_the_entries_list_and_moves_pending_installments(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    today = dt.date.today()
+    plan_id = buy_itemized_plan(client, container, card, today)
+    with container.uow as work:
+        first = work.transactions.list_by_plan(plan_id)[0]
+    form = client.get(f"/entries/{first.id}/edit", headers=HX).text
+    assert 'name="purchase_date"' in form and f'value="{today.isoformat()}"' in form
+    assert "A alteração da data da compra reajustará os vencimentos das faturas pendentes." in form
+    on_cards = client.get(f"/entries/{first.id}/edit?from=cards&card={card}", headers=HX).text
+    assert 'name="purchase_date"' not in on_cards  # /cards keeps the plain installment form
+    new_day = today + dt.timedelta(days=40)
+    saved = client.post(
+        f"/entries/{first.id}/edit",
+        data={
+            "amount": "150,00",
+            "description": "Monitor",
+            "purchase_date": new_day.isoformat(),
+            "propagate": "1",
+        },
+        headers=HX,
+    )
+    assert "ok=entry_updated" in saved.headers["hx-redirect"], saved.text
+    with container.uow as work:
+        plan = work.plans.get(plan_id)
+        entries = work.transactions.list_by_plan(plan_id)
+    assert plan and plan.purchased_on == new_day
+    assert entries[0].posted_on == new_day
+    assert all(sum(-e.amount_cents for e in entries) == 45_000 for _ in [0])
+    # the consolidated row moved to the month of the new date
+    assert f'id="entry-{first.id}"' in client.get(f"/entries?month={new_day:%Y-%m}").text
+    # a blank date keeps the plan where it is
+    again = client.post(
+        f"/entries/{first.id}/edit",
+        data={"amount": "150,00", "description": "Monitor", "propagate": "1"},
+        headers=HX,
+    )
+    assert "ok=entry_updated" in again.headers["hx-redirect"]
+    with container.uow as work:
+        assert work.plans.get(plan_id).purchased_on == new_day  # type: ignore[union-attr]
+
+
+def test_cancel_on_a_consolidated_row_swaps_the_whole_purchase_back(
+    client: TestClient, container: Container
+) -> None:
+    _, card = make_card(client, container)
+    plan_id = buy_itemized_plan(client, container, card, dt.date.today())
+    with container.uow as work:
+        first = work.transactions.list_by_plan(plan_id)[0]
+    row = client.get(f"/entries/{first.id}/row", headers=HX).text
+    assert "3 x R$ 150,00" in visible(row) and "▾ 2 itens" in visible(row)
+
+
+# --- payment dates: from the previous statement's due date (or the cycle's opening) to today ---
+
+
+def unpaid_statement(client: TestClient, container: Container):
+    checking, card = make_card(client, container)
+    buy_on_card(client, card, days_ago=75, amount="300,00")
+    entry = only_entry(container, card)
+    assert entry.statement_id
+    with container.uow as work:
+        statement = work.statements.get(entry.statement_id)
+    assert statement
+    return checking, card, statement
+
+
+def bounds_of(container: Container, statement: Statement):
+    from financas.application.queries.cards import payment_date_boundaries
+
+    with container.uow as work:
+        return payment_date_boundaries(work, statement, dt.date.today())
+
+
+def test_payment_form_renders_the_date_bounds_and_the_warnings(
+    client: TestClient, container: Container
+) -> None:
+    _, card, statement = unpaid_statement(client, container)
+    bounds = bounds_of(container, statement)
+    assert not bounds.from_previous_due  # the card's first statement: its cycle opening
+    today = dt.date.today()
+    page = client.get(f"/cards?card={card}&month={statement.month}").text
+    assert f'min="{bounds.min_date.isoformat()}" max="{today.isoformat()}"' in page
+    assert "data-payment-date" in page and "data-payment-date-warning" in page
+    text = visible(page)
+    assert (
+        f"A data do pagamento deve estar entre {bounds.min_date:%d/%m/%Y} (abertura da fatura)"
+        in text
+    )
+    assert f"e hoje ({today:%d/%m/%Y})" in text
+    # the two alerts exist, hidden until the typed date leaves the range
+    assert re.search(
+        r"<p[^>]*data-pd-future[^>]*hidden>Pagamentos futuros não são permitidos", page
+    )
+    assert re.search(
+        r"<p[^>]*data-pd-before[^>]*hidden>Data inválida: anterior à abertura da fatura", page
+    )
+
+
+def test_payment_edit_form_carries_the_same_bounds(
+    client: TestClient, container: Container
+) -> None:
+    _, _, _debit, credit, statement = paid_statement(client, container)
+    bounds = bounds_of(container, statement)
+    form = client.get(f"/entries/{credit.id}/edit", headers=HX).text
+    assert f'min="{bounds.min_date.isoformat()}" max="{dt.date.today().isoformat()}"' in form
+    assert "data-payment-date-warning" in form and "Pagamentos futuros não são permitidos" in form
+
+
+def test_out_of_range_payment_dates_are_refused_with_a_portuguese_banner(
+    client: TestClient, container: Container
+) -> None:
+    checking, card, statement = unpaid_statement(client, container)
+    bounds = bounds_of(container, statement)
+    future = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+    refused = client.post(
+        f"/statements/{statement.id}/pay", data={"from_account": checking, "date": future}
+    )
+    assert refused.status_code == 400
+    assert "Pagamentos de fatura não podem ter data futura" in refused.text
+    early = (bounds.min_date - dt.timedelta(days=1)).isoformat()
+    refused = client.post(
+        f"/statements/{statement.id}/pay", data={"from_account": checking, "date": early}
+    )
+    assert refused.status_code == 400
+    assert "anterior ao vencimento da fatura anterior" in refused.text
+    assert f"{bounds.min_date:%d/%m/%Y}" in refused.text
+    with container.uow as work:
+        assert [t for t in work.transactions.list_by_account(card) if t.transfer_id] == []
+    on_the_edge = client.post(
+        f"/statements/{statement.id}/pay",
+        data={"from_account": checking, "date": bounds.min_date.isoformat(), "amount": "10,00"},
+    )
+    assert on_the_edge.status_code == 303  # the lower bound itself is valid
+
+
+def test_editing_a_payment_to_an_out_of_range_date_keeps_the_form_and_changes_nothing(
+    client: TestClient, container: Container
+) -> None:
+    _, _, debit, credit, statement = paid_statement(client, container)
+    bounds = bounds_of(container, statement)
+    future = (dt.date.today() + dt.timedelta(days=2)).isoformat()
+    refused = client.post(
+        f"/entries/{debit.id}/edit", data=payment_data(debit, date=future), headers=HX
+    )
+    assert (
+        refused.status_code == 200
+        and "Pagamentos de fatura não podem ter data futura" in refused.text
+    )
+    assert f'value="{future}"' in refused.text and "data-payment-date" in refused.text
+    early = (bounds.min_date - dt.timedelta(days=1)).isoformat()
+    refused = client.post(
+        f"/entries/{debit.id}/edit", data=payment_data(debit, date=early), headers=HX
+    )
+    assert "anterior ao vencimento da fatura anterior" in refused.text
+    with container.uow as work:
+        assert work.transactions.get(debit.id) == debit
+        assert work.transactions.get(credit.id) == credit

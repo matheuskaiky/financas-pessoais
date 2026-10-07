@@ -1,20 +1,25 @@
 {% extends "base.html" %}
-{% from "_macros.html" import avatar, dot %}
+{% from "_macros.html" import avatar, dot, day_group_header, merchant_input, merchant_datalist %}
 {% from "_ui.html" import odometer, state_empty %}
 {% block title %}Lançamentos{% endblock %}
 {% macro filter_url(extra) -%}
 /entries?month={{ month_value }}{% for k, v in filters.items() if v and k not in extra %}&{{ k }}={{ v|urlencode }}{% endfor %}{% for k, v in extra.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
+{# The same page for another month: every active filter travels with it (the form keeps the month in a hidden field). #}
+{% macro month_url(month) -%}
+/entries?month={{ month }}{% for k, v in filters.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
+{%- endmacro %}
 {% block content %}
+{% set filtered = filters.q or filters.kind or filters.account or filters.category %}
 <header class="page-head">
   <div>
     <span class="eyebrow">Movimento</span><h1>Lançamentos</h1>
     <p>{{ month_label|capitalize }} · {{ month_count }} lançamento(s)</p>
   </div>
   <div class="head-tools month-switch">
-    <a class="icon-btn" href="/entries?month={{ prev_month }}" aria-label="Mês anterior"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <a class="icon-btn" href="{{ month_url(prev_month) }}" aria-label="Mês anterior"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
     <strong class="month-name">{{ month_label|capitalize }}</strong>
-    <a class="icon-btn" href="/entries?month={{ next_month }}" aria-label="Próximo mês"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></a>
+    <a class="icon-btn" href="{{ month_url(next_month) }}" aria-label="Próximo mês"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></a>
     <a class="btn only-narrow" href="#form">Novo lançamento</a>
   </div>
 </header>
@@ -38,6 +43,7 @@
           {% for c in categories %}<option value="{{ c.id }}" {{ 'selected' if filters.category == c.id }}>{{ c.name }}</option>{% endfor %}
         </select></label>
       <button type="submit" class="secondary">Filtrar</button>
+      {% if filtered %}<a class="btn secondary" href="/entries?month={{ month_value }}">Limpar filtros</a>{% endif %}
     </form>
 
     <div class="statstrip totals">
@@ -50,19 +56,11 @@
     <section class="list-box" id="lista" aria-label="Lista de lançamentos">
       {% if rows %}
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
-      {% set seen = namespace(day=none) %}
-      {% for t in rows %}
-      {% if seen.day != t.posted_on %}{% set seen.day = t.posted_on %}<div class="day-head">{{ t.posted_on|day_label }}</div>{% endif %}
-      <div class="row entry">
-        <span class="c-date">{{ t.posted_on|date_short }}</span>
-        <div class="c-desc">
-          <span>{{ t.description or kind_labels[t.kind] }}</span>
-          <small>{{ kind_labels[t.kind] }}{% if t.is_recurring %} <span class="tag">recorrente</span>{% endif %}</small>
-        </div>
-        <span class="c-cat with-dot">{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}</span>
-        <span class="c-acct">{% for a in accounts if a.id == t.account_id %}{{ a.nickname }}{% endfor %}</span>
-        <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|money(sign="always", private="transactions") }}</span>
-        <span class="c-act"><button class="link danger" hx-post="/entries/{{ t.id }}/delete" hx-confirm="Este lançamento será apagado. Não dá para desfazer." data-confirm-title="Apagar lançamento" data-confirm-ok="Apagar" data-confirm-danger type="button" aria-label="Apagar lançamento {{ t.description or kind_labels[t.kind] }}">Apagar</button></span>
+      {% for day, day_entries in rows|groupby('posted_on')|reverse %}
+      {% set spent = day_entries|selectattr('kind.value', 'in', ['expense', 'refund'])|rejectattr('is_refunded')|list %}
+      <div class="day-group">
+        {{ day_group_header(day, (-(spent|sum(attribute='amount_cents')) if spent else none), 'Gastos do dia') }}
+        {% for t in day_entries %}{% include "_entry_row.html" %}{% endfor %}
       </div>
       {% endfor %}
       <div class="list-foot">
@@ -70,7 +68,6 @@
         {% if rows|length < row_count %}<a class="btn secondary" href="{{ filter_url({'limit': next_limit}) }}">Carregar mais</a>{% endif %}
       </div>
       {% else %}
-      {% set filtered = filters.q or filters.kind or filters.account or filters.category %}
       <div class="state-slot">{{ state_empty(
         'Nenhum lançamento com esses filtros.' if filtered else 'Nenhum lançamento neste mês.',
         'Tente outra busca ou limpe os filtros.' if filtered else 'Registre o primeiro pelo formulário ao lado, ou escolha outro mês.',
@@ -106,6 +103,8 @@
 
       <div class="only-entry" id="category-field">{% include "_category_field.html" %}</div>
 
+      <div class="only-entry">{{ merchant_input(form.merchant) }}</div>
+
       <div class="pair">
       <label class="field only-entry"><span>Conta ou cartão</span>
         <select name="account_id" data-entry-account>
@@ -139,4 +138,6 @@
     {% endif %}
   </aside>
 </div>
+{% include "_merge_bar.html" %}
+{{ merchant_datalist(merchants) }}
 {% endblock %}
