@@ -14,6 +14,7 @@ from financas.application.use_cases._cards import (
     require_card,
 )
 from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases.deletion import PlanDeletion, delete_plan_pending
 from financas.application.use_cases.transactions import SplitItem, checked_split_item
 from financas.domain.errors import DomainError
 from financas.domain.models import (
@@ -352,20 +353,8 @@ class DeletePurchase:
         return len(entries)
 
 
-@dataclass(frozen=True)
-class PlanDeletion:
-    deleted: int
-    kept: int  # installments on paid statements: history, never removed
-    plan_removed: bool  # false when something was kept: the plan stays for the audit trail
-
-
 class DeleteInstallmentPlan:
-    """Remove the installments of a plan that are not on a paid statement (9.4).
-
-    A paid statement is history: its installments stay, and so does the plan record. When
-    nothing is paid the whole plan goes. Totals, statements and the limit are computed from the
-    entries, so there is nothing else to recalculate. All or nothing.
-    """
+    """Remove the installments of a plan that are not on a paid statement (9.4); all or nothing."""
 
     def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
@@ -373,27 +362,9 @@ class DeleteInstallmentPlan:
 
     def execute(self, plan_id: str) -> PlanDeletion:
         with self._uow as uow:
-            found(uow.plans.get(plan_id), "plan")
-            entries = uow.transactions.list_by_plan(plan_id, include_refunded=True)
-            locked: dict[str, bool] = {}
-            removable: list[Transaction] = []
-            for entry in entries:
-                key = entry.statement_id or ""
-                if key not in locked:
-                    statement = found(uow.statements.get(key), "statement")
-                    view = statement_view(uow, statement, self._clock.today())
-                    locked[key] = is_locked(view)
-                if not locked[key]:
-                    removable.append(entry)
-            if not removable:
-                raise DomainError("NOTHING_TO_DELETE")
-            for entry in removable:
-                uow.transactions.delete(entry.id)
-            kept = len(entries) - len(removable)
-            if kept == 0:
-                uow.plans.delete(plan_id)
+            result = delete_plan_pending(uow, plan_id, self._clock.today())
             uow.commit()
-        return PlanDeletion(len(removable), kept, plan_removed=kept == 0)
+        return result
 
 
 # --- statements -------------------------------------------------------------------------------

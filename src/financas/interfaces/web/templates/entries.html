@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, dot, day_group_header, merchant_input, merchant_datalist %}
 {% from "_ui.html" import odometer, state_empty %}
+{% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Lançamentos{% endblock %}
 {% macro filter_url(extra) -%}
 /entries?month={{ month_value }}{% for k, v in filters.items() if v and k not in extra %}&{{ k }}={{ v|urlencode }}{% endfor %}{% for k, v in extra.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
@@ -53,6 +54,8 @@
       <div class="note"><small>Transferências ficam fora destes totais</small></div>
     </div>
 
+    <div data-sel-scope data-selecting="false">
+    {% if rows %}{{ sel_toolbar('lista') }}{% endif %}
     <section class="list-box" id="lista" aria-label="Lista de lançamentos">
       {% if rows %}
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
@@ -74,6 +77,8 @@
         'Limpar filtros' if filtered else None, ('/entries?month=' ~ month_value) if filtered else None, 'search' if filtered else 'inbox') }}</div>
       {% endif %}
     </section>
+    {{ sel_dock() }}
+    </div>
   </div>
 
   <aside id="form" class="panel quick" aria-labelledby="h-quick">

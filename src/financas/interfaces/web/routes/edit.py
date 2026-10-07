@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from financas.application.queries.merchants import ListMerchants
 from financas.application.queries.plan_purchases import GetPlanPurchase
+from financas.application.queries.selection import ListRowSelections
 from financas.application.use_cases.anticipation import (
     AnticipateInstallments,
     AnticipationCommand,
@@ -49,9 +50,14 @@ from financas.interfaces import messages
 from financas.interfaces.formatting import format_decimal_comma, parse_date, parse_percent_bps
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import WebContext
+from financas.interfaces.web.routes.selection import error_response
 
 BPS_PER_UNIT = Decimal(10_000)
 NOT_FOUND = 404
+# merge failures the Selection Mode script answers by locking rows (422 + JSON)
+SELECTION_CODES = frozenset(
+    {"MERGE_OUTSIDE_CURRENT_MONTH", "MERGE_ITEMIZED_FORBIDDEN", "MERGE_ONLY_PLAIN_EXPENSES"}
+)
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -267,16 +273,27 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "category_colors": lookups["category_colors"],
             "splits": {state.entry.id: list(state.splits)} if state.splits else {},
         }
+        purchase = (
+            GetPlanPurchase(c.uow).execute(state.entry.plan_id) if state.entry.plan_id else None
+        )
+        by_plan = {purchase.plan.id: purchase} if purchase is not None else {}
         if not origin:
-            purchase = (
-                GetPlanPurchase(c.uow).execute(state.entry.plan_id) if state.entry.plan_id else None
-            )
             if purchase is not None:  # an installment is listed as its whole purchase here
                 context["t"] = purchase.as_entry()
                 context["plan_purchases"] = {purchase.anchor.id: purchase}
+            shown = purchase.as_entry() if purchase is not None else state.entry
+            context["selections"] = ListRowSelections(c.uow, c.clock).execute(
+                [shown], by_plan, {state.entry.id: list(state.splits)} if state.splits else {}
+            )
             return fragment(request, "_entry_row.html", context)
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
+        rows: list[Transaction] = [] if state.entry.transfer_id else [state.entry]
+        context["selections"] = ListRowSelections(c.uow, c.clock).execute(
+            rows,
+            by_plan,
+            {state.entry.id: list(state.splits)} if state.splits else {},
+        )
         return fragment(
             request,
             "_card_entry_row.html",
@@ -597,6 +614,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except DomainError as error:
             if error.code == "NOT_FOUND":
                 raise
+            if htmx(request) and error.code in SELECTION_CODES:
+                # 422 + JSON: the Selection Mode script locks the offending rows (HTMX swaps no 4xx)
+                return error_response(error)
             if htmx(request):  # the dialog shows the message; HTMX does not swap 4xx pages
                 return HTMLResponse(
                     f'<p class="hint" data-tone="error" role="alert">'

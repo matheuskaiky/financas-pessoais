@@ -36,9 +36,6 @@
 </div>
 {% endmacro %}
 
-{# A checkbox that picks an entry to merge with others (the toolbar appears with two or more). #}
-{% macro merge_pick(t) %}<input type="checkbox" class="merge-pick" data-merge-id="{{ t.id }}" data-merge-desc="{{ t.description }}" data-merge-date="{{ t.posted_on.isoformat() }}" aria-label="Selecionar {{ t.description }} para mesclar">{% endmacro %}
-
 {# A day cluster's header: the date once, and (optionally) what was spent that day. #}
 {% macro day_group_header(day, total_cents=none, total_label="Total do dia", private="transactions") %}
 <div class="day-head day-group__header"><span class="day-group__title">{{ day|day_title }}</span>{% if total_cents is not none %}<span class="day-group__total">{{ total_label }}: {{ total_cents|money(private=private) }}</span>{% endif %}</div>

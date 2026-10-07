@@ -196,9 +196,9 @@ document.body.addEventListener("fp:notice", function (event) {
   banner.scrollIntoView({ block: "nearest" });
 });
 
-// Itemized expenses: the breakdown toggle on a row, the items editor of the edit form ("Restam R$ …")
-// and the merge toolbar ("Mesclar em um só lançamento"). Everything is delegated from the document, so
-// it keeps working for rows and forms HTMX swaps in.
+// Itemized expenses: the breakdown toggle on a row and the items editor of the edit form ("Restam R$ …").
+// Everything is delegated from the document, so it keeps working for rows and forms HTMX swaps in.
+// (Merging and batch deletion: selection-mode.js.)
 (function () {
   "use strict";
   // The cents of a masked amount ("R$ 1.250,00", "-R$ 25,52" -> 125000, 2552): the sign never
@@ -339,9 +339,6 @@ document.body.addEventListener("fp:notice", function (event) {
       target.closest(".split-row").remove();
       refreshEditor(editor);
     }
-    if (target.closest("[data-merge-open]")) openMerge();
-    else if (target.closest("[data-merge-clear]")) { clearPicks(); syncBar(); }
-    else if (target.closest("[data-merge-cancel]")) { var d = document.getElementById("merge-dialog"); if (d) d.close(); }
   });
 
   document.addEventListener("change", function (event) {
@@ -356,7 +353,6 @@ document.body.addEventListener("fp:notice", function (event) {
       }
       refreshEditor(editor);
     }
-    if (target.matches(".merge-pick")) syncBar();
   });
 
   // Money fields announce themselves once their text is masked (money-mask.js): read them then.
@@ -380,39 +376,9 @@ document.body.addEventListener("fp:notice", function (event) {
     }, 0);
   });
 
-  // merge toolbar
-  function picked() { return Array.prototype.slice.call(document.querySelectorAll(".merge-pick:checked")); }
-  function clearPicks() { picked().forEach(function (el) { el.checked = false; }); }
-  function syncBar() {
-    var bar = document.getElementById("merge-bar");
-    if (!bar) return;
-    var n = picked().length;
-    bar.hidden = n < 2;
-    var count = bar.querySelector("[data-merge-count]");
-    if (count) count.textContent = String(n);
-  }
-  function openMerge() {
-    var dialog = document.getElementById("merge-dialog");
-    var chosen = picked();
-    if (!dialog || chosen.length < 2 || typeof dialog.showModal !== "function") return;
-    var ids = dialog.querySelector("[data-merge-ids]");
-    ids.replaceChildren();
-    chosen.forEach(function (el) {
-      var input = document.createElement("input");
-      input.type = "hidden"; input.name = "ids"; input.value = el.getAttribute("data-merge-id");
-      ids.appendChild(input);
-    });
-    var form = dialog.querySelector("form");
-    form.elements["description"].value = chosen[0].getAttribute("data-merge-desc") || "";
-    form.elements["date"].value = chosen.map(function (el) { return el.getAttribute("data-merge-date") || ""; }).sort().pop();
-    form.elements["ack"].checked = false;
-    dialog.querySelector("#merge-error").replaceChildren();
-    dialog.showModal();
-  }
-
-  document.addEventListener("htmx:afterSettle", function (event) { refreshAll(event.target); syncBar(); });
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { refreshAll(); syncBar(); });
-  else { refreshAll(); syncBar(); }
+  document.addEventListener("htmx:afterSettle", function (event) { refreshAll(event.target); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { refreshAll(); });
+  else { refreshAll(); }
 })();
 
 // Payment date of a statement (the "Pagar fatura" and "Editar pagamento" forms): between the previous

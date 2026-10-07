@@ -39,6 +39,7 @@ from financas.application.queries.planning import (
     GetRecurring,
 )
 from financas.application.queries.review import CountPendingReview
+from financas.application.queries.selection import ListRowSelections
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.budget import SetCategoryBudgets
@@ -126,6 +127,7 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
+from financas.interfaces.messages import selection as selection_messages
 from financas.interfaces.web import fp_charts, fp_money, nav
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import MODULES, WebContext
@@ -232,6 +234,9 @@ def create_app(c: Container) -> FastAPI:
         rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
+        sel_lock_reason=selection_messages.row_reason,
+        sel_merge_reason=selection_messages.row_merge_reason,
+        sel_config=selection_messages.client_config(),
         nav_groups=nav.groups,
         nav_count=lambda key: CountPendingReview(c.uow).execute() if key == "review" else 0,
         nav_current=nav.resolve,
@@ -498,6 +503,8 @@ def create_app(c: Container) -> FastAPI:
             )
         ]
         summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
+        shown = rows[:limit]
+        selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -522,7 +529,8 @@ def create_app(c: Container) -> FastAPI:
         kind = form.get("kind", "expense")
         return {
             **data,
-            "rows": rows[:limit],
+            "rows": shown,
+            "selections": selections,
             "splits": splits,
             "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
@@ -897,10 +905,20 @@ def create_app(c: Container) -> FastAPI:
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
             splits = work.transactions.splits_for(split_ids(detail.entries)) if detail else {}
+        selections = (
+            ListRowSelections(c.uow, c.clock).execute(
+                [t for t in detail.entries if not t.transfer_id],
+                {p.plan.id: p for p in ListPlanPurchases(c.uow).execute()},
+                splits,
+            )
+            if detail
+            else {}
+        )
         return {
             **data,
             "plans": plans,
             "splits": splits,
+            "selections": selections,
             "overview": overview,
             "chosen": chosen,
             "years": years,

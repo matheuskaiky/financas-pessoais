@@ -3,6 +3,9 @@
 The originals become the items of a new parent whose amount is their sum, so the statement, the
 balance and the limit see exactly what they saw before (one entry, same total) while spending by
 category still follows each original category. All or nothing.
+
+Only plain expenses of the **current calendar month** merge (it fixes logging mistakes and split
+receipts; earlier months are consolidated), and none that is already itemized.
 """
 
 import datetime as dt
@@ -19,6 +22,7 @@ from financas.domain.models import (
     TransactionSplit,
 )
 from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.services.selection import in_current_month
 from financas.domain.services.splits import validate_split_amounts
 from financas.domain.services.text import clean_text, normalize_search
 
@@ -42,9 +46,9 @@ def _shared_merchant(entries: list[Transaction]) -> str | None:
 
 
 class MergeTransactions:
-    """Rules: two or more distinct expenses of one account (and, on a card, of one statement);
-    none an installment, a transfer or a refunded purchase; none on a paid statement. An entry
-    that is already itemized brings its items along."""
+    """Rules: two or more distinct expenses of one account (and, on a card, of one statement),
+    all dated in the current calendar month; none an installment, a transfer, a refunded purchase
+    or an entry that already has items; none on a paid statement."""
 
     def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
@@ -66,6 +70,12 @@ class MergeTransactions:
                     or entry.is_refunded
                 ):
                     raise DomainError("MERGE_ONLY_PLAIN_EXPENSES")
+            if uow.transactions.splits_for(ids):
+                raise DomainError("MERGE_ITEMIZED_FORBIDDEN")
+            today = self._clock.today()
+            outside = [e.id for e in entries if not in_current_month(e.posted_on, today)]
+            if outside:
+                raise DomainError("MERGE_OUTSIDE_CURRENT_MONTH", ids=",".join(outside))
             if len({e.account_id for e in entries}) != 1:
                 raise DomainError("MERGE_ACCOUNT_MISMATCH")
             account = found(uow.accounts.get(entries[0].account_id), "account")
@@ -81,22 +91,15 @@ class MergeTransactions:
                     raise DomainError("STATEMENT_CLOSED_NEEDS_ACK")
 
             parent_id = new_id()
-            carried = uow.transactions.splits_for(ids)
-            items: list[TransactionSplit] = []
-            for entry in entries:
-                for part in carried.get(entry.id) or [None]:
-                    category_id = part.category_id if part else entry.category_id
-                    if category_id is None:  # an itemized entry whose items are missing: refuse
-                        raise DomainError("MERGE_ONLY_PLAIN_EXPENSES")
-                    items.append(
-                        TransactionSplit(
-                            new_id(),
-                            parent_id,
-                            part.description if part else entry.description,
-                            category_id,
-                            part.amount_cents if part else -entry.amount_cents,
-                        )
-                    )
+            items = [
+                TransactionSplit(
+                    new_id(), parent_id, entry.description, entry.category_id, -entry.amount_cents
+                )
+                for entry in entries
+                if entry.category_id is not None
+            ]
+            if len(items) != len(entries):  # an expense with no category cannot become an item
+                raise DomainError("MERGE_ONLY_PLAIN_EXPENSES")
             total = sum(-e.amount_cents for e in entries)
             validate_split_amounts(total, [i.amount_cents for i in items])
             parent = Transaction(

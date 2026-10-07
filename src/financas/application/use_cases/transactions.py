@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from financas.application.queries.cards import StatementView, is_locked, statement_view
 from financas.application.use_cases._cards import assignment_for, ensure_statement, require_card
 from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases.deletion import delete_entry
 from financas.application.use_cases.plan_dates import reschedule_plan
 from financas.domain.errors import DomainError
 from financas.domain.models import (
@@ -204,21 +205,9 @@ class DeleteTransaction:
     def execute(self, transaction_id: str) -> int:
         with self._uow as uow:
             transaction = found(uow.transactions.get(transaction_id), "transaction")
-            if transaction.plan_id is not None:
-                raise DomainError("USE_DELETE_PURCHASE")  # an installment leaves with its plan
-            if transaction.statement_id and transaction.kind is not TransactionKind.TRANSFER:
-                statement = found(uow.statements.get(transaction.statement_id), "statement")
-                if is_locked(statement_view(uow, statement, self._clock.today())):
-                    raise DomainError("STATEMENT_ALREADY_PAID")
-            targets = (
-                uow.transactions.list_by_transfer(transaction.transfer_id)
-                if transaction.transfer_id
-                else [transaction]
-            )
-            for target in targets:
-                uow.transactions.delete(target.id)
+            removed = delete_entry(uow, transaction, self._clock.today())
             uow.commit()
-        return len(targets)
+        return removed
 
 
 @dataclass(frozen=True)

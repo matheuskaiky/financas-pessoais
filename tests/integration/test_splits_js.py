@@ -1,8 +1,8 @@
-"""The items editor, the row breakdown toggle and the merge toolbar (app.js) in a real browser.
+"""The items editor and the row breakdown toggle (app.js) in a real browser.
 
 Runs ``tests/js/splits_harness.html``: "Restam R$ …" follows the items and the total, a wrong sum
-blocks the submit natively, items are not submitted while the editor is off, and the merge
-toolbar shows with two picked rows. Skipped when no headless Chromium/Edge is installed.
+blocks the submit natively and items are not submitted while the editor is off. Skipped when no
+headless Chromium/Edge is installed.
 """
 
 import pytest
@@ -12,13 +12,13 @@ from browser import browser_command, run_harness
 
 @pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
 @pytest.mark.parametrize("order", ["mask-first", "app-first"])
-def test_split_editor_and_merge_toolbar_behave_in_a_browser(order: str) -> None:
+def test_split_editor_behaves_in_a_browser(order: str) -> None:
     """Both script orders: the sums must not depend on which listener runs first."""
     report = run_harness(f"tests/js/splits_harness.html?order={order}")
     failures = [line for line in report.splitlines() if line.startswith("FAIL")]
     assert not failures and "DONE 0" in report, report
-    assert "PASS exact sum" in report and "PASS bar shown at 2" in report
-    assert report.count("PASS") >= 55
+    assert "PASS exact sum" in report and "PASS arrow back" in report
+    assert report.count("PASS") >= 45
     assert "PASS 25,52 = 15,52 + 10,00" in report and "PASS 1.250,00 = 1.000,00 + 250,00" in report
 
 

@@ -1,0 +1,32 @@
+{# Selection Mode ("Modo de Seleção"): the trigger, a row's checkbox slot and its hooks, the dock.
+   The server decides what each row may do (application/queries/selection.py); the script
+   (static/selection-mode.js) only reads the data-sel-* attributes. Spec: design handoff v1.2, 3.6. #}
+
+{# The row's data attributes. `sel` is a RowSelection, `t` the entry shown. #}
+{% macro sel_attrs(sel, t) -%}
+data-sel-row data-sel-id="{{ sel.sel_id }}" data-sel-key="{{ sel.key }}" data-merge-desc="{{ t.description }}" data-merge-date="{{ t.posted_on.isoformat() }}"
+{%- if sel.lock %} data-sel-lock="{{ 'paid' if sel.lock.value in ('statement_paid', 'plan_all_paid') else 'month' }}" data-sel-reason="{{ sel_lock_reason(sel) }}"{% endif %}
+{%- if sel.merge_block %} data-sel-merge="no" data-sel-merge-reason="{{ sel_merge_reason(sel) }}"{% endif %}
+{%- endmacro %}
+
+{# The checkbox slot, first child of the row. A locked row keeps a focusable, aria-disabled box. #}
+{% macro sel_slot(sel, t, account_name) -%}
+<span class="sel-slot"><input type="checkbox" class="sel-check" id="sel-{{ t.id }}" aria-label="Selecionar {{ t.description or 'lançamento' }}, {{ account_name }}"{% if sel.lock %} aria-disabled="true" aria-describedby="sel-{{ t.id }}-why"{% endif %}><span class="sel-box" aria-hidden="true"><svg viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path class="sel-tick" pathLength="1" d="M2.5 7.4l3.2 3.2 5.8-6.4"/><path class="sel-bang" d="M7 3.2v4.4M7 10.6h.01"/></svg></span>{% if sel.lock %}<span class="sel-vh" id="sel-{{ t.id }}-why">{{ sel_lock_reason(sel) }}</span>{% endif %}</span>
+{%- endmacro %}
+
+{# "Selecionar": end of the list header. Render it only when the list has rows (no dead button). #}
+{% macro sel_toolbar(list_id) %}
+<div class="sel-toolbar"><button type="button" class="sel-toggle" aria-pressed="false" aria-controls="{{ list_id }}"><svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1.75 3.4l1.3 1.3 2.2-2.4"/><path d="M8 3.8h4.25"/><path d="M1.75 9.4l1.3 1.3 2.2-2.4"/><path d="M8 10.2h4.25"/></svg>Selecionar</button></div>
+{% endmacro %}
+
+{# The floating dock, the polite live region and the slot the delete confirmation is loaded into. #}
+{% macro sel_dock() %}
+<div class="sel-dock" data-open="false" role="group" aria-label="Ações de seleção"><div class="sel-stack">
+  <div class="sel-msg callout info" id="sel-msg" data-show="false"><svg class="i-info" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v3.6M8 5.2h.01"/></svg><svg class="i-warn" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.6v3M8 11.6h.01"/></svg><span class="sel-msg__t"></span></div>
+  <div class="sel-bar"><span class="sel-count"><span class="sel-count__n">0</span> <span class="sel-count__l">selecionados</span></span><button type="button" class="sel-cancel">Cancelar</button><button type="button" class="sel-delete" aria-disabled="true" aria-describedby="sel-del-why"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg><span>Apagar (<span class="sel-delete__n">0</span>)</span></button><button type="button" class="sel-merge" aria-disabled="true" aria-describedby="sel-msg"><span>Mesclar<span class="sel-merge__more"> lançamentos</span></span></button></div>
+</div></div>
+<span class="sel-vh" id="sel-del-why">{{ sel_config.need_delete }}</span>
+<p class="sel-vh sel-live" role="status" aria-live="polite" aria-atomic="true"></p>
+<div id="sel-dialog-slot"></div>
+<script type="application/json" id="sel-config">{{ sel_config | tojson }}</script>
+{% endmacro %}

@@ -285,6 +285,17 @@ ERROR_MESSAGES: dict[str, str] = {
     ),
     "MERGE_ACCOUNT_MISMATCH": "Os lançamentos precisam ser da mesma conta ou do mesmo cartão.",
     "MERGE_STATEMENT_MISMATCH": "Os lançamentos do cartão precisam estar na mesma fatura.",
+    "MERGE_ITEMIZED_FORBIDDEN": "Lançamento com itens não pode ser mesclado.",
+    "MERGE_OUTSIDE_CURRENT_MONTH": (
+        "Apenas compras do mês atual podem ser mescladas. "
+        "Lançamentos de meses anteriores já estão consolidados."
+    ),
+    "DELETE_OUTSIDE_CURRENT_MONTH": (
+        "Só lançamentos do mês atual podem ser apagados em lote. "
+        "Os de outros meses são apagados um a um."
+    ),
+    "BAD_SELECTION_ID": "A seleção contém um lançamento inválido.",
+    "TOO_MANY_IDS": "Selecione até {max} lançamentos por vez.",
     "REFUND_ONLY_FOR_EXPENSES": "Só despesas e compras podem ser marcadas como estornadas.",
     "NOTHING_TO_DELETE": (
         "Todas as parcelas deste parcelamento estão em faturas pagas e ficam no histórico."
@@ -387,6 +398,10 @@ PARAMETERLESS_ERRORS = frozenset(
         "MERGE_ONLY_PLAIN_EXPENSES",
         "MERGE_ACCOUNT_MISMATCH",
         "MERGE_STATEMENT_MISMATCH",
+        "MERGE_ITEMIZED_FORBIDDEN",
+        "MERGE_OUTSIDE_CURRENT_MONTH",
+        "DELETE_OUTSIDE_CURRENT_MONTH",
+        "BAD_SELECTION_ID",
         "STATEMENT_CLOSED_NEEDS_ACK",
         "USE_DELETE_PURCHASE",
         "NOT_A_CARD_PURCHASE",

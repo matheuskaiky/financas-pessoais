@@ -1,0 +1,24 @@
+{# The destructive confirmation of "Apagar (N)". Loaded into #sel-dialog-slot and opened with showModal()
+   by static/selection-mode.js. Needs: preview (rows, plans), listed (first plans), more (the rest). #}
+{% set n = preview.rows %}
+<dialog id="sel-delete-dialog" class="dialog dialog--destructive" role="alertdialog" aria-labelledby="del-t" aria-describedby="del-d{{ ' del-n' if listed }}">
+  <div class="dlg-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></div>
+  <h2 id="del-t">{{ 'Apagar 1 lançamento?' if n == 1 else 'Apagar ' ~ n ~ ' lançamentos?' }}</h2>
+  <p id="del-d">Esta ação não pode ser desfeita. O saldo das contas e os totais de fatura serão recalculados imediatamente.</p>
+  {% if listed %}
+  <section class="dlg-note" id="del-n" aria-labelledby="del-nh">
+    <h3 id="del-nh">Compras parceladas na seleção</h3>
+    <ul>
+      {% for p in listed %}
+      <li><b>{{ p.description }}</b><span>{{ p.installments }}x {{ p.installment_cents|money(private="transactions") }} · apaga {{ '1 parcela pendente' if p.pending_count == 1 else p.pending_count ~ ' parcelas pendentes' }} ({{ p.pending_cents|money(private="transactions") }}){% if p.paid_count %}; {{ '1 parcela já paga fica' if p.paid_count == 1 else p.paid_count ~ ' parcelas já pagas ficam' }} no histórico{% endif %}.</span></li>
+      {% endfor %}
+    </ul>
+    {% if more %}<p class="dlg-note__more">e mais {{ more }} {{ 'compra parcelada' if more == 1 else 'compras parceladas' }}</p>{% endif %}
+  </section>
+  {% endif %}
+  <div class="callout error" id="del-err" role="alert" hidden></div>
+  <div class="dialog-actions">
+    <button type="button" class="secondary" id="del-no" autofocus>Cancelar</button>
+    <button type="button" class="danger" id="del-yes">{{ 'Apagar 1 lançamento' if n == 1 else 'Apagar ' ~ n ~ ' lançamentos' }}</button>
+  </div>
+</dialog>

@@ -1,10 +1,12 @@
 {# One entry of the list (also what "Cancelar" and the edit form swap back in). Needs: t, accounts,
    category_by_id, category_colors. #}
-{% from "_macros.html" import dot, merge_pick, split_toggle, split_detail, plan_split_toggle, plan_split_detail %}
-{% set pp = (plan_purchases or {}).get(t.id) %}{% set items = none if pp else (splits or {}).get(t.id) %}{% set pickable = t.kind.value == 'expense' and not t.plan_id and not t.is_refunded %}
-      <div class="row entry{{ ' is-refunded' if t.is_refunded }}" id="entry-{{ t.id }}">
+{% from "_macros.html" import dot, split_toggle, split_detail, plan_split_toggle, plan_split_detail %}
+{% from "_selection.html" import sel_attrs, sel_slot %}
+{% set pp = (plan_purchases or {}).get(t.id) %}{% set items = none if pp else (splits or {}).get(t.id) %}{% set sel = (selections or {}).get(t.id) %}
+      <div class="row entry{{ ' is-refunded' if t.is_refunded }}" id="entry-{{ t.id }}"{% if sel %} {{ sel_attrs(sel, t) }}{% endif %}>
+        {% if sel %}{{ sel_slot(sel, t, accounts|selectattr('id', 'equalto', t.account_id)|map(attribute='nickname')|first) }}{% endif %}
         <div class="c-desc">
-          <span class="c-title">{% if pickable %}{{ merge_pick(t) }}{% endif %}{{ t.description or kind_labels[t.kind] }}{% if t.is_refunded %} <span class="badge badge--subtle">Estornada</span>{% endif %}</span>
+          <span class="c-title">{{ t.description or kind_labels[t.kind] }}{% if t.is_refunded %} <span class="badge badge--subtle">Estornada</span>{% endif %}</span>
           <small>{{ kind_labels[t.kind] }}{% if t.is_recurring %} <span class="tag">recorrente</span>{% endif %}{% if pp %} <span class="badge badge--subtle plan-badge" data-plan-badge title="{{ 'Parcelas de valores diferentes: a primeira absorve os centavos.' if not pp.uniform else 'Compra parcelada' }}">{{ pp.count }} x {{ pp.installment_cents|money(private="transactions") }}</span>{% if pp.is_partial %} <span class="tag">parcelas em andamento</span>{% endif %}{% if pp.items %} {{ plan_split_toggle(t, pp) }}{% endif %}{% endif %}{% if items %} {{ split_toggle(t, items) }}{% endif %}</small>
           {% if t.merchant and t.merchant|lower != (t.description or '')|lower %}<small class="c-merchant">{{ t.merchant }}</small>{% endif %}
       </div>

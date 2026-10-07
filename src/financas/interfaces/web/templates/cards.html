@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, status_pill, dot, color_fields, day_group_header, merchant_datalist %}
 {% from "_ui.html" import odometer, stroke_gauge, delta_chip, state_empty %}
+{% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Cartões{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -88,7 +89,9 @@
       {{ status_pill(statement.status) }}
     </header>
 
-    <div class="entries-box">
+    <div data-sel-scope data-selecting="false">
+    {% if detail.entries %}{{ sel_toolbar('entries-box') }}{% endif %}
+    <div class="entries-box" id="entries-box">
       {% if detail.entries %}
       <div class="rowhead card-head"><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
       {% set locked = statement.status.value == 'paid' %}
@@ -101,6 +104,8 @@
       </div>
       {% endfor %}
       {% else %}{{ state_empty('Esta fatura ainda não tem lançamentos.', 'As compras feitas neste cartão entram na fatura do mês em que fecham.', 'Nova compra no cartão', '/cards/purchase?card=' ~ chosen.account.id, 'card', inline=True) }}{% endif %}
+    </div>
+    {{ sel_dock() }}
     </div>
 
     <div class="ledger" aria-label="Resumo da fatura">
