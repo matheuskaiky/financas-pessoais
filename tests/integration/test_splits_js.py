@@ -38,3 +38,21 @@ def test_items_editor_on_the_purchase_form_and_on_an_installments_form() -> None
         "single scope adds up",
     ):
         assert f"PASS {name}" in report, name
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_quick_form_shows_the_method_and_the_items_editor_by_kind_and_account() -> None:
+    """Bank expense: method and items; card: no method; income: a method, no items; transfer:
+    neither. Switching the kind drops the items and unlocks the parent's category."""
+    report = run_harness("tests/js/entry_form_harness.html")
+    failures = [line for line in report.splitlines() if line.startswith("FAIL")]
+    assert not failures and "DONE 0" in report, report
+    for name in (
+        "method hidden on a card",
+        "items hidden for income",
+        "method hidden for a transfer",
+        "toggle turned off by the kind switch",
+        "parent category unlocked again",
+        "no orphan items are sent",
+    ):
+        assert f"PASS {name}" in report, name

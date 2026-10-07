@@ -58,11 +58,13 @@
       {% if not state.is_installment %}<label class="field"><span>{{ 'Cartão' if state.statement else 'Conta' }}</span>
         <select name="account_id">{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.account_id }}>{{ a.nickname }}</option>{% endfor %}</select></label>{% endif %}
       <label class="field grow"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
+      {% if not state.statement and not state.is_installment %}{% with method_current = form.payment_method, method_hidden = false %}{% include "snippets/payment-method-field.html" %}{% endwith %}{% endif %}
     </div>
     {% if t.kind.value == 'expense' %}
     {% set split_items = form_items %}{% set split_categories = category_options %}
     {% set split_names = {"description": "item_description", "category": "item_category", "amount": "item_amount"} %}
     {% set split_plan = state.plan_items if state.is_installment else none %}
+    {% set split_bank = not state.statement %}
     {% set split_target_cents = t.amount_cents|abs %}
     {% include "_splits_editor.html" %}
     {% endif %}

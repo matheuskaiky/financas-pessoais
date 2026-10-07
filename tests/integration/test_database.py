@@ -772,3 +772,61 @@ def test_itemized_parent_migration_clears_their_category_and_restores_it_on_down
         info = {r[1]: r for r in db.execute("pragma table_info(transactions)")}
         assert info["category_id"][3] == 1  # NOT NULL again
     command.upgrade(config, "head")
+
+
+def test_payment_method_migration_marks_card_entries_and_leaves_bank_entries_blank(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "b9e5f7a2c4d6")  # the schema before ``payment_method``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('bank', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active, due_day,"
+        " closing_days_before_due, credit_limit_cents)"
+        " values ('card', 'credit_card', 'i', 'Cartão', 1, 5, 11, 100000)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense'),"
+        " ('t', 'transfer', 'Transferência', 'movement', 'neutral')"
+    )
+    for tid, account, kind, cents in (
+        ("on_bank", "bank", "expense", -1000),
+        ("on_card", "card", "expense", -2000),
+        ("pay_card", "card", "transfer", 3000),
+    ):
+        raw.execute(
+            "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+            " description, description_search, is_recurring)"
+            f" values ('{tid}', '{account}', '2026-07-01', '{kind}',"
+            f" '{'t' if kind == 'transfer' else 'c'}', {cents}, 'x', 'x', 0)"
+        )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        got = dict(db.execute("select id, payment_method from transactions"))
+        assert got == {"on_bank": None, "on_card": "cartao_credito", "pay_card": None}
+        indexes = {r[1] for r in db.execute("pragma index_list(transactions)")}
+        assert "ix_transactions_payment_method" in indexes
+        for method in ("pix", "debito", "boleto", "transferencia", "dinheiro", "outro"):
+            db.execute("update transactions set payment_method = ? where id = 'on_bank'", (method,))
+        with pytest.raises(sqlite3.IntegrityError):  # a made-up method is refused by the database
+            db.execute("update transactions set payment_method = 'cheque' where id = 'on_bank'")
+
+    command.downgrade(config, "b9e5f7a2c4d6")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert "payment_method" not in [r[1] for r in db.execute("pragma table_info(transactions)")]
+        assert db.execute("select count(*) from transactions").fetchone() == (3,)
+    command.upgrade(config, "head")

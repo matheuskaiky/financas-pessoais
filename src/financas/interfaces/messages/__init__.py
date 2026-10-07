@@ -285,6 +285,7 @@ ERROR_MESSAGES: dict[str, str] = {
     ),
     "MERGE_ACCOUNT_MISMATCH": "Os lançamentos precisam ser da mesma conta ou do mesmo cartão.",
     "MERGE_STATEMENT_MISMATCH": "Os lançamentos do cartão precisam estar na mesma fatura.",
+    "INVALID_PAYMENT_METHOD": "Forma de pagamento inválida para este lançamento ou esta conta.",
     "MERGE_ITEMIZED_FORBIDDEN": "Lançamento com itens não pode ser mesclado.",
     "MERGE_OUTSIDE_CURRENT_MONTH": (
         "Apenas compras do mês atual podem ser mescladas. "
@@ -398,6 +399,7 @@ PARAMETERLESS_ERRORS = frozenset(
         "MERGE_ONLY_PLAIN_EXPENSES",
         "MERGE_ACCOUNT_MISMATCH",
         "MERGE_STATEMENT_MISMATCH",
+        "INVALID_PAYMENT_METHOD",
         "MERGE_ITEMIZED_FORBIDDEN",
         "MERGE_OUTSIDE_CURRENT_MONTH",
         "DELETE_OUTSIDE_CURRENT_MONTH",
@@ -442,6 +444,10 @@ def render_error(error: DomainError) -> str:
             if remaining > 0
             else f"ultrapassou {format_brl(-remaining)}"
         )
+    if "sum_cents" in params:
+        params["sum_text"] = format_brl(int(params["sum_cents"]))
+    if "total_cents" in params:
+        params["total_text"] = format_brl(int(params["total_cents"]))
     if "max_bytes" in params:
         params["max_kb"] = int(params["max_bytes"]) // 1024
     template = ERROR_MESSAGES.get(error.code)

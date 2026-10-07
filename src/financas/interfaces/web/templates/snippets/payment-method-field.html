@@ -1,0 +1,11 @@
+{# "Forma de pagamento" of an entry on a checking account: PIX | Débito | Boleto | Outro.
+   Needs: method_current ("" = none yet: PIX is pre-selected), method_hidden (true when the account
+   is a card or the entry a transfer: the radios are then disabled and not sent). #}
+{% set current = method_current or method_default.value %}
+<fieldset class="field method-field" data-method-field{% if method_hidden %} hidden disabled{% endif %}>
+  <legend>Forma de pagamento</legend>
+  <div class="segmented" role="radiogroup" aria-label="Forma de pagamento">
+    {% for m in method_form_options %}<label><input type="radio" name="payment_method" value="{{ m.value }}" {{ 'checked' if current == m.value }}><span>{{ method_labels[m] }}</span></label>{% endfor %}
+    {% if current not in method_form_options|map(attribute='value')|list %}<label><input type="radio" name="payment_method" value="{{ current }}" checked><span>{{ method_labels.get(current, current) }}</span></label>{% endif %}
+  </div>
+</fieldset>

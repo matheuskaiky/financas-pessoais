@@ -2605,7 +2605,8 @@ def test_unchecking_the_items_removes_them(client: TestClient, container: Contai
     client.post(f"/entries/{entry.id}/edit", data=base, headers=HX)  # the toggle is off: no items
     with container.uow as work:
         assert work.transactions.splits_for([entry.id]) == {}
-    assert "data-split-toggle" not in client.get("/entries").text.split('id="lista"')[1]
+    listed = client.get("/entries").text.split('id="lista"')[1].split("</section>")[0]
+    assert "data-split-toggle" not in listed  # the rows have no "▾ N itens" (the quick form does)
 
 
 def test_the_category_filter_matches_the_items_of_an_entry(

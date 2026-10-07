@@ -442,3 +442,57 @@ document.body.addEventListener("fp:notice", function (event) {
     else if (event.key === "Enter" && onPage && form) { event.preventDefault(); form.requestSubmit(); }
   });
 })();
+
+// "Forma de pagamento" of the quick entry form: only for an entry on a checking account (a card
+// purchase is always "cartão de crédito", a transfer has none). A hidden fieldset is also disabled,
+// so its radios are not sent.
+(function () {
+  "use strict";
+  function sync(form) {
+    var field = form.querySelector("[data-method-field]");
+    if (!field) return;
+    var kind = form.querySelector('input[name="kind"]:checked');
+    var account = form.querySelector("select[data-entry-account]");
+    var chosen = account && account.selectedOptions[0];
+    var accountKind = chosen && chosen.getAttribute("data-account-kind");
+    var show = !(kind && kind.value === "transfer") && accountKind !== "credit_card";
+    field.hidden = !show;
+    field.disabled = !show;
+  }
+  // The items editor is for expenses only: switching to another kind turns it off, drops its rows
+  // and gives the parent's category back, so no orphan items are sent.
+  function syncSplits(form) {
+    var wrap = form.querySelector("[data-split-field]");
+    if (!wrap) return;
+    var kind = form.querySelector('input[name="kind"]:checked');
+    var expense = !kind || kind.value === "expense";
+    if (!expense) {
+      var toggle = wrap.querySelector("[data-split-toggle-items]");
+      if (toggle && toggle.checked) {
+        toggle.checked = false;
+        wrap.querySelectorAll("[data-split-rows] .split-row").forEach(function (row) { row.remove(); });
+        toggle.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    wrap.hidden = !expense;
+    wrap.disabled = !expense;
+  }
+  function syncAll(root) {
+    (root instanceof Element || root instanceof Document ? root : document)
+      .querySelectorAll("form").forEach(function (form) {
+        if (form.querySelector("[data-method-field]")) sync(form);
+        syncSplits(form);
+      });
+  }
+  document.addEventListener("change", function (event) {
+    var target = event.target instanceof Element ? event.target : null;
+    var form = target && target.closest("form");
+    if (form && target.matches('input[name="kind"], select[data-entry-account]')) {
+      sync(form);
+      syncSplits(form);
+    }
+  });
+  document.addEventListener("htmx:afterSettle", function (event) { syncAll(event.target); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { syncAll(document); });
+  else syncAll(document);
+})();

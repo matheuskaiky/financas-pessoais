@@ -22,6 +22,7 @@ from financas.application.queries.cards import (
     ListCards,
     StatementView,
 )
+from financas.application.queries.entries import filter_by_method, parse_method_filter
 from financas.application.queries.investments import (
     GetFixedIncomeOverview,
     GetInvestmentPeriodTotals,
@@ -109,6 +110,7 @@ from financas.domain.models import (
     InstrumentType,
     InvestmentTracking,
     Liquidity,
+    PaymentMethod,
     RateMode,
     StatementStatus,
     Transaction,
@@ -132,6 +134,7 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
+from financas.interfaces.messages import payment_methods as method_messages
 from financas.interfaces.messages import selection as selection_messages
 from financas.interfaces.messages.unified_cards import (
     unified_chips,
@@ -244,6 +247,10 @@ def create_app(c: Container) -> FastAPI:
         rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
+        method_labels=method_messages.PAYMENT_METHOD_LABELS,
+        method_chips=method_messages.FILTER_CHIPS,
+        method_form_options=method_messages.FORM_OPTIONS,
+        method_default=method_messages.DEFAULT_FORM_METHOD,
         sel_lock_reason=selection_messages.row_reason,
         sel_merge_reason=selection_messages.row_merge_reason,
         sel_config=selection_messages.client_config(),
@@ -463,6 +470,7 @@ def create_app(c: Container) -> FastAPI:
         filters: dict[str, str],
         form: dict[str, str] | None = None,
         limit: int = PAGE_SIZE,
+        items: list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
         try:
             ym = YearMonth.parse(month) if month else YearMonth.from_date(today())
@@ -512,6 +520,11 @@ def create_app(c: Container) -> FastAPI:
                 or wanted in normalize_search(t.merchant or "")
             )
         ]
+        rows = filter_by_method(
+            rows,
+            filters.get("method", ""),
+            {a.id for a in data["accounts"] if a.kind is AccountKind.CREDIT_CARD},  # type: ignore[attr-defined]
+        )
         summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
         shown = rows[:limit]
         selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
@@ -567,9 +580,15 @@ def create_app(c: Container) -> FastAPI:
                 "recurring": form.get("recurring", ""),
                 "notes": form.get("notes", ""),
                 "merchant": form.get("merchant", ""),
+                "payment_method": form.get("payment_method", ""),
             },
             "merchants": ListMerchants(c.uow).execute(),
             "category_options": category_options("expense" if kind == "transfer" else kind),
+            # the items of a split expense: always expense categories (the entry itself has none)
+            "expense_categories": [
+                x for x in category_options("expense") if x.slug != "uncategorized"
+            ],
+            "form_items": items or [],
             "entry_kinds": _ENTRY_KINDS,
         }
 
@@ -591,8 +610,15 @@ def create_app(c: Container) -> FastAPI:
         category: str = "",
         q: str = "",
         limit: str = "",
+        method: str = "",
     ):
-        filters = {"account": account, "kind": kind, "category": category, "q": q}
+        filters = {
+            "account": account,
+            "kind": kind,
+            "category": category,
+            "q": q,
+            "method": parse_method_filter(method),
+        }
         # ⌘K "registrar por frase": ?fill=1&f_kind=..&f_amount=.. pre-fills the quick form (a draft:
         # nothing is saved until the user submits the form, and the kind is still the user's choice)
         prefill = (
@@ -647,8 +673,20 @@ def create_app(c: Container) -> FastAPI:
         recurring: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
         merchant: Annotated[str, Form()] = "",
+        payment_method: Annotated[str, Form()] = "",
+        splits_present: Annotated[str, Form()] = "",
+        item_description: Annotated[list[str] | None, Form()] = None,
+        item_category: Annotated[list[str] | None, Form()] = None,
+        item_amount: Annotated[list[str] | None, Form()] = None,
     ):
         form = {k: v for k, v in locals().items() if isinstance(v, str)}
+        typed = [
+            {"description": d, "category_id": k, "amount": a}
+            for d, k, a in zip(
+                item_description or [], item_category or [], item_amount or [], strict=False
+            )
+            if d.strip() or a.strip()
+        ]
         try:
             if kind != TransactionKind.TRANSFER.value and not account_id:
                 raise DomainError("ACCOUNT_REQUIRED")
@@ -671,14 +709,26 @@ def create_app(c: Container) -> FastAPI:
                     kind=_enum(TransactionKind, kind),
                     amount_cents=parse_brl(amount),
                     description=description,
-                    category_id=category_id or None,
+                    category_id=None if typed else (category_id or None),  # items carry them
                     is_recurring=bool(recurring),
                     notes=notes or None,
                     merchant=merchant or None,
+                    payment_method=_enum(PaymentMethod, payment_method) if payment_method else None,
+                    splits=tuple(
+                        SplitItem(t["description"], t["category_id"], abs(parse_brl(t["amount"])))
+                        for t in typed
+                    )
+                    if splits_present
+                    else (),
                 )
             )
         except DomainError as error:
-            return render(request, "entries.html", entries_context(None, {}, form), error=error)
+            return render(
+                request,
+                "entries.html",
+                entries_context(None, {}, form, items=typed if splits_present else None),
+                error=error,
+            )
         return back("/entries", "entry")
 
     @app.post("/transfers")

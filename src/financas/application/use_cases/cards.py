@@ -22,6 +22,7 @@ from financas.domain.models import (
     AccountKind,
     CategoryKind,
     InstallmentPlan,
+    PaymentMethod,
     Statement,
     StatementStatus,
     Transaction,
@@ -292,6 +293,7 @@ class RegisterCardPurchase:
                         plan_id=plan.id if plan else None,
                         installment_number=line.number if plan else None,
                         merchant=merchant,
+                        payment_method=PaymentMethod.CREDIT_CARD,
                     )
                 )
             uow.transactions.add_many(entries)
@@ -589,6 +591,7 @@ class PostStatementDifference:
                 description=text,
                 description_search=normalize_search(text),
                 statement_id=statement.id,
+                payment_method=PaymentMethod.CREDIT_CARD,
             )
             uow.transactions.add_many([entry])
             uow.commit()

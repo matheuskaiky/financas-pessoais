@@ -27,10 +27,17 @@ from financas.application.use_cases.transactions import (
     UpdateTransactionCommand,
 )
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, Transaction, TransactionKind
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    PaymentMethod,
+    Transaction,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
 
 K = TransactionKind
+PM = PaymentMethod
 D = dt.date
 
 
@@ -696,3 +703,79 @@ def test_edit_state_recognizes_both_legs_of_a_statement_payment(
     with pytest.raises(DomainError) as exc:
         edit(uow, legs[0].id, today=today, amount_cents=100)
     assert exc.value.code == "TRANSFER_NOT_EDITABLE"
+
+
+# --- payment method ---
+
+
+def test_a_bank_entry_keeps_the_payment_method_it_was_given(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    assert register(uow, checking).payment_method is None  # not informed
+    for method in (PM.PIX, PM.DEBIT, PM.BOLETO, PM.TRANSFER, PM.CASH, PM.OTHER):
+        stored = uow.transactions.get(register(uow, checking, payment_method=method).id)
+        assert stored and stored.payment_method is method
+    salary = register(uow, checking, kind=K.INCOME, payment_method=PM.PIX)
+    assert salary.payment_method is PM.PIX  # a PIX received
+
+
+def test_a_card_purchase_is_always_credit_card(uow: MemoryUnitOfWork, card: Account) -> None:
+    assert register(uow, card).payment_method is PM.CREDIT_CARD
+    assert register(uow, card, payment_method=PM.CREDIT_CARD).payment_method is PM.CREDIT_CARD
+    with pytest.raises(DomainError) as exc:
+        register(uow, card, payment_method=PM.PIX)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_credit_card_is_not_a_bank_method(uow: MemoryUnitOfWork, checking: Account) -> None:
+    with pytest.raises(DomainError) as exc:
+        register(uow, checking, payment_method=PM.CREDIT_CARD)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_installments_and_statement_lines_are_credit_card(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    result = RegisterCardPurchase(uow).execute(
+        CardPurchaseCommand(
+            account_id=card.id,
+            description="Monitor",
+            purchased_on=D(2026, 7, 10),
+            installments=3,
+            total_cents=9_000,
+        )
+    )
+    assert {t.payment_method for t in result.transactions} == {PM.CREDIT_CARD}
+
+
+def test_editing_changes_or_keeps_the_payment_method(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    entry = register(uow, checking, payment_method=PM.PIX)
+
+    def edit(**kw: object) -> Transaction:
+        return UpdateTransaction(uow, FixedClock(D(2026, 7, 20))).execute(
+            UpdateTransactionCommand(
+                entry.id,
+                entry.posted_on,
+                12_345,
+                entry.description,
+                **kw,  # type: ignore[arg-type]
+            )
+        )
+
+    assert edit().payment_method is PM.PIX  # not mentioned: kept
+    assert edit(payment_method=PM.BOLETO).payment_method is PM.BOLETO
+    assert edit(payment_method=None).payment_method is None  # cleared
+    with pytest.raises(DomainError) as exc:
+        edit(payment_method=PM.CREDIT_CARD)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_transfers_carry_no_payment_method(
+    uow: MemoryUnitOfWork, checking: Account, savings: Account
+) -> None:
+    legs = RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, savings.id, D(2026, 7, 10), 5_000, "Aporte")
+    )
+    assert {leg.payment_method for leg in legs} == {None}

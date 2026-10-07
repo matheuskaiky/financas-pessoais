@@ -16,6 +16,7 @@ from financas.domain.models import (
     InstrumentType,
     InvestmentTracking,
     Liquidity,
+    PaymentMethod,
     RateMode,
     TransactionKind,
 )
@@ -240,6 +241,9 @@ class TransactionRow(Base):
     is_recurring: Mapped[bool] = mapped_column(default=False)
     is_refunded: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     merchant: Mapped[str | None] = mapped_column(sa.String(120), index=True)
+    payment_method: Mapped[PaymentMethod | None] = mapped_column(
+        enum_column(PaymentMethod, "payment_method"), index=True
+    )
     transfer_id: Mapped[str | None] = mapped_column(sa.String(32), index=True)
     notes: Mapped[str | None] = mapped_column(sa.Text)
     statement_id: Mapped[str | None] = mapped_column(sa.ForeignKey("statements.id"), index=True)

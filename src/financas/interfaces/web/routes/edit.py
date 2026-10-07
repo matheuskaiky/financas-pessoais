@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from financas.application.queries.merchants import ListMerchants
 from financas.application.queries.plan_purchases import GetPlanPurchase
 from financas.application.queries.selection import ListRowSelections
+from financas.application.use_cases._common import UNSET
 from financas.application.use_cases.anticipation import (
     AnticipateInstallments,
     AnticipationCommand,
@@ -42,6 +43,7 @@ from financas.domain.models import (
     AccountKind,
     CategoryGroup,
     CategoryKind,
+    PaymentMethod,
     Transaction,
     TransactionKind,
 )
@@ -170,6 +172,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "refunded": "1" if entry.is_refunded else "",
             "refund_all": "",
             "merchant": entry.merchant or "",
+            "payment_method": entry.payment_method.value if entry.payment_method else "",
         }
 
     def edit_form(
@@ -353,6 +356,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         refund_all: Annotated[str, Form()] = "",
         splits_present: Annotated[str, Form()] = "",
         merchant: Annotated[str, Form()] = "",
+        payment_method: Annotated[str, Form()] = "",
         item_description: Annotated[list[str] | None, Form()] = None,
         item_category: Annotated[list[str] | None, Form()] = None,
         item_amount: Annotated[list[str] | None, Form()] = None,
@@ -375,6 +379,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "refunded": refunded,
             "refund_all": refund_all,
             "merchant": merchant,
+            "payment_method": payment_method,
         }
         state = GetEntryEditState(c.uow, c.clock).execute(transaction_id)
         if state.is_payment:
@@ -406,6 +411,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     is_refunded=bool(refunded),
                     refund_pending_installments=bool(refund_all),
                     merchant=merchant,
+                    payment_method=(
+                        ctx.enum_of(PaymentMethod, payment_method) if payment_method else UNSET
+                    ),
                     purchase_date=(
                         parse_date(purchase_date, ctx.today())
                         if purchase_date and installment and not origin

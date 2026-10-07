@@ -4,11 +4,14 @@ import re
 
 from financas.domain.errors import DomainError
 from financas.domain.models import (
+    BANK_PAYMENT_METHODS,
+    AccountKind,
     CategoryGroup,
     CategoryKind,
     Indexer,
     InvestmentHolding,
     Liquidity,
+    PaymentMethod,
     RateMode,
     TransactionKind,
 )
@@ -32,6 +35,26 @@ def validate_sign(kind: TransactionKind, amount_cents: int) -> None:
     }[kind]
     if not ok:
         raise DomainError("SIGN_KIND_MISMATCH", kind=kind.value)
+
+
+def validate_payment_method(
+    account_kind: AccountKind, kind: TransactionKind, method: PaymentMethod | None
+) -> PaymentMethod | None:
+    """The method an entry may carry: a card purchase is always ``credit_card``; an entry on a
+    checking account takes any bank method (or none); transfers and investment accounts none."""
+    if account_kind is AccountKind.CREDIT_CARD and kind is not TransactionKind.TRANSFER:
+        if method not in (None, PaymentMethod.CREDIT_CARD):
+            raise DomainError("INVALID_PAYMENT_METHOD")
+        return PaymentMethod.CREDIT_CARD
+    if method is None:
+        return None
+    if (
+        account_kind is not AccountKind.CHECKING
+        or kind is TransactionKind.TRANSFER
+        or method not in BANK_PAYMENT_METHODS
+    ):
+        raise DomainError("INVALID_PAYMENT_METHOD")
+    return method
 
 
 def validate_category_kind(kind: TransactionKind, category_kind: CategoryKind) -> None:

@@ -80,6 +80,7 @@ def _transaction(r: TransactionRow) -> Transaction:
         r.holding_id,
         r.is_refunded,
         r.merchant,
+        r.payment_method,
     )
 
 

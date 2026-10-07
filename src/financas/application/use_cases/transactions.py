@@ -14,6 +14,7 @@ from financas.domain.models import (
     AccountKind,
     Category,
     InstallmentPlan,
+    PaymentMethod,
     StatementStatus,
     Transaction,
     TransactionKind,
@@ -23,6 +24,7 @@ from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.rules import (
     validate_category_kind,
+    validate_payment_method,
     validate_sign,
     validate_transfer_accounts,
 )
@@ -57,6 +59,15 @@ def _magnitude(amount_cents: int) -> int:
 
 
 @dataclass(frozen=True)
+class SplitItem:
+    """One item typed on the form: description, category and a positive amount."""
+
+    description: str
+    category_id: str
+    amount_cents: int
+
+
+@dataclass(frozen=True)
 class RegisterTransactionCommand:
     """``amount_cents`` is the positive magnitude; the sign comes from ``kind``."""
 
@@ -70,6 +81,13 @@ class RegisterTransactionCommand:
     notes: str | None = None
     statement_month: YearMonth | None = None  # cards only; default comes from the card cycle
     merchant: str | None = None  # where the money went (optional)
+    # expenses only: the items of an itemized expense; they add up to ``amount_cents`` and carry
+    # the categories (the entry itself then has none, 9.10)
+    splits: tuple[SplitItem, ...] = ()
+    is_refunded: bool = False  # expenses only: kept on record, counted nowhere (9.10)
+    # how it was paid: any bank method on a checking account; a card purchase is always
+    # ``credit_card`` (whatever is given), and ``None`` on a bank account means "not informed"
+    payment_method: PaymentMethod | None = None
 
 
 class RegisterTransaction:
@@ -85,6 +103,12 @@ class RegisterTransaction:
             raise DomainError("EMPTY_DESCRIPTION")
         amount = -magnitude if cmd.kind is TransactionKind.EXPENSE else magnitude
         validate_sign(cmd.kind, amount)
+        if cmd.splits and cmd.kind is not TransactionKind.EXPENSE:
+            raise DomainError("SPLIT_ONLY_FOR_EXPENSES")
+        if cmd.splits and cmd.category_id:  # the items carry the categories
+            raise DomainError("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS")
+        if cmd.is_refunded and cmd.kind is not TransactionKind.EXPENSE:
+            raise DomainError("REFUND_ONLY_FOR_EXPENSES")
         merchant = clean_merchant(cmd.merchant)
         if cmd.kind is TransactionKind.EXPENSE:  # "Mouse Gamer - Kabum" -> merchant Kabum
             description, merchant = settle_description(description, merchant)
@@ -102,19 +126,28 @@ class RegisterTransaction:
                 if cmd.statement_month is not None:
                     raise DomainError("STATEMENT_ONLY_FOR_CARDS")
                 _check_account(account, _ENTRY_ACCOUNT_KINDS)
-            if cmd.category_id is None:
-                category = found(
-                    uow.categories.get_by_slug(_DEFAULT_CATEGORY_SLUG[cmd.kind]), "category"
-                )
+            items = [
+                (*checked_split_item(uow, cmd.kind, item), abs(item.amount_cents))
+                for item in cmd.splits
+            ]
+            category_id: str | None = None
+            if items:
+                validate_split_amounts(magnitude, [cents for _, _, cents in items])
             else:
-                category = found(uow.categories.get(cmd.category_id), "category")
-            validate_category_kind(cmd.kind, category.kind)
+                if cmd.category_id is None:
+                    category = found(
+                        uow.categories.get_by_slug(_DEFAULT_CATEGORY_SLUG[cmd.kind]), "category"
+                    )
+                else:
+                    category = found(uow.categories.get(cmd.category_id), "category")
+                validate_category_kind(cmd.kind, category.kind)
+                category_id = category.id
             transaction = Transaction(
                 id=new_id(),
                 account_id=cmd.account_id,
                 posted_on=cmd.posted_on,
                 kind=cmd.kind,
-                category_id=category.id,
+                category_id=category_id,
                 amount_cents=amount,
                 description=description,
                 description_search=normalize_search(description),
@@ -122,8 +155,18 @@ class RegisterTransaction:
                 notes=clean_text(cmd.notes) if cmd.notes else None,
                 statement_id=statement_id,
                 merchant=merchant,
+                is_refunded=cmd.is_refunded,
+                payment_method=validate_payment_method(account.kind, cmd.kind, cmd.payment_method),
             )
             uow.transactions.add_many([transaction])
+            if items:
+                uow.transactions.set_splits(
+                    transaction.id,
+                    [
+                        TransactionSplit(new_id(), transaction.id, text, category, cents)
+                        for text, category, cents in items
+                    ],
+                )
             uow.commit()
         return transaction
 
@@ -208,15 +251,6 @@ class DeleteTransaction:
             removed = delete_entry(uow, transaction, self._clock.today())
             uow.commit()
         return removed
-
-
-@dataclass(frozen=True)
-class SplitItem:
-    """One item typed on the form: description, category and a positive amount."""
-
-    description: str
-    category_id: str
-    amount_cents: int
 
 
 @dataclass(frozen=True)
@@ -388,6 +422,7 @@ class UpdateTransactionCommand:
     refund_pending_installments: bool = False
     splits: tuple[SplitItem, ...] | None = None
     merchant: Unset | str | None = UNSET  # ``UNSET`` keeps it, ``None`` or "" clears it
+    payment_method: Unset | PaymentMethod | None = UNSET  # ``UNSET`` keeps it, ``None`` clears it
     # installments only: a new purchase date for the whole plan (see ``plan_dates``), in the same
     # unit of work as the rest of the edit
     purchase_date: dt.date | None = None
@@ -463,6 +498,13 @@ class UpdateTransaction:
             final_description = description
             if entry.kind is TransactionKind.EXPENSE and not merchant:  # " - Merchant" suffix
                 final_description, merchant = settle_description(description, merchant)
+            method = validate_payment_method(
+                account.kind,
+                entry.kind,
+                entry.payment_method
+                if isinstance(cmd.payment_method, Unset)
+                else cmd.payment_method,
+            )
             refunded = entry.is_refunded if cmd.is_refunded is None else cmd.is_refunded
             if refunded and entry.kind is not TransactionKind.EXPENSE:
                 raise DomainError("REFUND_ONLY_FOR_EXPENSES")
@@ -478,6 +520,7 @@ class UpdateTransaction:
                 statement_id=statement_id,
                 is_refunded=refunded,
                 merchant=merchant,
+                payment_method=method,
             )
             uow.transactions.update(updated)
             self._save_splits(uow, entry, updated, magnitude, cmd)

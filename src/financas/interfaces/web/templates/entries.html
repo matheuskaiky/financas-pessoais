@@ -11,7 +11,7 @@
 /entries?month={{ month }}{% for k, v in filters.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
 {% block content %}
-{% set filtered = filters.q or filters.kind or filters.account or filters.category %}
+{% set filtered = filters.q or filters.kind or filters.account or filters.category or filters.method %}
 <header class="page-head">
   <div>
     <span class="eyebrow">Movimento</span><h1>Lançamentos</h1>
@@ -29,6 +29,7 @@
   <div class="stack" style="gap: 16px">
     <form method="get" action="/entries" role="search" class="filter-bar">
       <input type="hidden" name="month" value="{{ month_value }}">
+      {% if filters.method %}<input type="hidden" name="method" value="{{ filters.method }}">{% endif %}
       <label class="field f-search"><span class="sr-only">Buscar (ignora acentos)</span>
         <span class="search-box"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input type="search" name="q" value="{{ filters.q }}" placeholder="Buscar" title="A busca ignora acentos e maiúsculas (ex.: café são joão)"></span></label>
       <label class="field"><span class="sr-only">Tipo</span>
@@ -46,6 +47,13 @@
       <button type="submit" class="secondary">Filtrar</button>
       {% if filtered %}<a class="btn secondary" href="/entries?month={{ month_value }}">Limpar filtros</a>{% endif %}
     </form>
+
+    <div id="entries-results" class="stack" style="gap: 16px">
+    <div class="method-chips" role="group" aria-label="Forma de pagamento">
+      {% for code, label in method_chips %}
+      <a class="method-chip" id="method-chip-{{ code or 'all' }}" href="{{ filter_url({'method': code}) }}"{% if (filters.method or '') == code %} aria-current="true"{% endif %} hx-get="{{ filter_url({'method': code}) }}" hx-target="#entries-results" hx-select="#entries-results" hx-swap="outerHTML" hx-push-url="true" hx-sync="#entries-results:replace">{{ label }}</a>
+      {% endfor %}
+    </div>
 
     <div class="statstrip totals">
       <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True, private="transactions") }}</span></div>
@@ -79,6 +87,7 @@
     </section>
     {{ sel_dock() }}
     </div>
+    </div>
   </div>
 
   <aside id="form" class="panel quick" aria-labelledby="h-quick">
@@ -110,16 +119,27 @@
 
       <div class="only-entry">{{ merchant_input(form.merchant) }}</div>
 
+      {#- Itemized breakdown of an expense (PIX, débito, boleto, card): the category above is locked while it is on -#}
+      <fieldset class="split-wrap" data-split-field{% if form.kind not in ('expense', '') %} hidden disabled{% endif %}>
+        {% set split_items = form_items %}{% set split_categories = expense_categories %}
+        {% set split_names = {"description": "item_description", "category": "item_category", "amount": "item_amount"} %}
+        {% set split_bank = true %}
+        {% include "_splits_editor.html" %}
+      </fieldset>
+
       <div class="pair">
       <label class="field only-entry"><span>Conta ou cartão</span>
         <select name="account_id" data-entry-account>
           <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
           {# a card takes purchases and refunds, never income: the options follow the chosen type #}
-          {% for a in entry_accounts %}{% set kinds = 'expense refund' if a.kind.value == 'credit_card' else 'expense income refund' %}<option value="{{ a.id }}" data-kinds="{{ kinds }}" {{ 'selected' if form.account_id == a.id and (form.kind or 'expense') in kinds.split() }} {{ 'hidden disabled' if (form.kind or 'expense') not in kinds.split() }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
+          {% for a in entry_accounts %}{% set kinds = 'expense refund' if a.kind.value == 'credit_card' else 'expense income refund' %}<option value="{{ a.id }}" data-kinds="{{ kinds }}" data-account-kind="{{ a.kind.value }}" {{ 'selected' if form.account_id == a.id and (form.kind or 'expense') in kinds.split() }} {{ 'hidden disabled' if (form.kind or 'expense') not in kinds.split() }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
         </select></label>
 
       <label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>
       </div>
+
+      {% set chosen_account = entry_accounts|selectattr('id', 'equalto', form.account_id)|first %}
+      {% with method_current = form.payment_method, method_hidden = (form.kind == 'transfer' or (chosen_account is defined and chosen_account.kind.value == 'credit_card')) %}{% include "snippets/payment-method-field.html" %}{% endwith %}
 
       <div class="only-transfer stack-form">
         <label class="field"><span>De</span>

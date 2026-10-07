@@ -16,6 +16,7 @@ from financas.application.use_cases._common import found, new_id
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     InstallmentPlan,
+    PaymentMethod,
     StatementStatus,
     Transaction,
     TransactionKind,
@@ -177,6 +178,7 @@ class AnticipateInstallments:
                             description=description,
                             description_search=normalize_search(description),
                             statement_id=target.id,
+                            payment_method=PaymentMethod.CREDIT_CARD,
                         )
                     ]
                 )

@@ -16,6 +16,7 @@ from financas.application.use_cases._common import found, new_id
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
+    PaymentMethod,
     StatementStatus,
     Transaction,
     TransactionKind,
@@ -43,6 +44,12 @@ def _shared_merchant(entries: list[Transaction]) -> str | None:
         return None  # one of them has none: no common merchant
     keys = {normalize_search(e.merchant or "") for e in entries}
     return entries[0].merchant if len(keys) == 1 else None
+
+
+def _shared_method(entries: list[Transaction]) -> PaymentMethod | None:
+    """The payment method the merged entries have in common (none when they differ)."""
+    methods = {e.payment_method for e in entries}
+    return methods.pop() if len(methods) == 1 else None
 
 
 class MergeTransactions:
@@ -114,6 +121,7 @@ class MergeTransactions:
                 is_recurring=False,
                 statement_id=statement_id,
                 merchant=_shared_merchant(entries),
+                payment_method=_shared_method(entries),
             )
             for entry in entries:
                 uow.transactions.delete(entry.id)  # their items go with them

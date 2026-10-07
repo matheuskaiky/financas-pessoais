@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Quick entry form: payment method and items editor visibility (app.js)</title>
+</head>
+<body>
+<form id="f">
+  <input type="radio" name="kind" value="expense" id="k-expense" checked>
+  <input type="radio" name="kind" value="income" id="k-income">
+  <input type="radio" name="kind" value="transfer" id="k-transfer">
+  <select name="account_id" id="acct" data-entry-account>
+    <option value="bank" data-account-kind="checking" selected>Conta</option>
+    <option value="card" data-account-kind="credit_card">Cartão</option>
+  </select>
+  <input name="amount" id="amount" value="100,00">
+  <select name="category_id" id="category"><option value="a" selected>A</option><option value="b">B</option></select>
+  <fieldset data-method-field id="method">
+    <input type="radio" name="payment_method" value="pix" checked><input type="radio" name="payment_method" value="debito">
+  </fieldset>
+  <fieldset data-split-field id="splits">
+    <fieldset class="split-editor" data-split-editor>
+      <input type="hidden" name="splits_present" value="1">
+      <input id="toggle" type="checkbox" data-split-toggle-items>
+      <div data-split-items hidden>
+        <div data-split-rows></div><button type="button" data-split-add id="add">+</button>
+        <p data-split-remaining id="remaining"></p><p data-split-note></p>
+      </div>
+      <template data-split-template>
+        <div class="split-row"><input type="text" name="item_description"><select name="item_category"><option value="a">A</option></select>
+        <span class="money-field"><input class="split-amount" type="text" name="item_amount"></span><button type="button" data-split-remove>x</button></div>
+      </template>
+    </fieldset>
+  </fieldset>
+  <button type="submit" id="save">Salvar</button>
+</form>
+<pre id="out">running</pre>
+<script>
+window.addEventListener("error", (e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + e.message + "\nDONE 1"; });
+</script>
+<script src="../../src/financas/interfaces/web/static/money-mask.js"></script>
+<script src="../../src/financas/interfaces/web/static/app.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+const change = (el) => el.dispatchEvent(new Event("change", { bubbles: true }));
+const sent = () => Array.from(new FormData($("f")).keys());
+
+// an expense on a checking account: method and items are offered
+check("method shown for a bank expense", $("method").hidden, false);
+check("items shown for an expense", $("splits").hidden, false);
+check("method radios are sent", sent().includes("payment_method"), true);
+// a card: the method is hidden and not sent (a card purchase is always "cartão de crédito")
+$("acct").value = "card"; change($("acct"));
+check("method hidden on a card", $("method").hidden, true);
+check("method not sent on a card", sent().includes("payment_method"), false);
+check("items stay for a card expense", $("splits").hidden, false);
+$("acct").value = "bank"; change($("acct"));
+check("method back on a bank account", $("method").hidden, false);
+// income: a method yes, items no
+$("k-income").checked = true; change($("k-income"));
+check("method for income", $("method").hidden, false);
+check("items hidden for income", $("splits").hidden, true);
+check("items not sent for income", sent().includes("splits_present"), false);
+// a transfer: neither
+$("k-transfer").checked = true; change($("k-transfer"));
+check("method hidden for a transfer", $("method").hidden, true);
+// turning the items on, then switching to income, drops them and gives the category back
+$("k-expense").checked = true; change($("k-expense"));
+$("toggle").checked = true; change($("toggle"));
+check("parent category locked while the items are on", $("category").disabled, true);
+check("two rows were added", document.querySelectorAll("[data-split-rows] .split-row").length, 2);
+$("k-income").checked = true; change($("k-income"));
+check("toggle turned off by the kind switch", $("toggle").checked, false);
+check("rows removed", document.querySelectorAll("[data-split-rows] .split-row").length, 0);
+check("parent category unlocked again", $("category").disabled, false);
+check("no orphan items are sent", sent().some((k) => k.startsWith("item_")), false);
+
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+});
+</script>
+</body>
+</html>
