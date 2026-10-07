@@ -174,12 +174,12 @@
    .dlg--cmd = the wide ⌘K command palette; under 640 px every .dlg is a bottom sheet. */
 .dlg{box-sizing:border-box;position:fixed;inset:0;margin:auto;padding:0;width:min(480px,calc(100vw - 32px));max-width:none;height:fit-content;max-height:min(calc(100dvh - 32px),780px);overflow:hidden;color:var(--text-primary);background:linear-gradient(var(--surface-2),var(--surface-2)) var(--under-2);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border:1px solid var(--glass-line);border-radius:22px;box-shadow:var(--sh-3);font-family:var(--sans);font-variant-numeric:lining-nums tabular-nums}
 .dlg[open]{display:flex;flex-direction:column}
-.dlg::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%)}
-.dlg{opacity:0;transform:translateY(14px) scale(.975);transition:opacity .2s ease,transform var(--d-ui) var(--sp-ui),overlay .2s allow-discrete,display .2s allow-discrete}
-.dlg[open]{opacity:1;transform:none}
-.dlg::backdrop{opacity:0;transition:opacity .2s ease,overlay .2s allow-discrete,display .2s allow-discrete}
+.dlg::backdrop{background:var(--scrim);-webkit-backdrop-filter:var(--dlg-blur);backdrop-filter:var(--dlg-blur)}
+.dlg{opacity:0;transform:translate3d(0,14px,0) scale(.975);contain:paint;transition:opacity var(--dlg-ms) var(--dlg-ease),transform var(--dlg-ms) var(--dlg-ease),overlay var(--dlg-ms) allow-discrete,display var(--dlg-ms) allow-discrete}
+.dlg[open]{opacity:1;transform:translate3d(0,0,0)}
+.dlg::backdrop{opacity:0;transition:opacity var(--dlg-ms) ease-out,overlay var(--dlg-ms) allow-discrete,display var(--dlg-ms) allow-discrete}
 .dlg[open]::backdrop{opacity:1}
-@starting-style{.dlg[open]{opacity:0;transform:translateY(14px) scale(.975)}.dlg[open]::backdrop{opacity:0}}
+@starting-style{.dlg[open]{opacity:0;transform:translate3d(0,14px,0) scale(.975)}.dlg[open]::backdrop{opacity:0}}
 /* palette result (Comando board): «1 · Entendi» and «2 · Calculei, pelo sistema» side by side while the palette is 760 px wide or more, stacked below that.
    A container query, so it also works in the full-page /comando (give the page's wrapper class .cmd). .cmd-l = the first column (its rule becomes a bottom rule when stacked). */
 @media (max-width:640px){
@@ -187,6 +187,11 @@
 }
 @media (prefers-reduced-motion:reduce){.dlg,.dlg::backdrop{transition:none}}
 html:has(dialog.dlg[open]){overflow:hidden}
+/* Every modal while it opens (fp-ui.js sets data-opening from the open attribute until the animation ends): its own compositor layer (the translate3d of the animation already forces it; will-change keeps it for the whole run), released
+   afterwards so it does not keep video memory. Open dialogs also contain their paint, so opening one never repaints the page under it. */
+dialog[open]{contain:paint}
+dialog[data-opening]{will-change:transform,opacity}  /* no transform here: it would beat the dialog's own transition */
+dialog[data-opening]::backdrop{will-change:opacity}
 
 /* ── 10 · app shell ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 /* sidebar: <nav class="ink sb" aria-label="Principal"> (snippets/shell.html). Wide (232 px) by default; from 1100 px down tokens.css narrows --side-w to 76 px and this block turns it into an icon rail:

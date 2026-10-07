@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Dialog opening: compositor-only animations and layer cleanup</title>
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/tokens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/app.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/components.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/palette.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/screens.css">
+<link rel="stylesheet" href="../../src/financas/interfaces/web/static/fp-privacy.css">
+</head>
+<body>
+<dialog id="d1" class="dialog"><p>confirm</p></dialog>
+<dialog id="d2" class="dlg"><p>sheet</p></dialog>
+<dialog id="d3" class="palette"><p>palette</p></dialog>
+<dialog id="d4" class="fp-priv-dialog"><p>privacy</p></dialog>
+<dialog id="d5" class="merge-dialog"><p>merge</p></dialog>
+<pre id="out">running</pre>
+<script type="module">
+const out = document.getElementById("out");
+setTimeout(() => { if (out.textContent === "running") out.textContent = results.join("\n") + "\nFAIL watchdog :: stalled\nDONE 1"; }, 6500);
+const results = [];
+let failed = 0;
+const check = (name, ok, detail) => { if (!ok) failed++; results.push((ok ? "PASS " : "FAIL ") + name + (ok ? "" : " :: " + detail)); };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const COMPOSITOR = new Set(["opacity", "transform", "offset", "computedOffset", "easing", "composite"]);
+const props = (anim) => {
+  const keys = new Set();
+  for (const k of anim.effect.getKeyframes()) for (const p of Object.keys(k)) keys.add(p);
+  return [...keys];
+};
+try {
+  await import("../../src/financas/interfaces/web/static/fp-ui.js");
+  const root = getComputedStyle(document.documentElement);
+  check("duration token within 150-200ms", ["150ms", "160ms", "170ms", "180ms", "190ms", "200ms"].includes(root.getPropertyValue("--dlg-ms").trim()), root.getPropertyValue("--dlg-ms"));
+  check("ease token is cubic-bezier(.16,1,.3,1)", root.getPropertyValue("--dlg-ease").replace(/\s/g, "") === "cubic-bezier(.16,1,.3,1)", root.getPropertyValue("--dlg-ease"));
+  for (const id of ["d1", "d2", "d3", "d4", "d5"]) {
+    const d = document.getElementById(id);
+    d.showModal();
+    await Promise.resolve(); await Promise.resolve();
+    const cs = getComputedStyle(d);
+    check(id + ": contain paint", /paint/.test(cs.contain), cs.contain);
+    check(id + ": data-opening set on open", d.hasAttribute("data-opening"), "missing");
+    check(id + ": will-change while opening", /transform/.test(cs.willChange) && /opacity/.test(cs.willChange), cs.willChange);
+    const anims = [...d.getAnimations(), ...document.getAnimations().filter((a) => a.effect && a.effect.pseudoElement === "::backdrop" && a.effect.target === d)];
+    check(id + ": has an opening animation", anims.length > 0, "none");
+    for (const a of anims) {
+      const bad = props(a).filter((p) => !COMPOSITOR.has(p));
+      check(id + ": animates only opacity/transform (" + (a.effect.pseudoElement || "dialog") + ")", bad.length === 0, bad.join(","));
+    }
+    const backdrop = getComputedStyle(d, "::backdrop");
+    const filt = backdrop.backdropFilter || backdrop.webkitBackdropFilter;
+    check(id + ": static backdrop blur(8px)", /blur\(8px\)/.test(filt), filt);
+    await wait(450);
+    check(id + ": will-change released after the animation", !d.hasAttribute("data-opening") && getComputedStyle(d).willChange === "auto", getComputedStyle(d).willChange);
+    d.close();
+  }
+  const d = document.getElementById("d1");
+  d.showModal(); await wait(450); d.close(); d.showModal();
+  await Promise.resolve(); await Promise.resolve();
+  check("re-opening marks it again", d.hasAttribute("data-opening"), "missing");
+  d.close();
+} catch (e) { failed++; results.push("FAIL harness crashed :: " + e); }
+out.textContent = results.join("\n") + "\nDONE " + failed;
+</script>
+</body>
+</html>

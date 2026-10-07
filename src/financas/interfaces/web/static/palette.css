@@ -3,8 +3,9 @@ dialog.palette { width: min(1040px, calc(100vw - 24px)); max-height: calc(100vh 
   background: rgba(255, 255, 255, .92); color: var(--text, #14211B);
   -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .35), 0 2px 4px rgba(4, 20, 15, .10), 0 24px 48px -12px rgba(4, 20, 15, .35), 0 64px 120px -32px rgba(4, 20, 15, .55); }
-dialog.palette[open] { display: block; animation: dialin var(--d-soft, 650ms) var(--sp-soft, ease) backwards; }
-dialog.palette::backdrop { background: rgba(8, 36, 28, .52); -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
+dialog.palette[open] { display: block; contain: paint; animation: dialin var(--dlg-ms, 180ms) var(--dlg-ease, ease-out) backwards; }
+dialog.palette::backdrop { background: rgba(8, 36, 28, .52); -webkit-backdrop-filter: var(--dlg-blur, blur(8px)); backdrop-filter: var(--dlg-blur, blur(8px)); }
+dialog.palette[open]::backdrop { animation: dlg-scrim var(--dlg-ms, 180ms) ease-out backwards; }
 .pal-box { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
 .pal-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 0 14px 0 20px; background: rgba(243, 246, 242, .72); border-bottom: 1px solid rgba(10, 46, 36, .10); }
 .pal-tabs { display: flex; align-self: stretch; }

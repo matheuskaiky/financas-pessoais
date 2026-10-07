@@ -422,8 +422,45 @@ export function bindTilt() {
   return true;
 }
 
+/* Dialogs: while one opens it gets data-opening, which turns on will-change (components.css); it is removed when the opening
+   animation or transition ends (or after a fallback) so the layer is released. Only opacity and transform are ever animated. */
+const OPENING_FALLBACK_MS = 400;
+function settleDialog(dlg) {
+  if (!dlg.hasAttribute('data-opening')) return;
+  dlg.removeAttribute('data-opening');
+}
+function markOpening(dlg) {
+  if (!dlg.open || dlg.hasAttribute('data-opening')) return;
+  dlg.setAttribute('data-opening', '');
+  const done = (ev) => {
+    if (ev && ev.target !== dlg) return;      // a child's animation ending is not the dialog's
+    dlg.removeEventListener('animationend', done);
+    dlg.removeEventListener('transitionend', done);
+    dlg.removeEventListener('animationcancel', done);
+    settleDialog(dlg);
+  };
+  dlg.addEventListener('animationend', done);
+  dlg.addEventListener('transitionend', done);
+  dlg.addEventListener('animationcancel', done);
+  setTimeout(() => done(null), OPENING_FALLBACK_MS);
+}
+function bindDialogs() {
+  if (typeof MutationObserver === 'undefined' || document.documentElement.hasAttribute('data-fp-dialogs')) return false;
+  document.documentElement.setAttribute('data-fp-dialogs', '');
+  document.querySelectorAll('dialog[open]').forEach(markOpening);
+  new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === 'attributes') {
+        const dlg = r.target;
+        if (dlg.open) markOpening(dlg); else settleDialog(dlg);
+      }
+    }
+  }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'] });
+  return true;
+}
+
 export const ui = Object.freeze({
-  updateEdges, scrollEdges, observe,
+  updateEdges, scrollEdges, observe, dialogs: Object.freeze({ bind: bindDialogs, opening: markOpening }),
   theme: Object.freeze({ bind: bindTheme, sync: syncThemeControls, message: themeMessage }),
   tilt: Object.freeze({ bind: bindTilt, release: releaseTilt, from: tiltFrom, within }),
 });
@@ -433,7 +470,7 @@ if (typeof window !== 'undefined') {
   window.FP.ui = ui;
 }
 if (typeof document !== 'undefined') {
-  const boot = () => { observe(); bindTheme(); bindTilt(); };
+  const boot = () => { observe(); bindTheme(); bindTilt(); bindDialogs(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 }
