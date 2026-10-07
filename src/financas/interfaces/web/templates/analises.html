@@ -4,6 +4,7 @@
 {% from "_charts.html" import pace_card, flow_card, donut_card, month_stepper %}
 {% block title %}Análises{% endblock %}
 {% block head %}
+  <script src="/static/analises-rank.js" defer></script>
   <link rel="stylesheet" href="/static/fin-charts.css">
   <script type="module" src="/static/fin-charts.js"></script>
 {% endblock %}
@@ -36,6 +37,9 @@
   {{ state_empty('Nenhuma despesa neste período', 'Quando houver despesas, elas aparecem aqui por categoria.', 'Fazer um lançamento', '/entries#form', 'chart') }}
   {% endif %}
 </section>
+
+<p id="rank-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+{% include "_rank_expensive.html" %}
 
 <section class="card chart-card pn-cat-wide" aria-labelledby="h-mer" id="merchants">
   <div class="pn-card-head">
