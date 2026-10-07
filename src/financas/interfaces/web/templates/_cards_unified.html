@@ -1,0 +1,48 @@
+{# /cards?card=all: the consolidated hero, the card chips and one timeline (swapped as a whole by a chip). #}
+{% from "_ui.html" import stroke_gauge, state_empty %}
+{% from "_selection.html" import sel_toolbar, sel_dock %}
+{% set u = summary %}
+<div id="cards-unified" class="cards-unified" data-unified>
+  <section class="panel cards-hero" aria-labelledby="hero-eyebrow">
+    <span class="eyebrow" id="hero-eyebrow">Fatura consolidada</span>
+    <div class="cards-hero__amount">{% if u.hero_cents is none %}<span class="money money--display" aria-label="saldo indisponível">—</span>{% else %}{{ u.hero_cents|money(size="display", private="cards") }}{% endif %}</div>
+    <p class="cards-hero__sub">{% if u.unavailable %}saldo indisponível em {{ 'um cartão' if u.unavailable == 1 else u.unavailable ~ ' cartões' }}{% else %}{{ u.included }} de {{ u.total }} cartões{% endif %}</p>
+    {% if u.usage %}
+    {% set pct = u.usage.percent %}
+    {% set pct_text = ('%.1f'|format(pct)|replace('.', ',')) ~ '%' %}
+    {{ stroke_gauge(pct, height=12, label='Limite comprometido dos cartões selecionados', meter_text='Comprometido ' ~ pct_text) }}
+    <div class="sg-caption"><span><strong>{{ 'Acima do limite · ' if pct > 100 else ('Perto do limite · ' if pct >= 80 else '') }}Comprometido {{ u.committed_cents|money(private="cards") }} · {{ pct_text }}</strong></span><span>Limite total {{ u.limit_cents|money(private="cards") }}</span></div>
+    {% if u.without_limit %}<div class="sg-caption cards-hero__missing"><span>{{ '1 cartão sem limite informado' if u.without_limit == 1 else u.without_limit ~ ' cartões sem limite informado' }}</span></div>{% endif %}
+    {% else %}
+    {{ stroke_gauge(0, unset=True, height=12) }}
+    <div class="sg-caption"><strong>limite não informado</strong></div>
+    {% endif %}
+  </section>
+
+  <div class="card-chips" role="group" aria-label="Cartões">
+    {% for chip in chips %}
+    <button type="button" class="card-chip" id="{{ chip.id }}" aria-pressed="{{ 'true' if chip.pressed else 'false' }}"{% if chip.disabled %} aria-disabled="true" data-keep-one{% else %} hx-get="{{ chip.url }}" hx-target="#cards-unified" hx-swap="outerHTML" hx-push-url="true" hx-sync="#cards-unified:replace" hx-indicator="#cards-unified"{% endif %}{% if chip.card_id %} style="--card-color: {{ account_looks[chip.card_id].color }}"{% endif %} title="{{ chip.label }}">
+      <svg class="card-chip__check" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false"><path d="M2.5 7.4l3.2 3.2 5.8-6.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      {% if chip.card_id %}<span class="card-chip__dot" aria-hidden="true"></span>{% endif %}
+      <span class="card-chip__t">{{ chip.label }}</span></button>
+    {% endfor %}
+  </div>
+  <div hidden hx-swap-oob="innerHTML:#cards-live">{{ live_text }}</div>
+
+  <div class="cards-skeleton" aria-hidden="true">{% for _ in range(6) %}<div class="sk cards-skeleton__row"></div>{% endfor %}</div>
+  <div class="cards-timeline" data-sel-scope data-selecting="false">
+    {% if page.entries %}{{ sel_toolbar('cards-timeline-list') }}{% endif %}
+    <div class="entries-box" id="cards-timeline-list">
+      {% if page.entries %}
+      <div class="rowhead card-head"><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
+      {% set lead_day = "" %}{% set lead_month = "" %}
+      {% include "_cards_rows.html" %}
+      {% else %}
+      <p class="empty">Nenhum lançamento nas faturas atuais dos cartões selecionados.</p>
+      {% endif %}
+    </div>
+    {% set more_url = (more_base ~ '&older=1' ~ (('&after=' ~ page.older_cursor) if page.older_cursor else '')) if page.older_available else none %}
+    {% include "_cards_more.html" %}
+    {{ sel_dock() }}
+  </div>
+</div>

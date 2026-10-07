@@ -1,0 +1,5 @@
+{# What "Ver lançamentos anteriores" returns: only the rows to append and the next button. #}
+{% set lead_day = after[:10] if after else "" %}{% set lead_month = after[:7] if after else "" %}
+{% include "_cards_rows.html" %}
+{% set more_url = (more_base ~ '&older=1&after=' ~ page.older_cursor) if page.older_cursor else none %}
+{% include "_cards_more.html" %}

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +41,11 @@ from financas.application.queries.planning import (
 from financas.application.queries.review import CountPendingReview
 from financas.application.queries.selection import ListRowSelections
 from financas.application.queries.summary import GetSummary, Period
+from financas.application.queries.unified_cards import (
+    ListUnifiedTimeline,
+    parse_card_ids,
+    summarize,
+)
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.budget import SetCategoryBudgets
 from financas.application.use_cases.cards import (
@@ -128,6 +133,11 @@ from financas.interfaces.formatting import (
     parse_percent_bps,
 )
 from financas.interfaces.messages import selection as selection_messages
+from financas.interfaces.messages.unified_cards import (
+    unified_chips,
+    unified_live_text,
+    unified_url,
+)
 from financas.interfaces.web import fp_charts, fp_money, nav
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import MODULES, WebContext
@@ -871,12 +881,19 @@ def create_app(c: Container) -> FastAPI:
         return views[-1]
 
     def cards_context(
-        card_id: str | None, month: str | None, ano: str | None = None
+        card_id: str | None,
+        month: str | None,
+        ano: str | None = None,
+        *,
+        unified: bool = False,
     ) -> dict[str, object]:
         overview = ListCards(c.uow, c.clock).execute()
         data = lookups()
-        chosen = next((v for v in overview.cards if v.account.id == card_id), None) or (
-            overview.cards[0] if overview.cards else None
+        chosen = (
+            None
+            if unified  # the consolidated view has no single card (and no selected face)
+            else next((v for v in overview.cards if v.account.id == card_id), None)
+            or (overview.cards[0] if overview.cards else None)
         )
         # Year filter: the statements of one year at a time. ``?ano=`` (lenient) wins, then the
         # year of ``?month=``, then the year of the statement the default rule picks.
@@ -942,13 +959,71 @@ def create_app(c: Container) -> FastAPI:
             "institution_choices": list(data["institutions"].values()),
         }
 
+    def unified_cards(request: Request, picked: str, older: bool, after: str) -> Response:
+        """``/cards?card=all[&cards=id,id]``: the hero, the card chips and one timeline."""
+        overview = ListCards(c.uow, c.clock).execute()
+        if not overview.cards:
+            return RedirectResponse("/cards", status_code=303)
+        if len(overview.cards) == 1:  # one card: nothing to consolidate
+            return RedirectResponse(f"/cards?card={overview.cards[0].account.id}", status_code=303)
+        order = [v.account.id for v in overview.cards]
+        ids = parse_card_ids(picked, order)
+        views = [v for v in overview.cards if v.account.id in ids]
+        page = ListUnifiedTimeline(c.uow, c.clock).execute(views, older=older, after=after)
+        context = cards_context(None, None, unified=True)
+        with c.uow as work:
+            splits = work.transactions.splits_for(split_ids(page.entries))
+            plans = {p.id: p for p in work.plans.list_all()}
+        context.update(
+            {
+                "plans": plans,
+                "splits": splits,
+                "unified": True,
+                "summary": summarize(views, len(overview.cards)),
+                "chips": unified_chips(overview.cards, ids),
+                "live_text": unified_live_text(
+                    [v.account.nickname for v in views], len(views) == len(overview.cards)
+                ),
+                "page": page,
+                "older": older,
+                "card_tags": {
+                    cid: {"name": a.nickname, "color": context["account_looks"][cid].color}  # type: ignore[index]
+                    for cid, a in page.cards.items()
+                },
+                "selections": ListRowSelections(c.uow, c.clock).execute(
+                    [t for t in page.entries if not t.transfer_id],
+                    {p.plan.id: p for p in ListPlanPurchases(c.uow).execute()},
+                    splits,
+                ),
+                "picked_query": "" if len(views) == len(overview.cards) else ",".join(ids),
+                "more_base": unified_url(
+                    order, ids if len(views) != len(overview.cards) else order
+                ),
+                "after": after,
+                "month_labels": {
+                    f"{y:04d}-{m:02d}": format_month_long(YearMonth(y, m)).capitalize()
+                    for y, m in {(t.posted_on.year, t.posted_on.month) for t in page.entries}
+                },
+            }
+        )
+        history_restore = request.headers.get("hx-history-restore-request") == "true"
+        if request.headers.get("hx-request") == "true" and not history_restore:
+            template = "_cards_older.html" if older else "_cards_unified.html"
+            return templates.TemplateResponse(request, template, context)
+        return render(request, "cards.html", context)
+
     @app.get("/cards", response_class=HTMLResponse)
     def cards(
         request: Request,
         card: str | None = None,
         month: str | None = None,
         ano: str | None = None,
+        picked: Annotated[str, Query(alias="cards")] = "",
+        older: str = "",
+        after: str = "",
     ):
+        if card == "all":
+            return unified_cards(request, picked, bool(older), after)
         return render(request, "cards.html", cards_context(card, month, ano))
 
     @app.post("/cards")

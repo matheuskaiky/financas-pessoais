@@ -1,0 +1,4 @@
+{# "Ver lançamentos anteriores": the next 50 older rows are appended in place of this button. #}
+{% if more_url %}
+<div id="cards-more" class="cards-more"><button type="button" class="secondary" hx-get="{{ more_url }}" hx-target="#cards-more" hx-swap="outerHTML" hx-push-url="false">Ver lançamentos anteriores</button></div>
+{% endif %}

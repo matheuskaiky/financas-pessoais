@@ -1,0 +1,14 @@
+{# The unified timeline's rows: day groups, month rails and the card tag on every row.
+   Needs: page (TimelinePage), lead_day / lead_month (ISO day and YYYY-MM of the row just above, "" on
+   the first page), month_labels, plus what _card_entry_row.html needs. #}
+{% from "_macros.html" import day_group_header %}
+{% set ns = namespace(month=lead_month) %}
+{% for day, day_entries in page.entries|groupby('posted_on')|reverse %}
+{% set ym = day.isoformat()[:7] %}
+{% if ym != ns.month %}<div class="month-rail" role="presentation"><span>{{ month_labels[ym] }}</span></div>{% set ns.month = ym %}{% endif %}
+{% set spent = day_entries|rejectattr('transfer_id')|rejectattr('is_refunded')|list %}
+<div class="day-group">
+  {% if day.isoformat() != lead_day %}{{ day_group_header(day, (-(spent|sum(attribute='amount_cents')) if spent else none), 'Total do dia', 'cards') }}{% endif %}
+  {% for t in day_entries %}{% set locked = t.statement_id in page.paid_statement_ids %}{% set origin_qs = 'from=cards&card=all' %}{% set show_card_tag = true %}{% include "_card_entry_row.html" %}{% endfor %}
+</div>
+{% endfor %}

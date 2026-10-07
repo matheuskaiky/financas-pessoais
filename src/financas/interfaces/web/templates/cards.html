@@ -3,6 +3,7 @@
 {% from "_ui.html" import odometer, stroke_gauge, delta_chip, state_empty %}
 {% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Cartões{% endblock %}
+{% block head %}<script src="/static/cards-unified.js" defer></script>{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
@@ -10,6 +11,7 @@
     <p>Faturas, parcelas e limite · hoje é {{ today[8:10] }}/{{ today[5:7] }}/{{ today[0:4] }}</p>
   </div>
   <div class="head-tools">
+    {% if overview.cards|length > 1 %}<a class="btn secondary" href="/cards?card=all"{% if unified %} aria-current="true"{% endif %}>Todos os cartões</a>{% endif %}
     {% if overview.cards %}<a class="btn" href="/cards/purchase{{ '?card=' ~ chosen.account.id if chosen }}"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nova compra</a>{% endif %}
   </div>
 </header>
@@ -62,7 +64,11 @@
 </section>
 {% endif %}
 
-{% if chosen %}
+{% if unified %}
+<div id="cards-unified-error" class="banner error" role="alert" hidden><span>Não foi possível carregar as faturas.</span><button type="button" class="secondary" data-retry>Tentar novamente</button></div>
+<p id="cards-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ live_text }}</p>
+{% include "_cards_unified.html" %}
+{% elif chosen %}
 <div id="statement-section" class="statement-section">
 {% if years %}
 <div class="year-pills" role="group" aria-label="Ano das faturas">

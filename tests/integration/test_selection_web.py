@@ -2,17 +2,12 @@
 
 import datetime as dt
 import re
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
-from test_web import HEADERS, HX, add_expense, buy_on_card, make_card, setup_accounts
+from test_web import HX, add_expense, buy_on_card, make_card, setup_accounts
 
 from financas.container import Container
 from financas.domain.models import Transaction
-from financas.infrastructure.db.seed import seed_categories
-from financas.infrastructure.settings import Settings
-from financas.interfaces.web.app import create_app
 
 TODAY = dt.date.today()
 LAST_MONTH = TODAY.replace(day=1) - dt.timedelta(days=1)
@@ -20,26 +15,6 @@ LOCK_PAST = (
     "Apenas compras do mês atual podem ser mescladas. "
     "Lançamentos de meses anteriores já estão consolidados."
 )
-
-
-@pytest.fixture
-def container(tmp_path: Path) -> Container:
-    settings = Settings(
-        db_url=f"sqlite:///{tmp_path / 'data' / 'f.db'}",
-        data_dir=tmp_path / "data",
-        _env_file=None,  # type: ignore[call-arg]
-    )
-    c = Container(settings)
-    c.migrate()
-    seed_categories(c.uow)
-    return c
-
-
-@pytest.fixture
-def client(container: Container) -> TestClient:
-    return TestClient(
-        create_app(container), base_url="http://localhost", follow_redirects=False, headers=HEADERS
-    )
 
 
 def entries_of(container: Container, account: str) -> list[Transaction]:

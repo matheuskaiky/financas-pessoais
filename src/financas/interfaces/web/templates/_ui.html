@@ -45,7 +45,7 @@
     ("this purchase"); ``tone``: 'auto' (forest, gold from ``warn``, negative above 100), 'forest', 'gold'
     or 'negative'; ``dark``: on a dark panel (gold dashes on a faint track); ``unset``: value not informed (hatched track, never 0%). ``label``: the accessible
     text (default "Comprometido 51,3%"). ``caption`` is optional visible text under the bar. -#}
-{% macro stroke_gauge(percent, tone='auto', label=None, add=0, warn=80, height=14, unset=False, mark=True, delay=120, caption=None, dark=False) %}
+{% macro stroke_gauge(percent, tone='auto', label=None, add=0, warn=80, height=14, unset=False, mark=True, delay=120, caption=None, dark=False, meter_text=None) %}
 {%- set pct = [percent or 0, 0]|max -%}
 {%- set extra = [add or 0, 0]|max -%}
 {%- set total = pct + extra -%}
@@ -54,7 +54,7 @@
 {%- set t = (('negative' if total > 100 else ('gold' if total >= warn else 'forest')) if tone == 'auto' else tone) -%}
 {%- set suffix = ', acima do limite' if total > 100 else (', atenção' if total >= warn else '') -%}
 {%- set text = label or ('Limite não informado' if unset else ('Comprometido ' ~ ('%.1f'|format(total)|replace('.', ',')) ~ '%' ~ suffix)) -%}
-<span class="sg sg-{{ t }}{{ ' sg-unset' if unset }}{{ ' sg-dark' if dark }}" role="img" aria-label="{{ text }}" style="--sg-h: {{ height }}px; --sg-w: {{ '%.2f'|format(0 if unset else main) }}%; --sg-add: {{ '%.2f'|format(0 if unset else more) }}%; --sg-mark: {{ warn }}%; --sg-delay: {{ delay }}ms">
+<span class="sg sg-{{ t }}{{ ' sg-unset' if unset }}{{ ' sg-dark' if dark }}" {% if meter_text and not unset %}role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ '%.1f'|format(main) }}" aria-valuetext="{{ meter_text }}" aria-label="{{ text }}"{% else %}role="img" aria-label="{{ text }}"{% endif %} style="--sg-h: {{ height }}px; --sg-w: {{ '%.2f'|format(0 if unset else main) }}%; --sg-add: {{ '%.2f'|format(0 if unset else more) }}%; --sg-mark: {{ warn }}%; --sg-delay: {{ delay }}ms">
   {%- if not unset %}<span class="sg-wipe"><span class="sg-fill"></span><span class="sg-add"></span></span>{% endif -%}
   {%- if mark and not unset %}<span class="sg-mark" aria-hidden="true"></span>{% endif -%}
 </span>
