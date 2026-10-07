@@ -61,6 +61,7 @@ from financas.domain.models import (
     InstrumentType,
     InvestmentTracking,
     Liquidity,
+    PaymentMethod,
     RateMode,
     TransactionKind,
 )
@@ -165,6 +166,7 @@ class _Builder:
         *,
         recurring: bool = False,
         merchant: str | None = None,
+        method: PaymentMethod | None = None,
     ) -> None:
         if when is None:
             return
@@ -178,10 +180,19 @@ class _Builder:
                 self.cat[slug],
                 is_recurring=recurring,
                 merchant=merchant,
+                payment_method=method,
             )
         )
 
-    def earn(self, account_id: str, when: dt.date | None, cents: int, text: str, slug: str) -> None:
+    def earn(
+        self,
+        account_id: str,
+        when: dt.date | None,
+        cents: int,
+        text: str,
+        slug: str,
+        method: PaymentMethod | None = None,
+    ) -> None:
         if when is None:
             return
         RegisterTransaction(self.uow).execute(
@@ -193,6 +204,7 @@ class _Builder:
                 text,
                 self.cat[slug],
                 is_recurring=slug == "salary",
+                payment_method=method,
             )
         )
 
@@ -351,7 +363,14 @@ class _Builder:
         n = ym.month
         cancelled_gym = ym >= self.last_closed
         # --- income and fixed costs on the Banco do Brasil account
-        self.earn(self.bb_checking, self.at(ym, 1), 890_000, "Salário CLT", "salary")
+        self.earn(
+            self.bb_checking,
+            self.at(ym, 1),
+            890_000,
+            "Salário CLT",
+            "salary",
+            PaymentMethod.TRANSFER,  # a TED from the employer
+        )
         if n == 3:
             self.earn(
                 self.bb_checking,
@@ -359,6 +378,7 @@ class _Builder:
                 520_000,
                 "Participação nos lucros",
                 "other_income",
+                PaymentMethod.TRANSFER,
             )
         fixed = (  # (day, cents, description, category, merchant)
             (6, 235_000, "Aluguel", "home", "Imobiliária Central"),
@@ -375,6 +395,7 @@ class _Builder:
                 slug,
                 recurring=True,
                 merchant=place,
+                method=PaymentMethod.TRANSFER if text == "Aluguel" else PaymentMethod.BOLETO,
             )
         self.spend(
             self.bb_checking,
@@ -383,6 +404,7 @@ class _Builder:
             "Conta de luz",
             "home",
             merchant="Enel",
+            method=PaymentMethod.BOLETO,
         )
         for day, cents, text, slug, place in fixed[2:]:
             self.spend(
@@ -393,6 +415,7 @@ class _Builder:
                 slug,
                 recurring=True,
                 merchant=place,
+                method=PaymentMethod.BOLETO,
             )
         if not cancelled_gym:
             self.spend(
@@ -403,17 +426,32 @@ class _Builder:
                 "health",
                 recurring=True,
                 merchant="Smart Fit",
+                method=PaymentMethod.DEBIT,
             )
         for day in (3, 10, 17, 24):
             amount = self.money(17_000, 39_000)
             place = self.rng.choice(("Supermercado Pão de Açúcar", "Mercado Extra", "Atacadão"))
             self.spend(
-                self.bb_checking, self.at(ym, day), amount, place, "groceries", merchant=place
+                self.bb_checking,
+                self.at(ym, day),
+                amount,
+                place,
+                "groceries",
+                merchant=place,
+                method=PaymentMethod.DEBIT,
             )
         for day in self.rng.sample((4, 13, 21, 27), k=2):
             amount = self.money(3_500, 16_500)
             place = self.rng.choice(("Farmácia Pague Menos", "Drogasil", "Droga Raia"))
-            self.spend(self.bb_checking, self.at(ym, day), amount, place, "health", merchant=place)
+            self.spend(
+                self.bb_checking,
+                self.at(ym, day),
+                amount,
+                place,
+                "health",
+                merchant=place,
+                method=PaymentMethod.DEBIT,
+            )
         # --- own transfers and investments
         when = self.at(ym, 3)
         if when:
@@ -448,6 +486,7 @@ class _Builder:
             "Pix Barbearia",
             "services",
             merchant="Barbearia Estilo",
+            method=PaymentMethod.PIX,
         )
         self.spend(
             self.nu_checking,
@@ -456,6 +495,7 @@ class _Builder:
             "Pix Feira",
             "groceries",
             merchant="Feira Livre",
+            method=PaymentMethod.PIX,
         )
         self.spend(
             self.nu_checking,
@@ -464,6 +504,7 @@ class _Builder:
             "Pix Lanche",
             "food",
             merchant="Lanchonete do Bairro",
+            method=PaymentMethod.PIX,
         )
         # --- Nubank card
         for day in sorted(self.rng.sample(range(1, 28), k=5)):
@@ -674,6 +715,55 @@ class _Builder:
                     SplitItem("Casa e limpeza", self.cat["home"], 7_000),
                 ),
             )
+        )
+
+        # how it was paid (filter chips of /entries): a PIX split in two, a boleto, a debit
+        # purchase and a PIX received; the 3x itemized plan on a card is in ``_plans``. They stay
+        # inside the current month (Selection Mode: only this month can be merged or batch-deleted)
+        def this_month(days: int) -> dt.date:
+            return today - dt.timedelta(days=min(days, today.day - 1))
+
+        RegisterTransaction(self.uow).execute(
+            RegisterTransactionCommand(
+                self.nu_checking,
+                this_month(2),
+                _EXPENSE,
+                18_000,
+                "Feira de sábado",
+                None,
+                merchant="Feira Livre",
+                payment_method=PaymentMethod.PIX,
+                splits=(
+                    SplitItem("Hortifruti", self.cat["groceries"], 11_000),
+                    SplitItem("Açougue", self.cat["groceries"], 7_000),
+                ),
+            )
+        )
+        self.spend(
+            self.bb_checking,
+            this_month(5),
+            65_000,
+            "Condomínio Edifício Solar",
+            "home",
+            merchant="Condomínio Edifício Solar",
+            method=PaymentMethod.BOLETO,
+        )
+        self.spend(
+            self.bb_checking,
+            this_month(1),
+            3_250,
+            "Padaria Pão Quente",
+            "food",
+            merchant="Padaria Pão Quente",
+            method=PaymentMethod.DEBIT,
+        )
+        self.earn(
+            self.nu_checking,
+            this_month(4),
+            12_000,
+            "Pix recebido do rateio do churrasco",
+            "other_income",
+            PaymentMethod.PIX,
         )
         # two plain purchases on one card and one day: pick both and "Mesclar em um só lançamento"
         self.buy(

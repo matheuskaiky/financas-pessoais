@@ -327,8 +327,8 @@ def test_demo_summary_counts_the_showcase(project: Path, seeded_template: Path) 
                 dt.date.min, dt.date.max, include_refunded=True
             )
             assert (
-                len(work.transactions.splits_for(t.id for t in everything)) == 4
-            )  # the supermarket run and the three installments of the itemized plan
+                len(work.transactions.splits_for(t.id for t in everything)) == 5
+            )  # the supermarket run, the PIX split and the three installments of the itemized plan
             assert sum(1 for t in everything if t.is_refunded) == 1
     finally:
         c.close()
@@ -788,3 +788,42 @@ def test_the_committed_demo_database_is_synthetic_and_healthy() -> None:
         not (ROOT / "data" / "demo.db-wal").exists()
         or (ROOT / "data" / "demo.db-wal").stat().st_size == 0
     )
+
+
+def test_the_demo_shows_every_payment_method_and_the_filters_find_them(demo: Container) -> None:
+    """A PIX split in two items, a boleto, a debit purchase and card entries: the chips of
+    ``/entries`` give meaningful results in demo mode."""
+    with demo.uow as work:
+        everything = work.transactions.list_between(dt.date.min, dt.date.max, include_refunded=True)
+        by_description = {t.description: t for t in everything}
+        pix = by_description["Feira de sábado"]
+        items = work.transactions.splits_for([pix.id])[pix.id]
+    assert pix.payment_method is not None and pix.payment_method.value == "pix"
+    assert (pix.amount_cents, pix.category_id) == (-18_000, None)
+    assert sorted(i.amount_cents for i in items) == [7_000, 11_000]
+    boleto = by_description["Condomínio Edifício Solar"]
+    assert (boleto.amount_cents, str(boleto.payment_method)) == (-65_000, "boleto")
+    debit = by_description["Padaria Pão Quente"]
+    assert (debit.amount_cents, str(debit.payment_method)) == (-3_250, "debito")
+    methods = {str(t.payment_method) for t in everything}
+    assert {"pix", "debito", "boleto", "transferencia", "cartao_credito"} <= methods
+
+    client = TestClient(
+        create_app(demo), base_url="http://localhost", follow_redirects=False, headers=HEADERS
+    )
+    month = f"{TODAY:%Y-%m}"
+    for method, expected in (
+        ("pix", "Feira de sábado"),
+        ("debito", "Padaria Pão Quente"),
+        ("boleto", "Condomínio Edifício Solar"),
+        ("cartao_credito", "Feira orgânica"),
+    ):
+        page = client.get(f"/entries?month={month}&method={method}")
+        listed = page.text.split('id="lista"')[1].split("</section>")[0]
+        assert page.status_code == 200 and expected in listed, method
+    cards = (
+        client.get(f"/entries?month={month}&method=cartao_credito")
+        .text.split('id="lista"')[1]
+        .split("</section>")[0]
+    )
+    assert "Condomínio Edifício Solar" not in cards  # a bank entry is not a card entry
