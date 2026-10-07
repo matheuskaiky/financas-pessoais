@@ -107,6 +107,36 @@ input.remove();
 eye.click();
 await wait(100);
 check("the eye button toggles by delegation", !html.hasAttribute("data-privacy-mask"));
+// ---- hovering never reveals by default; the opt-in is explicit and persists ----
+FP.privacy.toggle(true);
+await wait(100);
+check("hover reveal is off by default", FP.privacy.get().reveal === false && !html.hasAttribute("data-privacy-reveal-hover") && FP.privacy.revealOnHover === false);
+// every :hover rule that un-blurs a private value is scoped to the opt-in attribute (read from the real CSSOM)
+const hoverRules = [];
+const walk = (rules) => { for (const r of rules) { if (r.selectorText === undefined && r.cssRules) walk(r.cssRules); else if (r.selectorText && /:hover/.test(r.selectorText) && /data-private/.test(r.selectorText) && /filter\s*:\s*none/.test(r.cssText)) hoverRules.push(r.selectorText); } };
+for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch (e) { /* a cross-origin sheet */ } }
+const hoverSelectors = hoverRules.flatMap((t) => t.split(","));
+const unscoped = hoverSelectors.filter((sel) => !sel.trim().startsWith('[data-privacy-reveal-hover="true"]'));
+check("every hover un-blur rule needs data-privacy-reveal-hover", hoverSelectors.length >= 20 && unscoped.length === 0, unscoped.slice(0, 2).join(" | ") + " of " + hoverSelectors.length);
+const blurPx = (el) => parseFloat((/blur\(([\d.]+)px\)/.exec(filterOf(el)) || [0, "0"])[1]);
+check("body-size values blur at 8px", blurPx(document.getElementById("plain")) === 8, filterOf(document.getElementById("plain")));
+check("large figures blur at 12px or more", blurPx(document.querySelector("#hero .currency-amount")) >= 12, filterOf(document.querySelector("#hero .currency-amount")));
+check("a blurred value cannot be selected", getComputedStyle(document.getElementById("plain")).userSelect === "none");
+FP.privacy.setReveal(true);
+await wait(100);
+check("opting in writes the attribute", html.getAttribute("data-privacy-reveal-hover") === "true" && FP.privacy.revealOnHover === true);
+check("the opt-in persists with the rest of the state", JSON.parse(localStorage.getItem("fp_privacy_settings")).reveal === true);
+check("the opt-in does not unmask anything by itself", /blur/.test(filterOf(document.getElementById("plain"))));
+frame.contentWindow.location.reload();
+await new Promise((r) => frame.addEventListener("load", r, { once: true }));
+await wait(100);
+check("the opt-in is applied before first paint too", frame.contentWindow.__revealAtHead === "true", frame.contentWindow.__revealAtHead);
+FP.privacy.reset();
+check("reset puts the hover back to off", FP.privacy.get().reveal === false && !html.hasAttribute("data-privacy-reveal-hover"));
+FP.privacy.setReveal(true);
+FP.privacy.setReveal(false);
+check("opting out removes the attribute", !html.hasAttribute("data-privacy-reveal-hover"));
+FP.privacy.toggle(false);
 localStorage.removeItem("fp_privacy_settings");
 
 document.getElementById("out").textContent = results.join("\n") + "\nDONE " + results.filter((x) => x.startsWith("FAIL")).length;

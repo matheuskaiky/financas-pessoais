@@ -1170,7 +1170,8 @@ class DonutChart extends Chart {
     });
     const center = h("div", { class: "fc-center" });
     this.cLabel = h("span", { class: "fc-center-label" });
-    this.cValue = h("span", { class: "fc-center-value" });
+    // the ring's total is a money value: it blurs with the "Extrato e lançamentos" group, like the rows beside it
+    this.cValue = h("span", { class: "fc-center-value", "data-private": "transactions", "data-private-size": "lg" });
     this.cSub = h("span", { class: "fc-center-sub" });
     center.append(this.cLabel, this.cValue, this.cSub);
     center.style.width = S - 2 * (SWH + 14) + "px";

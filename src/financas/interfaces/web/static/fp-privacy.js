@@ -23,8 +23,9 @@
  *   checkboxes     live: they apply and persist on change. Unchecking the last group while it is on turns it off.
  *   Concluir       closes the sheet (everything is already saved).        Restaurar padrão   re-selects the five groups; the on/off state
  *                  is left as it is, so the button can never reveal values by surprise.
- *   peek           mouse: CSS :hover (after a short intent delay). Keyboard: CSS :focus-visible. Touch / pen: press and hold ~350 ms
- *                  (sets data-peek="true" on the scope or the value; it ends on release, move or scroll).
+ *   peek           Keyboard: CSS :focus-visible. Touch / pen: press and hold ~350 ms (sets data-peek="true" on the scope or the value;
+ *                  it ends on release, move or scroll). Mouse: hovering a blurred value does NOT reveal it by default; the user can opt in
+ *                  with "Revelar valores temporariamente ao passar o cursor" (state.reveal, written to <html data-privacy-reveal-hover="true">).
  *   screen reader  a masked value is exposed as role="img" aria-label="Valor oculto" and gets its own name back when it is revealed.
  *   cross-tab      the `storage` event keeps other tabs in step; the back/forward cache is re-read on pageshow.
  *   events         document gets CustomEvent "fp:privacy" { detail: { on, mask, groups } } after every change.
@@ -56,7 +57,7 @@
   function defaults() {
     var g = {};
     GROUPS.forEach(function (k) { g[k] = true; });
-    return { v: VERSION, on: false, groups: g };
+    return { v: VERSION, on: false, reveal: false, groups: g };
   }
 
   /** Any value → a valid state. Unknown keys are dropped, missing or mistyped ones fall back to the default. Never throws. */
@@ -64,6 +65,7 @@
     var s = defaults();
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return s;
     if (typeof raw.on === 'boolean') s.on = raw.on;
+    if (typeof raw.reveal === 'boolean') s.reveal = raw.reveal;   // the hover opt-in: off unless the user turned it on
     var g = raw.groups;
     if (g && typeof g === 'object' && !Array.isArray(g)) {
       GROUPS.forEach(function (k) { if (typeof g[k] === 'boolean') s.groups[k] = g[k]; });
@@ -98,9 +100,16 @@
     return n;
   }
 
+  function withReveal(s, value) {
+    var n = normalize(s);
+    n.reveal = !!value;
+    return n;
+  }
+
   function restored(s) {
     var n = normalize(s);
     GROUPS.forEach(function (k) { n.groups[k] = true; });
+    n.reveal = false;       // back to the default: a hover never reveals (this can only hide more, never reveal by surprise)
     return n;
   }
 
@@ -168,7 +177,7 @@
     VERSION: VERSION,
     GROUPS: GROUPS,
     labels: LABELS,
-    logic: { defaults: defaults, normalize: normalize, parse: parse, maskList: maskList, isOn: isOn, toggled: toggled, withGroup: withGroup, restored: restored },
+    logic: { defaults: defaults, normalize: normalize, parse: parse, maskList: maskList, isOn: isOn, toggled: toggled, withGroup: withGroup, withReveal: withReveal, restored: restored },
     get: function () { return normalize(state); },
     isMasked: function (group) {
       var m = maskList(state);
@@ -180,6 +189,9 @@
       commit(next, isOn(next) ? LABELS.announceOn : LABELS.announceOff);
     },
     setGroup: function (group, value) { commit(withGroup(state, group, value)); },
+    /** The hover opt-in. Persisted with the rest of the state (localStorage `fp_privacy_settings`, field `reveal`). */
+    setReveal: function (value) { commit(withReveal(state, value)); },
+    get revealOnHover() { return !!state.reveal; },
     reset: function () { commit(restored(state), LABELS.announceReset); },
     openSettings: function (trigger) { if (view) view.open(trigger); },
     closeSettings: function () { if (view) view.close(); },
@@ -216,6 +228,9 @@
       var m = maskList(state).join(' ');
       if (m) { if (de.getAttribute('data-privacy-mask') !== m) de.setAttribute('data-privacy-mask', m); }
       else if (de.hasAttribute('data-privacy-mask')) de.removeAttribute('data-privacy-mask');
+      // the hover opt-in is its own attribute, so the CSS can scope the :hover rules to it
+      if (state.reveal) { if (de.getAttribute('data-privacy-reveal-hover') !== 'true') de.setAttribute('data-privacy-reveal-hover', 'true'); }
+      else if (de.hasAttribute('data-privacy-reveal-hover')) de.removeAttribute('data-privacy-reveal-hover');
     }
 
     function syncControls() {
@@ -229,6 +244,7 @@
         if (tip && tip.textContent !== label) tip.textContent = label;
       });
       each('[data-fp-privacy="master"]', function (b) { b.setAttribute('aria-checked', on ? 'true' : 'false'); });
+      each('input[data-fp-privacy-reveal]', function (i) { if (i.checked !== !!state.reveal) i.checked = !!state.reveal; });
       each('input[data-fp-privacy-group]', function (i) {
         var v = !!state.groups[i.getAttribute('data-fp-privacy-group')];
         if (i.checked !== v) i.checked = v;
@@ -373,6 +389,7 @@
     doc.addEventListener('change', function (e) {
       var t = e.target;
       if (t && t.matches && t.matches('input[data-fp-privacy-group]')) api.setGroup(t.getAttribute('data-fp-privacy-group'), t.checked);
+      else if (t && t.matches && t.matches('input[data-fp-privacy-reveal]')) api.setReveal(t.checked);
     });
 
     /* shortcut: P, no modifiers, never while typing */

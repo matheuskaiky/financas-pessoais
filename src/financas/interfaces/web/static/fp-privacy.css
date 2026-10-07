@@ -23,12 +23,12 @@
 .fp-priv-panel{box-sizing:border-box;color:var(--text-primary);background:linear-gradient(var(--surface-2),var(--surface-2)) var(--under-2);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border:1px solid var(--glass-line);border-radius:22px;box-shadow:var(--sh-3);font-family:var(--sans);font-variant-numeric:lining-nums tabular-nums;overflow:hidden}
 dialog.fp-priv-dialog{position:fixed;inset:0;margin:auto;padding:0;width:min(480px,calc(100vw - 32px));max-width:none;height:fit-content;max-height:min(calc(100dvh - 32px),780px)}
 dialog.fp-priv-dialog[open]{display:flex;flex-direction:column}
-dialog.fp-priv-dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%)}
-dialog.fp-priv-dialog{opacity:0;transform:translateY(14px) scale(.975);transition:opacity .2s ease,transform var(--d-ui) var(--sp-ui),overlay .2s allow-discrete,display .2s allow-discrete}
-dialog.fp-priv-dialog[open]{opacity:1;transform:none}
-dialog.fp-priv-dialog::backdrop{opacity:0;transition:opacity .2s ease,overlay .2s allow-discrete,display .2s allow-discrete}
+dialog.fp-priv-dialog::backdrop{background:var(--scrim);-webkit-backdrop-filter:var(--dlg-blur);backdrop-filter:var(--dlg-blur)}
+dialog.fp-priv-dialog{opacity:0;transform:translate3d(0,14px,0) scale(.975);transition:opacity var(--dlg-ms) var(--dlg-ease),transform var(--dlg-ms) var(--dlg-ease),overlay var(--dlg-ms) allow-discrete,display var(--dlg-ms) allow-discrete}
+dialog.fp-priv-dialog[open]{opacity:1;transform:translate3d(0,0,0)}
+dialog.fp-priv-dialog::backdrop{opacity:0;transition:opacity var(--dlg-ms) ease-out,overlay var(--dlg-ms) allow-discrete,display var(--dlg-ms) allow-discrete}
 dialog.fp-priv-dialog[open]::backdrop{opacity:1}
-@starting-style{dialog.fp-priv-dialog[open]{opacity:0;transform:translateY(14px) scale(.975)}dialog.fp-priv-dialog[open]::backdrop{opacity:0}}
+@starting-style{dialog.fp-priv-dialog[open]{opacity:0;transform:translate3d(0,14px,0) scale(.975)}dialog.fp-priv-dialog[open]::backdrop{opacity:0}}
 .fp-priv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:24px 14px 0 28px}
 .fp-priv-title{margin:0;font-family:var(--serif);font-size:26px;font-weight:400;letter-spacing:var(--track-title);line-height:1.15;color:var(--text-primary)}
 .fp-priv-sub{margin:8px 0 0;font-size:13.5px;line-height:1.5;color:var(--text-secondary);text-wrap:pretty}

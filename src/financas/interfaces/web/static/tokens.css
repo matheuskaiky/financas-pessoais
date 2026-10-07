@@ -108,7 +108,8 @@
  * PRIVACY MODE (opt-in, 100 % client-side; the default is every value crisp). Frosted blur masking: `filter: blur()`, never
  * placeholder characters. Controller: fp-privacy.js. Controls (eye, gear, settings sheet): fp-privacy.css. Tokens:
  *   --privacy-blur: blur(8px);               mask radius for body text; tesseract digit recall through it is 7 % at most up to 44 px
- *   --privacy-blur-lg: blur(max(8px, .3em)); radius that grows with the type: .display, .money--display, [data-private-size="lg"].
+ *   --privacy-blur-lg: blur(max(12px, .3em)); radius for the big figures (.display, .money--display, [data-private-size="lg"], .hero,
+ *                                            .fig, .card-face__amount, .fc-center-value, large odometers); it still grows with the type.
  *                                            An 84 px amount stays 96-97 % legible through blur(8px) and at 7 % or less through this one
  *   --privacy-peek-opacity: 0.15;            opacity a value starts from when it un-blurs on a peek (180 ms micro-feedback)
  *   --privacy-ms: 180ms;  --privacy-intent: 120ms;   transition length · hover-intent delay before a peek starts
@@ -116,7 +117,8 @@
  *            first paint). Groups: networth · accounts · investments · cards · transactions. Absent or empty = nothing masked.
  *   target   data-private="<group>" on the value, an inline element (never a <td> or a <tr>). A `.money` keeps its currency
  *            symbol crisp in --text-secondary and blurs sign + amount; any other element blurs as a whole. Do not nest targets.
- *   peek     :hover on the value or on its nearest [data-peek-scope] (CSS only, after --privacy-intent) · keyboard focus
+ *   peek     :hover on the value or on its nearest [data-peek-scope] ONLY with <html data-privacy-reveal-hover="true"> (the user's opt-in,
+ *            off by default; CSS only, after --privacy-intent) · keyboard focus
  *            (:focus-visible on the value, :has(:focus-visible) on the scope) · tap-and-hold (fp-privacy.js sets data-peek="true").
  *   layout   `filter` does not touch the layout box: CLS = 0, the tabular-nums advance widths, the line height and the symbol
  *            position are identical masked and unmasked. The blurred value keeps the exact pixel box of the crisp one.
@@ -128,6 +130,7 @@ color-scheme:light;
 --ease:cubic-bezier(.22,1,.36,1);
 --sp-press:cubic-bezier(.2,.9,.3,1.02);--d-press:310ms;
 --sp-ui:cubic-bezier(.22,1,.36,1);--d-ui:380ms;
+--dlg-ease:cubic-bezier(.16,1,.3,1);--dlg-ms:180ms;--dlg-blur:blur(8px);
 --sp-soft:cubic-bezier(.22,1,.36,1);--d-soft:650ms;
 --sp-pop:cubic-bezier(.34,1.4,.64,1);--d-pop:340ms;
 --sp-roll:cubic-bezier(.16,1,.3,1);--d-roll:900ms;
@@ -213,7 +216,10 @@ section[style*="border-radius: 16px"]:not([style*="border-bottom: 0"]){box-shado
 @keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
 @keyframes ripple{0%{box-shadow:0 0 0 0 rgba(58,154,116,.5)}100%{box-shadow:0 0 0 9px rgba(58,154,116,0)}}
 @keyframes caret{0%,49%{opacity:1}50%,100%{opacity:0}}
-@keyframes dialin{from{opacity:0;transform:translateY(16px) scale(.97);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+/* dialin animates only what the compositor can move (opacity, transform): a `filter` in a keyframe repaints the dialog on every frame.
+   The frosted look comes from a STATIC backdrop-filter on ::backdrop; only that overlay's opacity is animated. */
+@keyframes dialin{from{opacity:0;transform:translate3d(0,14px,0) scale(.975)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes dlg-scrim{from{opacity:0}to{opacity:1}}
 @keyframes sweep{from{transform:translateX(-130%)}to{transform:translateX(230%)}}
 @keyframes od-roll{from{transform:translateY(0)}}
 .rise{animation:rise var(--d-soft) var(--sp-soft) backwards}
@@ -408,13 +414,13 @@ p,li,dd,figcaption,.pre{text-wrap:pretty}
 /* privacy mode (opt-in): state = data-privacy-mask="<groups>" on any ancestor · target = data-private="<group>" · peek = hover | focus | [data-peek="true"] on the value or on its [data-peek-scope]. See the PRIVACY MODE paragraph above. */
 :root{
   --privacy-blur: blur(8px);
-  --privacy-blur-lg: blur(max(8px, .3em));
+  --privacy-blur-lg: blur(max(12px, .3em));
   --privacy-peek-opacity: 0.15;
   --privacy-ms: 180ms;
   --privacy-intent: 120ms;
   --privacy-filter: var(--privacy-blur);
 }
-.display,.money--display,[data-private-size="lg"]{--privacy-filter:var(--privacy-blur-lg)}
+.display,.money--display,[data-private-size="lg"],.hero,.hero-balance,.fig,.card-face__amount,.fc-center-value,.review-amount,.od:not(.od-sm):not(.od-md){--privacy-filter:var(--privacy-blur-lg)}
 [data-privacy-mask~="networth"] [data-private="networth"]:not(.money),
 [data-privacy-mask~="networth"] .money[data-private="networth"]>:not(.currency-symbol),
 [data-privacy-mask~="accounts"] [data-private="accounts"]:not(.money),
@@ -435,29 +441,36 @@ p,li,dd,figcaption,.pre{text-wrap:pretty}
 [data-privacy-mask~="investments"] .money[data-private="investments"]>.currency-symbol,
 [data-privacy-mask~="cards"] .money[data-private="cards"]>.currency-symbol,
 [data-privacy-mask~="transactions"] .money[data-private="transactions"]>.currency-symbol{position:relative;z-index:1;color:var(--text-secondary);opacity:1}
+/* The donut ring (.fc-ring) and its centre figure: SVG <text> nodes and any [data-private] inside the ring box blur like every
+   other value of the group (a filter on an SVG text keeps its box, so the layout does not move). */
+[data-privacy-mask~="transactions"] .fc-ring text,
+[data-privacy-mask~="transactions"] .fc-ring-box [data-private]:not(.money){filter:var(--privacy-blur-lg);-webkit-user-select:none;user-select:none}
 @keyframes fp-peek-in{from{opacity:var(--privacy-peek-opacity)}to{opacity:1}}
 @keyframes fp-peek-hover{0%{opacity:1}40%{opacity:var(--privacy-peek-opacity)}100%{opacity:1}}
+/* Hovering a blurred value does NOT reveal it by default: only when the user turned on "Revelar valores
+   temporariamente ao passar o cursor" in the privacy sheet (fp-privacy.js writes <html data-privacy-reveal-hover="true"> and
+   keeps the choice in localStorage). Keyboard focus and press-and-hold (touch) peeks below are unconditional. */
 @media (hover:hover){
-[data-privacy-mask~="networth"] [data-private="networth"]:hover:not(.money),
-[data-privacy-mask~="networth"] .money[data-private="networth"]:hover>:not(.currency-symbol),
-[data-privacy-mask~="networth"] [data-peek-scope]:hover [data-private="networth"]:not(.money),
-[data-privacy-mask~="networth"] [data-peek-scope]:hover .money[data-private="networth"]>:not(.currency-symbol),
-[data-privacy-mask~="accounts"] [data-private="accounts"]:hover:not(.money),
-[data-privacy-mask~="accounts"] .money[data-private="accounts"]:hover>:not(.currency-symbol),
-[data-privacy-mask~="accounts"] [data-peek-scope]:hover [data-private="accounts"]:not(.money),
-[data-privacy-mask~="accounts"] [data-peek-scope]:hover .money[data-private="accounts"]>:not(.currency-symbol),
-[data-privacy-mask~="investments"] [data-private="investments"]:hover:not(.money),
-[data-privacy-mask~="investments"] .money[data-private="investments"]:hover>:not(.currency-symbol),
-[data-privacy-mask~="investments"] [data-peek-scope]:hover [data-private="investments"]:not(.money),
-[data-privacy-mask~="investments"] [data-peek-scope]:hover .money[data-private="investments"]>:not(.currency-symbol),
-[data-privacy-mask~="cards"] [data-private="cards"]:hover:not(.money),
-[data-privacy-mask~="cards"] .money[data-private="cards"]:hover>:not(.currency-symbol),
-[data-privacy-mask~="cards"] [data-peek-scope]:hover [data-private="cards"]:not(.money),
-[data-privacy-mask~="cards"] [data-peek-scope]:hover .money[data-private="cards"]>:not(.currency-symbol),
-[data-privacy-mask~="transactions"] [data-private="transactions"]:hover:not(.money),
-[data-privacy-mask~="transactions"] .money[data-private="transactions"]:hover>:not(.currency-symbol),
-[data-privacy-mask~="transactions"] [data-peek-scope]:hover [data-private="transactions"]:not(.money),
-[data-privacy-mask~="transactions"] [data-peek-scope]:hover .money[data-private="transactions"]>:not(.currency-symbol){filter:none;-webkit-user-select:text;user-select:text;transition-delay:var(--privacy-intent);animation:fp-peek-hover calc(var(--privacy-intent) + var(--privacy-ms)) ease-in-out}
+[data-privacy-reveal-hover="true"][data-privacy-mask~="networth"] [data-private="networth"]:hover:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="networth"] .money[data-private="networth"]:hover>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="networth"] [data-peek-scope]:hover [data-private="networth"]:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="networth"] [data-peek-scope]:hover .money[data-private="networth"]>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="accounts"] [data-private="accounts"]:hover:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="accounts"] .money[data-private="accounts"]:hover>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="accounts"] [data-peek-scope]:hover [data-private="accounts"]:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="accounts"] [data-peek-scope]:hover .money[data-private="accounts"]>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="investments"] [data-private="investments"]:hover:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="investments"] .money[data-private="investments"]:hover>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="investments"] [data-peek-scope]:hover [data-private="investments"]:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="investments"] [data-peek-scope]:hover .money[data-private="investments"]>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="cards"] [data-private="cards"]:hover:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="cards"] .money[data-private="cards"]:hover>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="cards"] [data-peek-scope]:hover [data-private="cards"]:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="cards"] [data-peek-scope]:hover .money[data-private="cards"]>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="transactions"] [data-private="transactions"]:hover:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="transactions"] .money[data-private="transactions"]:hover>:not(.currency-symbol),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="transactions"] [data-peek-scope]:hover [data-private="transactions"]:not(.money),
+[data-privacy-reveal-hover="true"][data-privacy-mask~="transactions"] [data-peek-scope]:hover .money[data-private="transactions"]>:not(.currency-symbol){filter:none;-webkit-user-select:text;user-select:text;transition-delay:var(--privacy-intent);animation:fp-peek-hover calc(var(--privacy-intent) + var(--privacy-ms)) ease-in-out}
 }
 [data-privacy-mask~="networth"] [data-private="networth"][data-peek="true"]:not(.money),
 [data-privacy-mask~="networth"] .money[data-private="networth"][data-peek="true"]>:not(.currency-symbol),
