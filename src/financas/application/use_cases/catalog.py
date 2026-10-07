@@ -19,7 +19,7 @@ from financas.domain.models import (
 )
 from financas.domain.ports import ImageStore, UnitOfWork, Work
 from financas.domain.rules import normalize_color, validate_card_settings, validate_group_kind
-from financas.domain.services.text import clean_text, slugify
+from financas.domain.services.text import clean_text, normalize_search, slugify
 
 
 def _name(text: str) -> str:
@@ -213,6 +213,31 @@ class CreateCategory:
             uow.categories.add(category)
             uow.commit()
         return category
+
+
+class RenameCategory:
+    """Change a category's display name; the slug (its stable key) never changes (rule 7).
+
+    Names are unique across all categories, ignoring case and accents.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, category_id: str, new_name: str) -> Category:
+        name = _name(new_name)
+        key = normalize_search(name)
+        with self._uow as uow:
+            category = found(uow.categories.get(category_id), "category")
+            if any(
+                other.id != category.id and normalize_search(other.name) == key
+                for other in uow.categories.list_all()
+            ):
+                raise DomainError("DUPLICATE_NAME")
+            renamed = replace(category, name=name)
+            uow.categories.update(renamed)
+            uow.commit()
+        return renamed
 
 
 class AppearanceTarget(StrEnum):

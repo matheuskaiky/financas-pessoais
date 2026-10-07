@@ -146,7 +146,7 @@ class Transaction:
     account_id: str
     posted_on: dt.date
     kind: TransactionKind
-    category_id: str
+    category_id: str | None  # ``None`` only on an itemized expense: its items carry the categories
     amount_cents: int
     description: str
     description_search: str
@@ -157,6 +157,23 @@ class Transaction:
     plan_id: str | None = None
     installment_number: int | None = None
     holding_id: str | None = None  # investment legs on a holdings-level account
+    is_refunded: bool = False  # an expense that was given back: kept as a record, counted nowhere
+    merchant: str | None = None  # where the money went ("Amazon", "Posto Ipiranga"), optional
+
+
+@dataclass(frozen=True)
+class TransactionSplit:
+    """One item of an itemized expense: its own description and category, a positive amount.
+
+    The items of an expense add up to its amount. The statement, the balance and the limit see
+    only the parent entry; spending by category sees the items.
+    """
+
+    id: str
+    transaction_id: str
+    description: str
+    category_id: str
+    amount_cents: int
 
 
 @dataclass(frozen=True)

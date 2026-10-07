@@ -25,6 +25,7 @@ from financas.domain.models import (
     Statement,
     Transaction,
     TransactionKind,
+    TransactionSplit,
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
@@ -406,6 +407,29 @@ def test_update_amount_and_set_statement(uow: UnitOfWork) -> None:
         assert got and (got.amount_cents, got.statement_id) == (-750, st2.id)
 
 
+def test_transaction_update_replaces_every_editable_field(uow: UnitOfWork) -> None:
+    _, acc, cat = populate(uow)
+    row = tx(1, acc, cat, D(2026, 8, 3), -500)
+    with uow as work:
+        work.transactions.add_many([row])
+        work.commit()
+    changed = Transaction(
+        **{
+            **vars(row),
+            "posted_on": D(2026, 8, 9),
+            "amount_cents": -900,
+            "description": "Café São João",
+            "description_search": "cafe sao joao",
+            "notes": "ajustado",
+        }
+    )
+    with uow as work:
+        work.transactions.update(changed)
+        work.commit()
+    with uow as work:
+        assert work.transactions.get(row.id) == changed
+
+
 def test_plan_delete(uow: UnitOfWork) -> None:
     inst, _, cat = populate(uow)
     k = card(inst)
@@ -614,3 +638,139 @@ def test_units_of_work_do_not_share_state_between_threads_or_nested_blocks(uow: 
         with uow as inner:
             assert inner.institutions.get_by_slug("bb") is not None
         assert outer.institutions.get_by_slug("bb") is not None
+
+
+def test_refunded_entries_are_left_out_unless_asked_for(uow: UnitOfWork) -> None:
+    inst, acc, cat = populate(uow)
+    k = card(inst)
+    st = statement(k, "2026-08", 1)
+    plan = InstallmentPlan(id="p".ljust(32, "0"), account_id=k.id, description="Fone",
+                           category_id=cat.id, installment_total=2)  # fmt: skip
+    kept = tx(1, k, cat, D(2026, 8, 3), -500, statement_id=st.id, plan_id=plan.id,
+              installment_number=1)  # fmt: skip
+    gone = Transaction(
+        **{
+            **vars(
+                tx(
+                    2,
+                    k,
+                    cat,
+                    D(2026, 8, 4),
+                    -700,
+                    statement_id=st.id,
+                    plan_id=plan.id,
+                    installment_number=2,
+                )
+            ),
+            "is_refunded": True,
+        }
+    )
+    on_checking = Transaction(**{**vars(tx(3, acc, cat, D(2026, 8, 5), -900)), "is_refunded": True})
+    with uow as work:
+        work.accounts.add(k)
+        work.statements.add(st)
+        work.plans.add(plan)
+        work.transactions.add_many([kept, gone, on_checking])
+        work.commit()
+    with uow as work:
+        t = work.transactions
+        assert t.get(gone.id) == gone and t.get(gone.id).is_refunded  # type: ignore[union-attr]
+        assert [x.id for x in t.list_by_statement(st.id)] == [kept.id]
+        assert {x.id for x in t.list_by_statement(st.id, include_refunded=True)} == {
+            kept.id,
+            gone.id,
+        }
+        assert [x.id for x in t.list_by_plan(plan.id)] == [kept.id]
+        assert len(t.list_by_plan(plan.id, include_refunded=True)) == 2
+        assert [x.id for x in t.list_by_account(k.id)] == [kept.id]
+        assert len(t.list_by_account(acc.id)) == 0
+        assert len(t.list_by_account(acc.id, include_refunded=True)) == 1
+        window = (D(2026, 8, 1), D(2026, 8, 31))
+        assert {x.id for x in t.list_between(*window)} == {kept.id}
+        assert len(t.list_between(*window, include_refunded=True)) == 3
+        assert {x.id for x in t.list_for_competence(*window)} == {kept.id}
+        assert len(t.list_for_competence(*window, include_refunded=True)) == 3
+        assert t.movements(acc.id) == []  # a refunded expense nets to zero on the account
+        t.update(Transaction(**{**vars(gone), "is_refunded": False}))
+        work.commit()
+    with uow as work:
+        assert len(work.transactions.list_by_statement(st.id)) == 2
+
+
+def test_splits_round_trip_replace_and_cascade_on_delete(uow: UnitOfWork) -> None:
+    _, acc, cat = populate(uow)
+    parent = tx(1, acc, cat, D(2026, 8, 3), -1_000)
+    other = tx(2, acc, cat, D(2026, 8, 4), -500)
+
+    def item(n: int, owner: Transaction, cents: int) -> TransactionSplit:
+        return TransactionSplit(f"s{n}".ljust(32, "0"), owner.id, f"item {n}", cat.id, cents)
+
+    first = [item(1, parent, 600), item(2, parent, 400)]
+    with uow as work:
+        work.transactions.add_many([parent, other])
+        work.transactions.set_splits(parent.id, first)
+        work.commit()
+    with uow as work:
+        found = work.transactions.splits_for([parent.id, other.id])
+        assert found == {parent.id: first}  # in the order they were saved; none for the other
+        work.transactions.set_splits(parent.id, [item(3, parent, 1_000)])  # replaces
+        work.commit()
+    with uow as work:
+        assert [s.id for s in work.transactions.splits_for([parent.id])[parent.id]] == [
+            item(3, parent, 1_000).id
+        ]
+        work.transactions.delete(parent.id)  # the items go with it (ON DELETE CASCADE)
+        work.commit()
+    with uow as work:
+        assert work.transactions.splits_for([parent.id, other.id]) == {}
+        assert work.transactions.get(other.id) == other
+
+
+def test_merchant_is_stored_updated_and_counted(uow: UnitOfWork) -> None:
+    _, acc, cat = populate(uow)
+    first = tx(1, acc, cat, D(2026, 8, 3), -500, merchant="Amazon")
+    second = tx(2, acc, cat, D(2026, 8, 4), -700, merchant="Amazon")
+    third = tx(3, acc, cat, D(2026, 8, 5), -900, merchant="Uber")
+    bare = tx(4, acc, cat, D(2026, 8, 6), -100)
+    with uow as work:
+        work.transactions.add_many([first, second, third, bare])
+        work.commit()
+    with uow as work:
+        assert work.transactions.get(first.id).merchant == "Amazon"  # type: ignore[union-attr]
+        assert work.transactions.get(bare.id).merchant is None  # type: ignore[union-attr]
+        assert sorted(work.transactions.merchant_counts()) == [("Amazon", 2), ("Uber", 1)]
+        assert work.transactions.merchant_counts("another account") == []
+        assert sorted(work.transactions.merchant_counts(acc.id)) == [("Amazon", 2), ("Uber", 1)]
+        work.transactions.update(Transaction(**{**vars(third), "merchant": None}))
+        work.commit()
+    with uow as work:
+        assert work.transactions.merchant_counts() == [("Amazon", 2)]
+
+
+def test_pending_review_counts_unmerchanted_or_uncategorized_expenses(uow: UnitOfWork) -> None:
+    _, acc, cat = populate(uow)
+    uncategorized = Category(
+        id="c-unc".ljust(32, "0"),
+        slug="uncategorized",
+        name="Não categorizado",
+        group=CategoryGroup.REVIEW,
+        kind=CategoryKind.EXPENSE,
+    )
+    pending = [
+        tx(1, acc, cat, D(2026, 8, 1), -100),  # no merchant
+        tx(2, acc, cat, D(2026, 8, 2), -100, merchant=""),  # an empty merchant is none
+        tx(3, acc, uncategorized, D(2026, 8, 3), -100, merchant="Amazon"),  # uncategorized
+    ]
+    done = [
+        tx(4, acc, cat, D(2026, 8, 4), -100, merchant="Amazon"),
+        Transaction(**{**vars(tx(5, acc, cat, D(2026, 8, 5), -100)), "is_refunded": True}),
+        tx(6, acc, cat, D(2026, 8, 6), 500, kind=TransactionKind.INCOME),
+        tx(7, acc, cat, D(2026, 8, 7), -100, kind=TransactionKind.TRANSFER, transfer_id="x" * 32),
+    ]
+    with uow as work:
+        work.categories.add(uncategorized)
+        work.transactions.add_many([*pending, *done])
+        work.commit()
+    with uow as work:
+        assert work.transactions.count_pending_review(uncategorized.id) == 3
+        assert work.transactions.count_pending_review(None) == 2  # without the category rule

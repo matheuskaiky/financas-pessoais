@@ -4,6 +4,8 @@ import pytest
 
 from financas.domain.errors import DomainError
 from financas.domain.models import CategoryKind, TransactionKind
+from financas.domain.services.countdown import Countdown, CountdownKind
+from financas.interfaces import messages
 from financas.interfaces.messages import (
     CATEGORY_KIND_LABELS,
     TRANSACTION_KIND_LABELS,
@@ -68,3 +70,29 @@ def test_statement_label_shows_closing_and_due_dates_together() -> None:
 
     st = Statement("s", "a", YearMonth(2026, 7), dt.date(2026, 7, 25), dt.date(2026, 8, 5))
     assert statement_label(st) == "Fatura jul/2026 · fecha 25/07 · vence 05/08"
+
+
+def test_card_countdown_sentences() -> None:
+    def c(kind: CountdownKind, days: int = 0) -> Countdown:
+        return Countdown(kind, days)
+
+    assert messages.closing_countdown(c(CountdownKind.TODAY)) == "Fecha hoje"
+    assert messages.closing_countdown(c(CountdownKind.TOMORROW)) == "Fecha amanhã"
+    assert messages.closing_countdown(c(CountdownKind.IN_DAYS, 4)) == "Fecha em 4 dias"
+    assert messages.closing_countdown(c(CountdownKind.PAST, 2)) == "Fechada"
+    assert messages.due_countdown(c(CountdownKind.TODAY)) == "Vence hoje"
+    assert messages.due_countdown(c(CountdownKind.TOMORROW)) == "Vence amanhã"
+    assert messages.due_countdown(c(CountdownKind.IN_DAYS, 11)) == "Vence em 11 dias"
+    assert messages.due_countdown(c(CountdownKind.PAST, 3)) == "Venceu há 3 dias"
+    assert messages.due_countdown(c(CountdownKind.PAST, 1)) == "Venceu há 1 dia"
+
+
+def test_split_mismatch_sentence_says_remaining_or_exceeded() -> None:
+    short = DomainError("SPLIT_SUM_MISMATCH", remaining_cents=7_000)
+    over = DomainError("SPLIT_SUM_MISMATCH", remaining_cents=-28_000)
+    assert messages.render_error(short) == (
+        "Os itens precisam somar o valor do lançamento: restam R$ 70,00."
+    )
+    assert messages.render_error(over) == (
+        "Os itens precisam somar o valor do lançamento: ultrapassou R$ 280,00."
+    )

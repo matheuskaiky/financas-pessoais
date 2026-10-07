@@ -15,7 +15,7 @@ Definitions (each one has a test):
 """
 
 import datetime as dt
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from financas.domain.models import (
@@ -24,9 +24,11 @@ from financas.domain.models import (
     CategoryGroup,
     Transaction,
     TransactionKind,
+    TransactionSplit,
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import UnitOfWork
+from financas.domain.services.splits import allocations, split_ids
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ def summarize(
     period: Period,
     statement_months: Mapping[str, YearMonth] | None = None,
     investment_account_ids: Collection[str] = (),
+    splits: Mapping[str, Sequence[TransactionSplit]] | None = None,
 ) -> Summary:
     income = expenses = refunds = recurring = contributions = 0
     per_category: dict[str, list[int]] = {}
@@ -110,9 +113,11 @@ def summarize(
                 expenses += spent
                 if t.is_recurring:
                     recurring += spent
-                row = per_category.setdefault(t.category_id, [0, 0])
-                row[0] += spent
-                row[1] += 1
+                # an itemized expense counts for each item's category; the totals stay whole
+                for category_id, cents in allocations(t, splits or {}):
+                    row = per_category.setdefault(category_id, [0, 0])
+                    row[0] -= cents
+                    row[1] += 1
         count += 1
 
     def share(total: int) -> float | None:
@@ -162,11 +167,12 @@ class GetSummary:
         with self._uow as uow:
             categories = {c.id: c for c in uow.categories.list_all()}
             transactions = uow.transactions.list_for_competence(period.start, period.end)
+            splits = uow.transactions.splits_for(split_ids(transactions))
             months = {s.id: s.month for s in uow.statements.list_all()}
             investments = {
                 a.id for a in uow.accounts.list_all() if a.kind is AccountKind.INVESTMENT
             }
-        return summarize(transactions, categories, period, months, investments)
+        return summarize(transactions, categories, period, months, investments, splits)
 
     def months_of_year(self, year: int) -> list[Summary]:
         """Twelve monthly summaries (for the year view and charts)."""
@@ -174,13 +180,19 @@ class GetSummary:
             categories = {c.id: c for c in uow.categories.list_all()}
             year_period = Period.year(year)
             transactions = uow.transactions.list_for_competence(year_period.start, year_period.end)
+            splits = uow.transactions.splits_for(split_ids(transactions))
             months = {s.id: s.month for s in uow.statements.list_all()}
             investments = {
                 a.id for a in uow.accounts.list_all() if a.kind is AccountKind.INVESTMENT
             }
         return [
             summarize(
-                transactions, categories, Period.month(YearMonth(year, m)), months, investments
+                transactions,
+                categories,
+                Period.month(YearMonth(year, m)),
+                months,
+                investments,
+                splits,
             )
             for m in range(1, 13)
         ]

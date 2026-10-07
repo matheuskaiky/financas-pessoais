@@ -42,6 +42,16 @@ def format_day_label(day: dt.date) -> str:
     return f"{WEEKDAY_NAMES[day.weekday()]}, {day.day} de {MONTH_NAMES[day.month - 1]}"
 
 
+def format_day_header(day: dt.date, today: dt.date) -> str:
+    """``Hoje · 06 de outubro`` · ``Ontem · 05 de outubro`` · ``04 de outubro · Domingo``."""
+    date_part = f"{day.day:02d} de {MONTH_NAMES[day.month - 1]}"
+    if day == today:
+        return f"Hoje · {date_part}"
+    if day == today - dt.timedelta(days=1):
+        return f"Ontem · {date_part}"
+    return f"{date_part} · {WEEKDAY_NAMES[day.weekday()].capitalize()}"
+
+
 def format_decimal_comma(cents: int) -> str:
     """``231846`` → ``2318,46``: the value for an input field (no currency symbol)."""
     whole, frac = divmod(abs(cents), 100)

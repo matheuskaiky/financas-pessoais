@@ -220,6 +220,11 @@ class TransactionRow(Base):
             " OR (kind = 'transfer' AND amount_cents <> 0)",
             name="sign_matches_kind",
         ),
+        sa.CheckConstraint("is_refunded = 0 OR kind = 'expense'", name="refunded_only_on_expenses"),
+        # only an itemized expense has no category of its own: its items carry them (9.10)
+        sa.CheckConstraint(
+            "category_id IS NOT NULL OR kind = 'expense'", name="category_required_unless_itemized"
+        ),
         sa.Index("ix_transactions_account_id_posted_on", "account_id", "posted_on"),
         sa.Index("ix_transactions_description_search_kind", "description_search", "kind"),
     )
@@ -228,11 +233,13 @@ class TransactionRow(Base):
     account_id: Mapped[str] = mapped_column(sa.ForeignKey("accounts.id"))
     posted_on: Mapped[dt.date] = mapped_column(sa.Date, index=True)
     kind: Mapped[TransactionKind] = mapped_column(enum_column(TransactionKind, "transaction_kind"))
-    category_id: Mapped[str] = mapped_column(sa.ForeignKey("categories.id"))
+    category_id: Mapped[str | None] = mapped_column(sa.ForeignKey("categories.id"))
     amount_cents: Mapped[int] = mapped_column(sa.BigInteger)
     description: Mapped[str] = mapped_column(sa.String(300))
     description_search: Mapped[str] = mapped_column(sa.String(300))
     is_recurring: Mapped[bool] = mapped_column(default=False)
+    is_refunded: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    merchant: Mapped[str | None] = mapped_column(sa.String(120), index=True)
     transfer_id: Mapped[str | None] = mapped_column(sa.String(32), index=True)
     notes: Mapped[str | None] = mapped_column(sa.Text)
     statement_id: Mapped[str | None] = mapped_column(sa.ForeignKey("statements.id"), index=True)
@@ -241,6 +248,19 @@ class TransactionRow(Base):
     holding_id: Mapped[str | None] = mapped_column(
         sa.ForeignKey("investment_holdings.id"), index=True
     )
+
+
+class TransactionSplitRow(Base):
+    __tablename__ = "transaction_splits"
+    __table_args__ = (sa.CheckConstraint("amount_cents > 0", name="amount_positive"),)
+
+    id: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(
+        sa.ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    description: Mapped[str] = mapped_column(sa.String(300))
+    category_id: Mapped[str] = mapped_column(sa.ForeignKey("categories.id"))
+    amount_cents: Mapped[int] = mapped_column(sa.BigInteger)
 
 
 class BalanceAnchorRow(Base):

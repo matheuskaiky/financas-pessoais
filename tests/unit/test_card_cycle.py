@@ -16,6 +16,7 @@ from financas.domain.services.card_cycle import (
     last_day_in_statement,
     statement_dates,
 )
+from financas.domain.services.countdown import Countdown, CountdownKind, countdown
 
 D = dt.date
 YM = YearMonth
@@ -243,3 +244,22 @@ def test_invalid_days_before_due(days: int) -> None:
     with pytest.raises(DomainError) as exc:
         statement_dates(YM(2026, 7), 5, days)
     assert exc.value.code == "INVALID_DAYS_BEFORE_DUE"
+
+
+# --- day counts (card face) ---
+
+
+@pytest.mark.parametrize(
+    ("target", "kind", "days"),
+    [
+        (dt.date(2026, 7, 25), CountdownKind.TODAY, 0),
+        (dt.date(2026, 7, 26), CountdownKind.TOMORROW, 0),
+        (dt.date(2026, 7, 27), CountdownKind.IN_DAYS, 2),
+        (dt.date(2026, 7, 30), CountdownKind.IN_DAYS, 5),
+        (dt.date(2026, 7, 24), CountdownKind.PAST, 1),
+        (dt.date(2026, 7, 1), CountdownKind.PAST, 24),
+        (dt.date(2027, 1, 5), CountdownKind.IN_DAYS, 164),  # across a year end
+    ],
+)
+def test_countdown_codes(target: dt.date, kind: CountdownKind, days: int) -> None:
+    assert countdown(target, dt.date(2026, 7, 25)) == Countdown(kind, days)

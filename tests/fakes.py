@@ -18,6 +18,7 @@ from financas.domain.models import (
     Statement,
     Transaction,
     TransactionKind,
+    TransactionSplit,
 )
 from financas.domain.money import YearMonth
 from financas.domain.services.images import detect_image_type
@@ -91,10 +92,32 @@ class MemoryCategories:
         return list(self.items.values())
 
 
+class MemorySplits:
+    """The items of itemized expenses, by parent id (its own ``items`` so the unit of work can
+    snapshot and restore it like every repository)."""
+
+    def __init__(self) -> None:
+        self.items: dict[str, list[TransactionSplit]] = {}
+
+
 class MemoryTransactions:
-    def __init__(self, statements: "MemoryStatements") -> None:
+    def __init__(self, statements: "MemoryStatements", splits: MemorySplits | None = None) -> None:
         self.items: dict[str, Transaction] = {}
         self.statements = statements
+        self.split_store = splits or MemorySplits()
+
+    def set_splits(self, transaction_id: str, splits: Sequence[TransactionSplit]) -> None:
+        if splits:
+            self.split_store.items[transaction_id] = list(splits)
+        else:
+            self.split_store.items.pop(transaction_id, None)
+
+    def splits_for(self, transaction_ids: Iterable[str]) -> dict[str, list[TransactionSplit]]:
+        return {
+            i: list(self.split_store.items[i])
+            for i in transaction_ids
+            if i in self.split_store.items
+        }
 
     def add_many(self, transactions: Sequence[Transaction]) -> None:
         for transaction in transactions:
@@ -105,26 +128,37 @@ class MemoryTransactions:
 
     def delete(self, transaction_id: str) -> None:
         self.items.pop(transaction_id, None)
+        self.split_store.items.pop(transaction_id, None)  # ON DELETE CASCADE
 
     def list_by_transfer(self, transfer_id: str) -> list[Transaction]:
         return [t for t in self.items.values() if t.transfer_id == transfer_id]
 
     def list_between(
-        self, start: dt.date, end: dt.date, account_id: str | None = None
+        self,
+        start: dt.date,
+        end: dt.date,
+        account_id: str | None = None,
+        include_refunded: bool = False,
     ) -> list[Transaction]:
         rows = [
             (n, t)
             for n, t in enumerate(self.items.values())
-            if start <= t.posted_on <= end and (account_id is None or t.account_id == account_id)
+            if start <= t.posted_on <= end
+            and (account_id is None or t.account_id == account_id)
+            and (include_refunded or not t.is_refunded)
         ]
         rows.sort(key=lambda r: (r[1].posted_on, r[0]), reverse=True)
         return [t for _, t in rows]
 
-    def list_for_competence(self, start: dt.date, end: dt.date) -> list[Transaction]:
+    def list_for_competence(
+        self, start: dt.date, end: dt.date, include_refunded: bool = False
+    ) -> list[Transaction]:
         months = {s.id: s.month for s in self.statements.items.values()}
         first, last = YearMonth.from_date(start), YearMonth.from_date(end)
         rows = []
         for n, t in enumerate(self.items.values()):
+            if t.is_refunded and not include_refunded:
+                continue
             if t.statement_id is not None:
                 counts = first <= months[t.statement_id] <= last
             else:
@@ -134,15 +168,49 @@ class MemoryTransactions:
         rows.sort(key=lambda r: (r[1].posted_on, r[0]), reverse=True)
         return [t for _, t in rows]
 
-    def list_by_account(self, account_id: str) -> list[Transaction]:
-        return self._sorted(t for t in self.items.values() if t.account_id == account_id)
+    def list_by_account(self, account_id: str, include_refunded: bool = False) -> list[Transaction]:
+        return self._sorted(
+            t
+            for t in self.items.values()
+            if t.account_id == account_id and (include_refunded or not t.is_refunded)
+        )
 
-    def list_by_statement(self, statement_id: str) -> list[Transaction]:
-        return self._sorted(t for t in self.items.values() if t.statement_id == statement_id)
+    def list_by_statement(
+        self, statement_id: str, include_refunded: bool = False
+    ) -> list[Transaction]:
+        return self._sorted(
+            t
+            for t in self.items.values()
+            if t.statement_id == statement_id and (include_refunded or not t.is_refunded)
+        )
 
-    def list_by_plan(self, plan_id: str) -> list[Transaction]:
-        rows = [t for t in self.items.values() if t.plan_id == plan_id]
+    def list_by_plan(self, plan_id: str, include_refunded: bool = False) -> list[Transaction]:
+        rows = [
+            t
+            for t in self.items.values()
+            if t.plan_id == plan_id and (include_refunded or not t.is_refunded)
+        ]
         return sorted(rows, key=lambda t: t.installment_number or 0)
+
+    def update(self, transaction: Transaction) -> None:
+        self.items[transaction.id] = transaction
+
+    def count_pending_review(self, uncategorized_category_id: str | None) -> int:
+        return sum(
+            1
+            for t in self.items.values()
+            if t.kind is TransactionKind.EXPENSE
+            and not t.is_refunded
+            and t.transfer_id is None
+            and (not t.merchant or t.category_id == uncategorized_category_id)
+        )
+
+    def merchant_counts(self, account_id: str | None = None) -> list[tuple[str, int]]:
+        counts: dict[str, int] = {}
+        for t in self.items.values():
+            if t.merchant and (account_id is None or t.account_id == account_id):
+                counts[t.merchant] = counts.get(t.merchant, 0) + 1
+        return list(counts.items())
 
     def update_amount(self, transaction_id: str, amount_cents: int) -> None:
         self.items[transaction_id] = replace(self.items[transaction_id], amount_cents=amount_cents)
@@ -158,7 +226,9 @@ class MemoryTransactions:
 
     def movements(self, account_id: str) -> list[tuple[dt.date, int]]:
         return [
-            (t.posted_on, t.amount_cents) for t in self.items.values() if t.account_id == account_id
+            (t.posted_on, t.amount_cents)
+            for t in self.items.values()
+            if t.account_id == account_id and not t.is_refunded
         ]
 
     def movements_for_holding(self, holding_id: str) -> list[tuple[dt.date, int]]:
@@ -170,7 +240,9 @@ class MemoryTransactions:
         matches = [
             t
             for t in self.items.values()
-            if t.description_search == description_search and t.kind is kind
+            if t.description_search == description_search
+            and t.kind is kind
+            and t.category_id is not None
         ]
         if not matches:
             return None
@@ -212,6 +284,9 @@ class MemoryPlans:
         self.items: dict[str, InstallmentPlan] = {}
 
     def add(self, plan: InstallmentPlan) -> None:
+        self.items[plan.id] = plan
+
+    def update(self, plan: InstallmentPlan) -> None:
         self.items[plan.id] = plan
 
     def get(self, plan_id: str) -> InstallmentPlan | None:
@@ -296,7 +371,8 @@ class MemoryUnitOfWork:
         self.statements = MemoryStatements()
         self.plans = MemoryPlans()
         self.holdings = MemoryHoldings()
-        self.transactions = MemoryTransactions(self.statements)
+        self.splits = MemorySplits()
+        self.transactions = MemoryTransactions(self.statements, self.splits)
         self.anchors = MemoryAnchors()
         self._snapshot: dict[str, object] | None = None
         self._committed = False
@@ -307,6 +383,7 @@ class MemoryUnitOfWork:
             "accounts": self.accounts,
             "categories": self.categories,
             "transactions": self.transactions,
+            "splits": self.splits,
             "anchors": self.anchors,
             "statements": self.statements,
             "plans": self.plans,

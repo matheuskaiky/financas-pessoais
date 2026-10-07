@@ -127,3 +127,43 @@ def test_whole_year_and_monthly_series(uow: MemoryUnitOfWork, checking: Account)
     assert len(months) == 12
     assert months[0].expenses_cents == 100 and months[11].expenses_cents == 200
     assert sum(m.expenses_cents for m in months) == 300
+
+
+def test_an_itemized_expense_counts_by_item_and_its_parent_never_as_a_category(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    from fakes import FixedClock
+    from financas.application.use_cases.transactions import (
+        SplitItem,
+        UpdateTransaction,
+        UpdateTransactionCommand,
+    )
+
+    add(uow, checking, K.EXPENSE, 20_000, slug="groceries")  # the one we itemize
+    add(uow, checking, K.EXPENSE, 3_000, slug="food")
+    parent = next(t for t in uow.transactions.items.values() if t.amount_cents == -20_000)
+    groceries, health, home = (
+        uow.categories.get_by_slug(s) for s in ("groceries", "health", "home")
+    )
+    assert groceries and health and home
+    UpdateTransaction(uow, FixedClock(TEN)).execute(
+        UpdateTransactionCommand(
+            parent.id,
+            parent.posted_on,
+            20_000,
+            parent.description,
+            splits=(
+                SplitItem("Feira", groceries.id, 12_000),
+                SplitItem("Higiene", health.id, 5_000),
+                SplitItem("Limpeza", home.id, 3_000),
+            ),
+        )
+    )
+    s = GetSummary(uow).execute(JULY)
+    totals = {r.category_id: r.total_cents for r in s.by_category}
+    assert (
+        totals[groceries.id] == 12_000 and totals[health.id] == 5_000 and totals[home.id] == 3_000
+    )
+    assert sum(totals.values()) == s.expenses_cents == 23_000  # nothing orphaned, nothing doubled
+    assert uow.transactions.get(parent.id).category_id is None  # type: ignore[union-attr]
+    assert {g.group for g in s.by_group} >= {CategoryGroup.ESSENTIAL}

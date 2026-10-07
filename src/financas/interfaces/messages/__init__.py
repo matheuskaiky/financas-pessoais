@@ -1,5 +1,7 @@
 """pt-BR catalogue: the only place where user-facing text for domain codes lives."""
 
+import datetime as dt
+
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
@@ -16,9 +18,11 @@ from financas.domain.models import (
     StatementStatus,
     TransactionKind,
 )
-from financas.domain.money import YearMonth
+from financas.domain.money import YearMonth, format_brl
 from financas.domain.services.card_cycle import AssignmentReason, StatementAssignment
+from financas.domain.services.countdown import Countdown, CountdownKind
 from financas.domain.services.holdings import LiquidityBucket
+from financas.domain.services.merchants import ChangeReason
 from financas.domain.services.recurring import AlertKind, RecurringAlert
 from financas.domain.services.statements import LimitAlert
 from financas.interfaces.formatting import (
@@ -257,12 +261,85 @@ ERROR_MESSAGES: dict[str, str] = {
     "USE_DELETE_PURCHASE": (
         "Esta parcela faz parte de uma compra parcelada: apague a compra inteira."
     ),
+    "DUPLICATE_NAME": "Já existe uma categoria com esse nome.",
+    "NOTHING_TO_SAVE": "Informe o estabelecimento ou escolha outra categoria; ou use Pular.",
+    "REVIEW_ONLY_FOR_EXPENSES": "A revisão rápida só vale para despesas.",
+    "NOT_A_STATEMENT_PAYMENT": "Este lançamento não é um pagamento de fatura.",
+    "MERCHANT_TOO_LONG": "O estabelecimento pode ter no máximo {max_length} caracteres.",
+    "SPLIT_NEEDS_TWO_ITEMS": "Use pelo menos dois itens para dividir o lançamento.",
+    "SPLIT_SUM_MISMATCH": "Os itens precisam somar o valor do lançamento: {remaining_text}.",
+    "PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS": (
+        "Um lançamento dividido em itens não tem categoria própria: "
+        "escolha a categoria de cada item."
+    ),
+    "SPLIT_AMOUNT_NEEDS_ITEMS": (
+        "Este lançamento está dividido em itens: mude o valor e os itens juntos, no formulário."
+    ),
+    "SPLIT_ONLY_FOR_EXPENSES": "Só despesas podem ser divididas em itens.",
+    "SPLIT_NOT_FOR_INSTALLMENTS": (
+        "Parcelas de uma compra parcelada não podem ser divididas em itens."
+    ),
+    "MERGE_NEEDS_TWO": "Escolha pelo menos dois lançamentos para mesclar.",
+    "MERGE_ONLY_PLAIN_EXPENSES": (
+        "Só despesas comuns podem ser mescladas: sem parcelas, transferências ou estornos."
+    ),
+    "MERGE_ACCOUNT_MISMATCH": "Os lançamentos precisam ser da mesma conta ou do mesmo cartão.",
+    "MERGE_STATEMENT_MISMATCH": "Os lançamentos do cartão precisam estar na mesma fatura.",
+    "REFUND_ONLY_FOR_EXPENSES": "Só despesas e compras podem ser marcadas como estornadas.",
+    "NOTHING_TO_DELETE": (
+        "Todas as parcelas deste parcelamento estão em faturas pagas e ficam no histórico."
+    ),
+    "TRANSFER_NOT_EDITABLE": (
+        "Transferências não podem ser editadas: apague e lance de novo para corrigir."
+    ),
+    "INSTALLMENT_FIELD_LOCKED": (
+        "Data e conta de uma parcela seguem a fatura e o cartão da compra: só descrição, "
+        "categoria, valor e observações podem ser alterados."
+    ),
+    "FUTURE_PAYMENT_FORBIDDEN": "Pagamentos de fatura não podem ter data futura.",
+    "PAYMENT_DATE_BEFORE_PREVIOUS_DUE": (
+        "A data do pagamento não pode ser anterior ao vencimento da fatura anterior "
+        "({min_date_text})."
+    ),
+    "PURCHASE_DATE_LOCKED": (
+        "A primeira parcela já está em uma fatura fechada ou paga: a data da compra é histórico "
+        "e não pode mais ser alterada."
+    ),
+    "PLAN_TARGET_STATEMENT_CLOSED": (
+        "Com a nova data, a parcela {number} cairia em uma fatura que já fechou. "
+        "Escolha uma data em que as parcelas pendentes caiam em faturas abertas ou futuras."
+    ),
+    "ACCOUNT_KIND_CHANGE_NOT_ALLOWED": (
+        "Só é possível trocar por outra conta do mesmo tipo (conta corrente por conta corrente, "
+        "cartão por cartão)."
+    ),
+    "STATEMENT_CLOSED_NEEDS_ACK": (
+        "A fatura deste lançamento já foi fechada. Marque “Estou ciente de que a fatura já está "
+        "fechada” para salvar."
+    ),
+    "NOTHING_TO_ANTICIPATE": (
+        "Nenhuma parcela pode ser antecipada: as que faltam já estão na fatura aberta, em fatura "
+        "fechada ou paga."
+    ),
+    "INSTALLMENT_NOT_ANTICIPABLE": "A parcela {number} não pode ser antecipada.",
+    "NO_OPEN_STATEMENT": "O cartão não tem uma fatura aberta para receber as parcelas.",
+    "INVALID_DISCOUNT": (
+        "O desconto precisa ser maior ou igual a zero e menor que o valor das parcelas."
+    ),
+    "DISCOUNT_RATE_OR_AMOUNT": "Informe a taxa de desconto ou o valor do desconto, não os dois.",
     "TRACKING_IN_USE": (
         "Não dá para trocar o controle enquanto houver avaliações ou aplicações no nível atual."
     ),
 }
 
 ERROR_MESSAGES.update(CSV_ERROR_MESSAGES)  # codes that only the CSV feed raises (13.3)
+
+BACKFILL_REASON_LABELS: dict[ChangeReason, str] = {
+    ChangeReason.SUFFIX: "pelo sufixo da descrição",
+    ChangeReason.ALIAS: "por um nome conhecido na descrição",
+    ChangeReason.LEARNED: "pelo que você já usou antes",
+    ChangeReason.CANONICALIZED: "nome padronizado",
+}
 
 FLASH_MESSAGES: dict[str, str] = {
     "entry": "Lançamento salvo.",
@@ -283,6 +360,14 @@ FLASH_MESSAGES: dict[str, str] = {
     "dates": "Datas da fatura atualizadas.",
     "adjusted": "Valor da parcela ajustado.",
     "plan_deleted": "Compra parcelada apagada.",
+    "plan_pending_deleted": (
+        "Parcelas pendentes apagadas. As de faturas já pagas ficaram no histórico."
+    ),
+    "entry_updated": "Lançamento atualizado.",
+    "category_renamed": "Categoria renomeada.",
+    "payment_updated": "Pagamento atualizado. Saldos e situação da fatura foram recalculados.",
+    "merged": "Lançamentos mesclados em um só. Cada item continua na sua categoria.",
+    "anticipated": "Parcelas antecipadas para a fatura aberta.",
     "budget": "Metas atualizadas.",
     "valuation": "Avaliação registrada.",
     "valuation_yield": "Avaliação registrada.",
@@ -297,6 +382,12 @@ FLASH_MESSAGES: dict[str, str] = {
 PARAMETERLESS_ERRORS = frozenset(
     {
         "STATEMENT_ALREADY_PAID",
+        "NOTHING_TO_DELETE",
+        "MERGE_NEEDS_TWO",
+        "MERGE_ONLY_PLAIN_EXPENSES",
+        "MERGE_ACCOUNT_MISMATCH",
+        "MERGE_STATEMENT_MISMATCH",
+        "STATEMENT_CLOSED_NEEDS_ACK",
         "USE_DELETE_PURCHASE",
         "NOT_A_CARD_PURCHASE",
         "HOLDING_REDEEMED",
@@ -327,6 +418,15 @@ def render_error(error: DomainError) -> str:
         params["account_kind_label"] = ACCOUNT_KIND_LABELS[AccountKind(str(params["account_kind"]))]
     if "entity" in params:
         params["entity_label"] = ENTITY_LABELS.get(str(params["entity"]), "Registro")
+    if "min_date" in params:
+        params["min_date_text"] = format_date(dt.date.fromisoformat(str(params["min_date"])))
+    if "remaining_cents" in params:
+        remaining = int(params["remaining_cents"])
+        params["remaining_text"] = (
+            f"restam {format_brl(remaining)}"
+            if remaining > 0
+            else f"ultrapassou {format_brl(-remaining)}"
+        )
     if "max_bytes" in params:
         params["max_kb"] = int(params["max_bytes"]) // 1024
     template = ERROR_MESSAGES.get(error.code)
@@ -350,6 +450,32 @@ def statement_label(statement: Statement) -> str:
     closing = format_date_short(statement.closing_date)
     due = format_date_short(statement.due_date)
     return f"Fatura {format_month(statement.month)} · fecha {closing} · vence {due}"
+
+
+def _days(n: int) -> str:
+    return f"{n} dia" if n == 1 else f"{n} dias"
+
+
+def closing_countdown(c: Countdown) -> str:
+    """``Fecha hoje`` · ``Fecha amanhã`` · ``Fecha em 4 dias`` · ``Fechada``."""
+    if c.kind is CountdownKind.TODAY:
+        return "Fecha hoje"
+    if c.kind is CountdownKind.TOMORROW:
+        return "Fecha amanhã"
+    if c.kind is CountdownKind.IN_DAYS:
+        return f"Fecha em {_days(c.days)}"
+    return "Fechada"
+
+
+def due_countdown(c: Countdown) -> str:
+    """``Vence hoje`` · ``Vence amanhã`` · ``Vence em 11 dias`` · ``Venceu há 3 dias``."""
+    if c.kind is CountdownKind.TODAY:
+        return "Vence hoje"
+    if c.kind is CountdownKind.TOMORROW:
+        return "Vence amanhã"
+    if c.kind is CountdownKind.IN_DAYS:
+        return f"Vence em {_days(c.days)}"
+    return f"Venceu há {_days(c.days)}"
 
 
 def explain_assignment(a: StatementAssignment) -> str:

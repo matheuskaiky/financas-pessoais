@@ -73,3 +73,32 @@ def test_account_own_color_and_image_win_independently() -> None:
     assert (only_color.color, only_color.image_id) == ("#0E6151", "f" * 32)
     only_image = account_look(acc(image_id="e" * 32), parent)
     assert (only_image.color, only_image.image_id) == ("#FCFC30", "e" * 32)
+
+
+@pytest.mark.parametrize(
+    ("background", "text"),
+    [
+        ("#FEE600", "#0F172A"),  # BB yellow: slate text, never white
+        ("#FAF500", "#0F172A"),
+        ("#FF7A00", "#0F172A"),  # Inter orange: white would be 2.4:1
+        ("#820AD1", "#FFFFFF"),  # Nubank purple
+        ("#5E0896", "#FFFFFF"),
+        ("#0F5C45", "#FFFFFF"),
+        ("#7B7B7B", "#000000"),  # the narrow band where neither white nor slate reaches AA
+    ],
+)
+def test_card_text_color_keeps_the_surface_and_reaches_aa(background: str, text: str) -> None:
+    from financas.interfaces.appearance import card_text_color, contrast_ratio
+
+    assert card_text_color(background) == text
+    assert contrast_ratio(background, text) >= 4.5
+
+
+def test_card_text_color_reaches_aa_on_every_hue_and_lightness() -> None:
+    from financas.interfaces.appearance import card_text_color, contrast_ratio
+
+    for r in range(0, 256, 51):
+        for g in range(0, 256, 51):
+            for b in range(0, 256, 51):
+                color = f"#{r:02X}{g:02X}{b:02X}"
+                assert contrast_ratio(color, card_text_color(color)) >= 4.5, color

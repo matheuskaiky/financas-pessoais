@@ -15,6 +15,7 @@ from financas.application.queries.summary import GetSummary, Period
 from financas.application.use_cases.cards import (
     AdjustInstallment,
     CardPurchaseCommand,
+    DeleteInstallmentPlan,
     DeletePurchase,
     InformStatementTotal,
     MoveEntryToStatement,
@@ -25,15 +26,24 @@ from financas.application.use_cases.cards import (
     RegisterCardPurchase,
     SetCardSettings,
     SetStatementDates,
+    UpdateInvoicePayment,
+    UpdatePaymentCommand,
 )
 from financas.application.use_cases.transactions import (
     RegisterTransaction,
     RegisterTransactionCommand,
 )
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, StatementStatus, TransactionKind
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    Institution,
+    StatementStatus,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
 from financas.domain.services.card_cycle import AssignmentReason, last_day_in_statement
+from financas.domain.services.countdown import Countdown, CountdownKind
 from financas.domain.services.statements import LimitAlert
 
 D = dt.date
@@ -331,7 +341,7 @@ def test_pay_statement_partial_then_full(
     uow: MemoryUnitOfWork, card: Account, checking: Account
 ) -> None:
     september = september_statement(uow, card)
-    clock = FixedClock(D(2026, 10, 1))
+    clock = FixedClock(D(2026, 10, 3))  # payments are never dated after today
     pay = PayStatement(uow, clock)
     legs = pay.execute(
         PayStatementCommand(september, checking.id, D(2026, 10, 1), 4_000, "Pagamento")
@@ -401,6 +411,7 @@ def test_reconciliation_and_posting_the_difference(uow: MemoryUnitOfWork, card: 
     entry = PostStatementDifference(uow).execute(september, "Diferença")
     assert entry.amount_cents == -380 and entry.statement_id == september
     assert entry.posted_on == D(2026, 9, 23) and entry.description == "Diferença"
+    assert entry.category_id is not None
     category = uow.categories.get(entry.category_id)
     assert category and category.slug == "uncategorized"
     view = cards_at(uow, D(2026, 10, 1)).cards[0].statements[0]
@@ -698,3 +709,467 @@ def test_a_payment_from_an_untracked_account_creates_only_the_card_leg(
     assert (leg.account_id, leg.amount_cents, leg.statement_id) == (card.id, 4_000, september)
     view = cards_at(uow, D(2026, 10, 1)).cards[0].statements[0]
     assert (view.paid_cents, view.outstanding_cents) == (4_000, 11_000)
+
+
+# --- card face telemetry: open balance and day counts ---
+
+
+def telemetry(uow: MemoryUnitOfWork, card: Account, today: dt.date):
+    overview = ListCards(uow, FixedClock(today)).execute()
+    (view,) = [v for v in overview.cards if v.account.id == card.id]
+    assert view.telemetry
+    return view.telemetry
+
+
+def test_telemetry_open_balance_and_days_to_closing_and_due(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=18_000)
+    buy(uow, card, purchased_on=D(2026, 7, 12), total_cents=2_500, description="Outra")
+    RegisterTransaction(uow).execute(
+        RegisterTransactionCommand(  # a refund on the card lowers the running total
+            card.id, D(2026, 7, 15), TransactionKind.REFUND, 1_000, "Estorno"
+        )
+    )
+    t = telemetry(uow, card, D(2026, 7, 20))  # closes 07-25, due 08-05
+    assert t.open_balance_cents == 18_000 + 2_500 - 1_000
+    assert t.closing == Countdown(CountdownKind.IN_DAYS, 5)
+    assert t.due == Countdown(CountdownKind.IN_DAYS, 16)
+    assert t.pending_due is None and t.pending_month is None
+
+
+def test_telemetry_the_day_before_closing_says_tomorrow(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=500)
+    t = telemetry(uow, card, D(2026, 7, 24))
+    assert t.closing == Countdown(CountdownKind.TOMORROW, 0)
+    assert t.due == Countdown(CountdownKind.IN_DAYS, 12)
+
+
+def test_telemetry_on_the_closing_day_the_next_statement_is_the_open_one(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    """9.3: the closing date is the first day of the next cycle, so the closed statement is
+    reported apart (closed, owing, due in 11 days) and the open one is August's."""
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=4_000)
+    buy(uow, card, purchased_on=D(2026, 7, 25), total_cents=700, description="No fechamento")
+    t = telemetry(uow, card, D(2026, 7, 25))
+    assert t.open_balance_cents == 700  # only the purchase that went to the next statement
+    assert t.closing == Countdown(CountdownKind.IN_DAYS, 31)  # 08-25
+    assert t.pending_month == YM(2026, 7)
+    assert t.pending_due == Countdown(CountdownKind.IN_DAYS, 11)  # 08-05
+
+
+def test_telemetry_closed_statement_owing_and_overdue(uow: MemoryUnitOfWork, card: Account) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=4_000)
+    t = telemetry(uow, card, D(2026, 8, 10))  # July's statement was due on 08-05
+    assert t.pending_due == Countdown(CountdownKind.PAST, 5)
+    assert t.open_balance_cents == 0 and t.closing == Countdown(CountdownKind.IN_DAYS, 15)
+
+
+def test_telemetry_without_any_purchase_uses_the_card_settings(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    t = telemetry(uow, card, D(2026, 7, 20))
+    assert t.open_balance_cents == 0
+    assert t.closing == Countdown(CountdownKind.IN_DAYS, 5)
+    assert t.due == Countdown(CountdownKind.IN_DAYS, 16)
+
+
+def test_telemetry_paid_statement_is_not_pending(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    entry = buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=4_000).transactions[0]
+    assert entry.statement_id
+    today = D(2026, 7, 28)
+    PayStatement(uow, FixedClock(today)).execute(
+        PayStatementCommand(entry.statement_id, checking.id, today)
+    )
+    assert telemetry(uow, card, today).pending_due is None
+
+
+# --- deleting what is pending of an installment plan ---
+
+
+def test_delete_installment_plan_with_nothing_paid_removes_plan_and_entries(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    plan = buy(uow, card, purchased_on=D(2026, 7, 10), installments=3, total_cents=9_000).plan
+    assert plan
+    before = ListCards(uow, CLOCK).execute().cards[0].usage.committed_cents
+    result = DeleteInstallmentPlan(uow, CLOCK).execute(plan.id)
+    assert (result.deleted, result.kept, result.plan_removed) == (3, 0, True)
+    assert uow.transactions.list_by_plan(plan.id) == [] and uow.plans.get(plan.id) is None
+    after = ListCards(uow, CLOCK).execute().cards[0].usage.committed_cents
+    assert (before, after) == (9_000, 0)  # the limit is computed from the entries: it came back
+
+
+def test_delete_installment_plan_keeps_installments_on_paid_statements(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    plan = buy(uow, card, purchased_on=D(2026, 7, 10), installments=3, total_cents=9_000).plan
+    assert plan
+    first = uow.transactions.list_by_plan(plan.id)[0]
+    assert first.statement_id
+    today = D(2026, 7, 28)  # July's statement closed on 07-25
+    PayStatement(uow, FixedClock(today)).execute(
+        PayStatementCommand(first.statement_id, checking.id, today)
+    )
+    result = DeleteInstallmentPlan(uow, FixedClock(today)).execute(plan.id)
+    assert (result.deleted, result.kept, result.plan_removed) == (2, 1, False)
+    left = uow.transactions.list_by_plan(plan.id)
+    assert [t.installment_number for t in left] == [1]  # the paid one is history
+    assert uow.plans.get(plan.id) == plan  # and so is the plan record
+    with pytest.raises(DomainError) as exc:  # nothing pending is left
+        DeleteInstallmentPlan(uow, FixedClock(today)).execute(plan.id)
+    assert codes(exc) == "NOTHING_TO_DELETE"
+
+
+def test_delete_installment_plan_is_atomic_and_checks_the_plan_exists(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    plan = buy(uow, card, purchased_on=D(2026, 7, 10), installments=2, total_cents=2_000).plan
+    assert plan
+    with pytest.raises(DomainError) as exc:
+        DeleteInstallmentPlan(uow, CLOCK).execute("nope")
+    assert codes(exc) == "NOT_FOUND"
+    uow.statements.items.clear()  # a broken reference fails the whole operation
+    with pytest.raises(DomainError):
+        DeleteInstallmentPlan(uow, CLOCK).execute(plan.id)
+    assert len(uow.transactions.list_by_plan(plan.id)) == 2
+
+
+# --- editing a statement payment ---
+
+PAY_DAY = D(2026, 7, 28)  # July's statement closed on 07-25 and is unpaid
+PAY_CLOCK = FixedClock(PAY_DAY)
+
+
+def pay_setup(uow: MemoryUnitOfWork, card: Account, checking: Account, total: int = 4_000):
+    entry = buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=total).transactions[0]
+    assert entry.statement_id
+    legs = PayStatement(uow, PAY_CLOCK).execute(
+        PayStatementCommand(entry.statement_id, checking.id, PAY_DAY, description="Pagamento")
+    )
+    debit = next(t for t in legs if t.account_id == checking.id)
+    credit = next(t for t in legs if t.account_id == card.id)
+    return entry.statement_id, debit, credit
+
+
+def status_of(uow: MemoryUnitOfWork, statement_id: str) -> StatementStatus:
+    from financas.application.queries.cards import statement_view
+
+    statement = uow.statements.get(statement_id)
+    assert statement
+    return statement_view(uow, statement, PAY_DAY).status
+
+
+def update_payment(uow: MemoryUnitOfWork, entry_id: str, **overrides: object):
+    values: dict[str, object] = {"paid_on": PAY_DAY, "amount_cents": 4_000}
+    values.update(overrides)
+    return UpdateInvoicePayment(uow, PAY_CLOCK).execute(
+        UpdatePaymentCommand(entry_id, **values)  # type: ignore[arg-type]
+    )
+
+
+def test_update_payment_moves_both_legs_together(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    statement_id, debit, credit = pay_setup(uow, card, checking)
+    result = update_payment(
+        uow, credit.id, paid_on=D(2026, 7, 27), amount_cents=3_500, notes="  conferido "
+    )
+    new_debit = uow.transactions.get(debit.id)
+    new_credit = uow.transactions.get(credit.id)
+    assert new_debit and new_credit
+    assert (new_debit.amount_cents, new_credit.amount_cents) == (-3_500, 3_500)  # opposite, equal
+    assert new_debit.posted_on == new_credit.posted_on == D(2026, 7, 27)
+    assert new_debit.notes == new_credit.notes == "conferido"
+    assert new_debit.transfer_id == new_credit.transfer_id == debit.transfer_id
+    assert new_credit.statement_id == statement_id and new_debit.statement_id is None
+    assert {t.id for t in result.legs} == {debit.id, credit.id}
+    assert [t.id for t in uow.transactions.list_by_transfer(debit.transfer_id or "")] != []
+
+
+def test_either_leg_can_name_the_payment(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    _, debit, credit = pay_setup(uow, card, checking)
+    update_payment(uow, debit.id, amount_cents=1_000)  # the checking leg
+    assert uow.transactions.items[credit.id].amount_cents == 1_000
+    assert uow.transactions.items[debit.id].amount_cents == -1_000
+
+
+def test_a_smaller_payment_takes_the_statement_back_from_paid_to_closed(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    statement_id, _, credit = pay_setup(uow, card, checking)
+    assert status_of(uow, statement_id) is StatementStatus.PAID
+    reduced = update_payment(uow, credit.id, amount_cents=2_500)
+    assert (reduced.status_before, reduced.status_after) == (
+        StatementStatus.PAID,
+        StatementStatus.CLOSED,
+    )
+    assert status_of(uow, statement_id) is StatementStatus.CLOSED
+    # the part still owed can be paid again, and the entries of the statement are editable again
+    assert PayStatement(uow, PAY_CLOCK).execute(
+        PayStatementCommand(statement_id, checking.id, PAY_DAY)
+    )[0].amount_cents in {-1_500, 1_500}
+    assert status_of(uow, statement_id) is StatementStatus.PAID
+    # a bigger payment keeps it paid
+    raised = update_payment(uow, credit.id, amount_cents=4_000)
+    assert (raised.status_before, raised.status_after) == (
+        StatementStatus.PAID,
+        StatementStatus.PAID,
+    )
+
+
+def test_reopened_statement_can_be_edited_again_and_limit_follows(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    from financas.application.use_cases.transactions import (
+        UpdateTransaction,
+        UpdateTransactionCommand,
+    )
+
+    statement_id, _, credit = pay_setup(uow, card, checking)
+    purchase = next(
+        t for t in uow.transactions.list_by_statement(statement_id) if t.transfer_id is None
+    )
+    committed_paid = ListCards(uow, PAY_CLOCK).execute().cards[0].usage.committed_cents
+    assert committed_paid == 0  # paid in full: the limit is back
+    with pytest.raises(DomainError) as locked:  # paid statements are history
+        UpdateTransaction(uow, PAY_CLOCK).execute(
+            UpdateTransactionCommand(
+                purchase.id,
+                purchase.posted_on,
+                4_100,
+                purchase.description,
+                acknowledge_closed=True,
+            )
+        )
+    assert codes(locked) == "STATEMENT_ALREADY_PAID"
+    update_payment(uow, credit.id, amount_cents=1_000)
+    assert ListCards(uow, PAY_CLOCK).execute().cards[0].usage.committed_cents == 3_000
+    reopened = UpdateTransaction(uow, PAY_CLOCK).execute(
+        UpdateTransactionCommand(
+            purchase.id, purchase.posted_on, 4_100, purchase.description, acknowledge_closed=True
+        )
+    )
+    assert reopened.amount_cents == -4_100
+
+
+def test_changing_the_source_account_restores_one_balance_and_charges_the_other(
+    uow: MemoryUnitOfWork, card: Account, checking: Account, institution: Institution
+) -> None:
+    from financas.application.queries.balances import ListAccountBalances
+    from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
+    from financas.application.use_cases.catalog import CreateAccount, CreateAccountCommand
+
+    other = CreateAccount(uow).execute(
+        CreateAccountCommand(AccountKind.CHECKING, institution.id, "Segunda")
+    )
+    for account in (checking, other):
+        RecordBalance(uow).execute(RecordBalanceCommand(account.id, D(2026, 7, 1), 100_000))
+    _, debit, credit = pay_setup(uow, card, checking)
+
+    def balances() -> dict[str, int | None]:
+        rows = ListAccountBalances(uow).execute(PAY_DAY)
+        return {b.account_id: b.balance_cents for b in rows}
+
+    assert balances() == {checking.id: 96_000, other.id: 100_000}
+    update_payment(uow, credit.id, from_account_id=other.id)
+    assert balances() == {checking.id: 100_000, other.id: 96_000}  # restored / charged
+    assert uow.transactions.items[debit.id].account_id == other.id
+    update_payment(uow, credit.id, amount_cents=3_000)  # keeps the origin when not told
+    assert balances() == {checking.id: 100_000, other.id: 97_000}
+
+
+def test_a_payment_from_an_untracked_account_can_gain_or_lose_its_debit(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    statement_id, debit, credit = pay_setup(uow, card, checking)
+    update_payment(uow, credit.id, from_account_id=None)
+    assert uow.transactions.get(debit.id) is None  # the checking leg went away
+    assert uow.transactions.get(credit.id).amount_cents == 4_000  # type: ignore[union-attr]
+    assert status_of(uow, statement_id) is StatementStatus.PAID  # the card side still pays it
+    update_payment(uow, credit.id, from_account_id=checking.id, amount_cents=3_000)
+    legs = uow.transactions.list_by_transfer(credit.transfer_id or "")
+    assert sorted(t.amount_cents for t in legs) == [-3_000, 3_000]
+    assert {t.account_id for t in legs} == {checking.id, card.id}
+
+
+def test_update_payment_validations_and_atomicity(
+    uow: MemoryUnitOfWork,
+    card: Account,
+    checking: Account,
+    savings: Account,
+    institution: Institution,
+) -> None:
+    from financas.application.use_cases.catalog import (
+        CreateAccount,
+        CreateAccountCommand,
+        SetAccountActive,
+    )
+    from financas.application.use_cases.transactions import (
+        RegisterTransfer,
+        RegisterTransferCommand,
+    )
+
+    _, debit, credit = pay_setup(uow, card, checking)
+    for overrides, code in [
+        ({"amount_cents": 0}, "AMOUNT_NOT_POSITIVE"),
+        ({"amount_cents": -5}, "AMOUNT_NOT_POSITIVE"),
+        ({"from_account_id": savings.id}, "ACCOUNT_KIND_NOT_ALLOWED"),
+        ({"from_account_id": card.id}, "ACCOUNT_KIND_NOT_ALLOWED"),
+        ({"from_account_id": "nope"}, "NOT_FOUND"),
+    ]:
+        with pytest.raises(DomainError) as exc:
+            update_payment(uow, credit.id, **overrides)
+        assert codes(exc) == code
+    retired = CreateAccount(uow).execute(
+        CreateAccountCommand(AccountKind.CHECKING, institution.id, "Antiga")
+    )
+    SetAccountActive(uow).execute(retired.id, False)
+    with pytest.raises(DomainError) as inactive:
+        update_payment(uow, credit.id, from_account_id=retired.id)
+    assert codes(inactive) == "ACCOUNT_INACTIVE"
+    # nothing was written by any of the failures
+    assert uow.transactions.get(debit.id).amount_cents == -4_000  # type: ignore[union-attr]
+    assert uow.transactions.get(credit.id).amount_cents == 4_000  # type: ignore[union-attr]
+    assert uow.transactions.get(debit.id).account_id == checking.id  # type: ignore[union-attr]
+    # only payments: an own-account transfer, a purchase and an unknown id are refused
+    own = RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, savings.id, PAY_DAY, 500)
+    )
+    purchase = next(t for t in uow.transactions.items.values() if t.transfer_id is None)
+    for entry_id in (own[0].id, purchase.id):
+        with pytest.raises(DomainError) as refused:
+            update_payment(uow, entry_id)
+        assert codes(refused) == "NOT_A_STATEMENT_PAYMENT"
+    with pytest.raises(DomainError) as missing:
+        update_payment(uow, "nope")
+    assert codes(missing) == "NOT_FOUND"
+
+
+# --- payment date bounds (9.5): previous statement's due date .. today ---
+
+BOUNDS_TODAY = D(2026, 10, 3)
+BOUNDS_CLOCK = FixedClock(BOUNDS_TODAY)
+
+
+def two_statements(uow: MemoryUnitOfWork, card: Account) -> tuple[str, str]:
+    """August (closes 08-25, due 09-05; the first) and September (closes 09-24, due 10-05)."""
+    (august,) = buy(uow, card, purchased_on=D(2026, 8, 10), total_cents=10_000).transactions
+    return august.statement_id or "", september_statement(uow, card)
+
+
+def pay_on(uow: MemoryUnitOfWork, statement_id: str, account: Account, day: dt.date, **kw: object):
+    return PayStatement(uow, BOUNDS_CLOCK).execute(
+        PayStatementCommand(statement_id, account.id, day, 1_000, **kw)  # type: ignore[arg-type]
+    )
+
+
+def test_payment_bounds_are_the_previous_due_date_and_today(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    from financas.application.queries.cards import payment_date_boundaries
+
+    august, september = two_statements(uow, card)
+    statement = uow.statements.get(september)
+    assert statement
+    later = payment_date_boundaries(uow, statement, BOUNDS_TODAY)
+    assert (later.min_date, later.max_date, later.from_previous_due) == (
+        D(2026, 9, 5),  # August's due date
+        BOUNDS_TODAY,
+        True,
+    )
+    first = uow.statements.get(august)
+    assert first
+    opening = payment_date_boundaries(uow, first, BOUNDS_TODAY)
+    # no previous statement: the cycle opens when July's closes (due 08-05, closing 11 days before)
+    assert (opening.min_date, opening.from_previous_due) == (D(2026, 7, 25), False)
+
+
+def test_a_future_payment_is_forbidden(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    _, september = two_statements(uow, card)
+    before = dict(uow.transactions.items)
+    with pytest.raises(DomainError) as exc:
+        pay_on(uow, september, checking, D(2026, 10, 4))  # tomorrow
+    assert codes(exc) == "FUTURE_PAYMENT_FORBIDDEN"
+    assert uow.transactions.items == before
+
+
+def test_a_payment_before_the_previous_due_date_is_refused(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    _, september = two_statements(uow, card)
+    with pytest.raises(DomainError) as exc:
+        pay_on(uow, september, checking, D(2026, 9, 4))  # the day before August's due date
+    assert codes(exc) == "PAYMENT_DATE_BEFORE_PREVIOUS_DUE"
+    assert exc.value.params["min_date"] == "2026-09-05"
+
+
+@pytest.mark.parametrize("day", [D(2026, 9, 5), D(2026, 10, 3)])
+def test_a_payment_exactly_on_the_boundaries_succeeds(
+    uow: MemoryUnitOfWork, card: Account, checking: Account, day: dt.date
+) -> None:
+    _, september = two_statements(uow, card)
+    legs = pay_on(uow, september, checking, day)
+    assert {leg.posted_on for leg in legs} == {day}
+
+
+def test_the_first_statement_opens_with_its_cycle(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    august, _ = two_statements(uow, card)
+    with pytest.raises(DomainError) as exc:
+        pay_on(uow, august, checking, D(2026, 7, 24))
+    assert codes(exc) == "PAYMENT_DATE_BEFORE_PREVIOUS_DUE"
+    assert pay_on(uow, august, checking, D(2026, 7, 25))  # the opening day itself
+
+
+def test_editing_a_payment_is_bound_by_the_same_dates(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    _, september = two_statements(uow, card)
+    credit = next(
+        t for t in pay_on(uow, september, checking, D(2026, 10, 1)) if t.account_id == card.id
+    )
+
+    def edit(day: dt.date, amount: int = 1_000):
+        return UpdateInvoicePayment(uow, BOUNDS_CLOCK).execute(
+            UpdatePaymentCommand(credit.id, day, amount)
+        )
+
+    with pytest.raises(DomainError) as exc:
+        edit(D(2026, 10, 4))
+    assert codes(exc) == "FUTURE_PAYMENT_FORBIDDEN"
+    with pytest.raises(DomainError) as exc:
+        edit(D(2026, 9, 4))
+    assert codes(exc) == "PAYMENT_DATE_BEFORE_PREVIOUS_DUE"
+    assert uow.transactions.items[credit.id].posted_on == D(2026, 10, 1)  # nothing moved
+    edit(D(2026, 9, 5))  # both boundaries are valid
+    edit(BOUNDS_TODAY)
+    assert {t.posted_on for t in uow.transactions.list_by_transfer(credit.transfer_id or "")} == {
+        BOUNDS_TODAY
+    }
+
+
+def test_a_payment_with_an_old_date_can_still_change_its_amount(
+    uow: MemoryUnitOfWork, card: Account, checking: Account
+) -> None:
+    from dataclasses import replace
+
+    _, september = two_statements(uow, card)
+    credit = next(
+        t for t in pay_on(uow, september, checking, D(2026, 10, 1)) if t.account_id == card.id
+    )
+    uow.transactions.update(replace(credit, posted_on=D(2026, 8, 1)))  # recorded before the rule
+    UpdateInvoicePayment(uow, BOUNDS_CLOCK).execute(
+        UpdatePaymentCommand(credit.id, D(2026, 8, 1), 2_000)  # the date is not what changes
+    )
+    assert uow.transactions.items[credit.id].amount_cents == 2_000

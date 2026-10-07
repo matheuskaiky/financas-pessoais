@@ -1,7 +1,7 @@
 """Ports: what the domain and application need from the outside world."""
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from types import TracebackType
 from typing import Protocol
 
@@ -15,6 +15,7 @@ from financas.domain.models import (
     Statement,
     Transaction,
     TransactionKind,
+    TransactionSplit,
 )
 from financas.domain.money import YearMonth
 
@@ -53,22 +54,62 @@ class TransactionRepository(Protocol):
     def delete(self, transaction_id: str) -> None: ...
     def list_by_transfer(self, transfer_id: str) -> list[Transaction]: ...
     def list_between(
-        self, start: dt.date, end: dt.date, account_id: str | None = None
+        self,
+        start: dt.date,
+        end: dt.date,
+        account_id: str | None = None,
+        include_refunded: bool = False,
     ) -> list[Transaction]:
-        """Inclusive range, newest first (``posted_on`` desc, then insertion order)."""
+        """Inclusive range, newest first (``posted_on`` desc, then insertion order).
+
+        Every list below leaves refunded entries (``is_refunded``) out unless
+        ``include_refunded``: totals, balances, limits and charts must never see them, so the
+        safe behaviour is the default. Screens that show the entry and maintenance code that
+        edits or deletes it ask for them.
+        """
         ...
 
-    def list_for_competence(self, start: dt.date, end: dt.date) -> list[Transaction]:
+    def list_for_competence(
+        self, start: dt.date, end: dt.date, include_refunded: bool = False
+    ) -> list[Transaction]:
         """Entries that count in ``[start, end]``: a card entry counts in its statement month,
         everything else in the month of ``posted_on``. Newest first."""
         ...
 
-    def list_by_account(self, account_id: str) -> list[Transaction]: ...
-    def list_by_statement(self, statement_id: str) -> list[Transaction]: ...
-    def list_by_plan(self, plan_id: str) -> list[Transaction]: ...
+    def list_by_account(
+        self, account_id: str, include_refunded: bool = False
+    ) -> list[Transaction]: ...
+    def list_by_statement(
+        self, statement_id: str, include_refunded: bool = False
+    ) -> list[Transaction]: ...
+    def list_by_plan(self, plan_id: str, include_refunded: bool = False) -> list[Transaction]: ...
+    def update(self, transaction: Transaction) -> None:
+        """Replace every editable field of an existing entry (the id never changes)."""
+        ...
+
+    def set_splits(self, transaction_id: str, splits: Sequence[TransactionSplit]) -> None:
+        """Replace the items of an expense (an empty sequence removes them)."""
+        ...
+
+    def splits_for(self, transaction_ids: Iterable[str]) -> dict[str, list[TransactionSplit]]:
+        """The items of each entry that has any, in the order they were saved."""
+        ...
+
+    def count_pending_review(self, uncategorized_category_id: str | None) -> int:
+        """Expenses (not refunded, not transfers) that name no merchant or sit in the
+        "uncategorized" category: what "Revisão Rápida" still has to show."""
+        ...
+
+    def merchant_counts(self, account_id: str | None = None) -> list[tuple[str, int]]:
+        """Each distinct merchant as stored, with how many entries carry it (autocomplete)."""
+        ...
+
     def update_amount(self, transaction_id: str, amount_cents: int) -> None: ...
     def set_statement(self, transaction_id: str, statement_id: str) -> None: ...
-    def movements(self, account_id: str) -> list[tuple[dt.date, int]]: ...
+    def movements(self, account_id: str) -> list[tuple[dt.date, int]]:
+        """Dates and amounts that move the account (refunded entries net to zero: left out)."""
+        ...
+
     def movements_for_holding(self, holding_id: str) -> list[tuple[dt.date, int]]: ...
     def last_category_id(self, description_search: str, kind: TransactionKind) -> str | None: ...
 
@@ -87,6 +128,7 @@ class StatementRepository(Protocol):
 
 class PlanRepository(Protocol):
     def add(self, plan: InstallmentPlan) -> None: ...
+    def update(self, plan: InstallmentPlan) -> None: ...
     def get(self, plan_id: str) -> InstallmentPlan | None: ...
     def delete(self, plan_id: str) -> None: ...
     def list_all(self) -> list[InstallmentPlan]: ...

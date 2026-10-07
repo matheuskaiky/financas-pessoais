@@ -50,6 +50,9 @@ from financas.application.use_cases.transactions import (
     RegisterTransactionCommand,
     RegisterTransfer,
     RegisterTransferCommand,
+    SplitItem,
+    UpdateTransaction,
+    UpdateTransactionCommand,
 )
 from financas.domain.models import (
     AccountKind,
@@ -83,6 +86,9 @@ class DemoSummary:
     plans: int
     holdings: int
     anchors: int
+    itemized: int = 0  # entries split into items (the "Desdobramento" showcase)
+    pending_review: int = 0  # expenses waiting in "Revisão Rápida"
+    refunded: int = 0  # purchases marked as refunded ("Compra estornada")
 
 
 def demo_is_empty(uow: UnitOfWork) -> bool:
@@ -158,6 +164,7 @@ class _Builder:
         slug: str,
         *,
         recurring: bool = False,
+        merchant: str | None = None,
     ) -> None:
         if when is None:
             return
@@ -170,6 +177,7 @@ class _Builder:
                 description,
                 self.cat[slug],
                 is_recurring=recurring,
+                merchant=merchant,
             )
         )
 
@@ -198,6 +206,8 @@ class _Builder:
         *,
         installments: int = 1,
         recurring: bool = False,
+        merchant: str | None = None,
+        splits: tuple[SplitItem, ...] = (),
     ) -> None:
         if when is None:
             return
@@ -206,10 +216,12 @@ class _Builder:
                 card_id,
                 description,
                 when,
-                self.cat[slug],
+                None if splits else self.cat[slug],  # an itemized purchase has no category
                 installments=installments,
                 total_cents=cents,
                 is_recurring=recurring,
+                merchant=merchant,
+                splits=splits,
             )
         )
 
@@ -220,6 +232,7 @@ class _Builder:
         for ym in self.months:
             self._month(ym)
         self._plans()
+        self._showcase()
         self._statements()
         self._valuations()
         self._anchors()
@@ -347,37 +360,60 @@ class _Builder:
                 "Participação nos lucros",
                 "other_income",
             )
-        self.spend(self.bb_checking, self.at(ym, 6), 235_000, "Aluguel", "home", recurring=True)
-        self.spend(self.bb_checking, self.at(ym, 6), 48_000, "Condomínio", "home", recurring=True)
-        self.spend(
-            self.bb_checking, self.at(ym, 9), self.money(14_000, 23_000), "Conta de luz", "home"
+        fixed = (  # (day, cents, description, category, merchant)
+            (6, 235_000, "Aluguel", "home", "Imobiliária Central"),
+            (6, 48_000, "Condomínio", "home", "Condomínio Edifício Aurora"),
+            (10, 11_990, "Internet fibra", "telecom", "Vivo Fibra"),
+            (10, 38_990, "Plano de saúde", "insurance", "Unimed"),
         )
+        for day, cents, text, slug, place in fixed[:2]:
+            self.spend(
+                self.bb_checking,
+                self.at(ym, day),
+                cents,
+                text,
+                slug,
+                recurring=True,
+                merchant=place,
+            )
         self.spend(
-            self.bb_checking, self.at(ym, 10), 11_990, "Internet fibra", "telecom", recurring=True
+            self.bb_checking,
+            self.at(ym, 9),
+            self.money(14_000, 23_000),
+            "Conta de luz",
+            "home",
+            merchant="Enel",
         )
-        self.spend(
-            self.bb_checking, self.at(ym, 10), 38_990, "Plano de saúde", "insurance", recurring=True
-        )
+        for day, cents, text, slug, place in fixed[2:]:
+            self.spend(
+                self.bb_checking,
+                self.at(ym, day),
+                cents,
+                text,
+                slug,
+                recurring=True,
+                merchant=place,
+            )
         if not cancelled_gym:
             self.spend(
-                self.bb_checking, self.at(ym, 12), 11_990, "Academia", "health", recurring=True
+                self.bb_checking,
+                self.at(ym, 12),
+                11_990,
+                "Academia",
+                "health",
+                recurring=True,
+                merchant="Smart Fit",
             )
         for day in (3, 10, 17, 24):
+            amount = self.money(17_000, 39_000)
+            place = self.rng.choice(("Supermercado Pão de Açúcar", "Mercado Extra", "Atacadão"))
             self.spend(
-                self.bb_checking,
-                self.at(ym, day),
-                self.money(17_000, 39_000),
-                self.rng.choice(("Supermercado Pão de Açúcar", "Mercado Extra", "Atacadão")),
-                "groceries",
+                self.bb_checking, self.at(ym, day), amount, place, "groceries", merchant=place
             )
         for day in self.rng.sample((4, 13, 21, 27), k=2):
-            self.spend(
-                self.bb_checking,
-                self.at(ym, day),
-                self.money(3_500, 16_500),
-                self.rng.choice(("Farmácia Pague Menos", "Drogasil", "Droga Raia")),
-                "health",
-            )
+            amount = self.money(3_500, 16_500)
+            place = self.rng.choice(("Farmácia Pague Menos", "Drogasil", "Droga Raia"))
+            self.spend(self.bb_checking, self.at(ym, day), amount, place, "health", merchant=place)
         # --- own transfers and investments
         when = self.at(ym, 3)
         if when:
@@ -406,19 +442,48 @@ class _Builder:
                 )
         # --- Nubank checking (Pix)
         self.spend(
-            self.nu_checking, self.at(ym, 12), self.money(3_500, 6_500), "Pix Barbearia", "services"
+            self.nu_checking,
+            self.at(ym, 12),
+            self.money(3_500, 6_500),
+            "Pix Barbearia",
+            "services",
+            merchant="Barbearia Estilo",
         )
         self.spend(
-            self.nu_checking, self.at(ym, 19), self.money(4_000, 9_000), "Pix Feira", "groceries"
+            self.nu_checking,
+            self.at(ym, 19),
+            self.money(4_000, 9_000),
+            "Pix Feira",
+            "groceries",
+            merchant="Feira Livre",
         )
         self.spend(
-            self.nu_checking, self.at(ym, 23), self.money(2_500, 7_500), "Pix Lanche", "food"
+            self.nu_checking,
+            self.at(ym, 23),
+            self.money(2_500, 7_500),
+            "Pix Lanche",
+            "food",
+            merchant="Lanchonete do Bairro",
         )
         # --- Nubank card
         for day in sorted(self.rng.sample(range(1, 28), k=5)):
-            self.buy(self.nu_card, self.at(ym, day), self.money(2_800, 8_900), "iFood", "food")
+            self.buy(
+                self.nu_card,
+                self.at(ym, day),
+                self.money(2_800, 8_900),
+                "iFood",
+                "food",
+                merchant="iFood",
+            )
         for day in sorted(self.rng.sample(range(1, 28), k=5)):
-            self.buy(self.nu_card, self.at(ym, day), self.money(1_400, 3_800), "Uber", "transport")
+            self.buy(
+                self.nu_card,
+                self.at(ym, day),
+                self.money(1_400, 3_800),
+                "Uber",
+                "transport",
+                merchant="Uber",
+            )
         self.buy(
             self.nu_card,
             self.at(ym, 2),
@@ -426,21 +491,81 @@ class _Builder:
             "Netflix",
             "subscriptions",
             recurring=True,
+            merchant="Netflix",
         )
-        self.buy(self.nu_card, self.at(ym, 3), 2_390, "Spotify", "subscriptions", recurring=True)
+        self.buy(
+            self.nu_card,
+            self.at(ym, 3),
+            2_390,
+            "Spotify",
+            "subscriptions",
+            recurring=True,
+            merchant="Spotify",
+        )
         if ym == self.last_closed:
             self.buy(
-                self.nu_card, self.at(ym, 4), 3_390, "Disney+", "subscriptions", recurring=True
+                self.nu_card,
+                self.at(ym, 4),
+                3_390,
+                "Disney+",
+                "subscriptions",
+                recurring=True,
+                merchant="Disney+",
             )
-        self.buy(self.nu_card, self.at(ym, 15), self.money(6_000, 24_000), "Amazon", "shopping")
+        self.buy(
+            self.nu_card,
+            self.at(ym, 15),
+            self.money(6_000, 24_000),
+            "Amazon",
+            "shopping",
+            merchant="Amazon",
+        )
         # --- BB card
-        self.buy(self.bb_card, self.at(ym, 1), 3_990, "Anuidade Ourocard", "fees", recurring=True)
         self.buy(
-            self.bb_card, self.at(ym, 8), self.money(16_000, 24_000), "Posto Ipiranga", "transport"
+            self.bb_card,
+            self.at(ym, 1),
+            3_990,
+            "Anuidade Ourocard",
+            "fees",
+            recurring=True,
+            merchant="Banco do Brasil",
         )
         self.buy(
-            self.bb_card, self.at(ym, 18), self.money(8_000, 21_000), "Restaurante Outback", "food"
+            self.bb_card,
+            self.at(ym, 8),
+            self.money(16_000, 24_000),
+            "Posto Ipiranga",
+            "transport",
+            merchant="Posto Ipiranga",
         )
+        self.buy(
+            self.bb_card,
+            self.at(ym, 18),
+            self.money(8_000, 21_000),
+            "Restaurante Outback",
+            "food",
+            merchant="Outback Steakhouse",
+        )
+        if n == 5:  # one confirmed Shopee order: the review deck learns its usual category from it
+            self.buy(self.nu_card, self.at(ym, 9), 8_990, "Shopee", "shopping", merchant="Shopee")
+        if n % 3 == 0:  # a few restaurant outings and marketplace orders (no random draws)
+            self.buy(
+                self.bb_card,
+                self.at(ym, 22),
+                18_500 + 150 * n,
+                "Restaurante Mocotó",
+                "food",
+                merchant="Restaurante Mocotó",
+            )
+        if n % 2 == 0:
+            self.buy(
+                self.inter_card,
+                self.at(ym, 20),
+                15_900 + 210 * n,
+                "Mercado Livre",
+                "shopping",
+                merchant="Mercado Livre",
+            )
         # --- Inter card
         self.buy(
             self.inter_card,
@@ -449,8 +574,16 @@ class _Builder:
             "Mensalidade pós-graduação",
             "education",
             recurring=True,
+            merchant="Faculdade Aurora",
         )
-        self.buy(self.inter_card, self.at(ym, 14), self.money(4_500, 9_000), "Cinemark", "food")
+        self.buy(
+            self.inter_card,
+            self.at(ym, 14),
+            self.money(4_500, 9_000),
+            "Cinemark",
+            "food",
+            merchant="Cinemark",
+        )
 
     def _plans(self) -> None:
         """Three running installment plans (the remainder of cents lands on the first one)."""
@@ -460,10 +593,132 @@ class _Builder:
             return max(dt.date(2026, 1, 5), today - dt.timedelta(days=days))
 
         self.buy(
-            self.nu_card, back(110), 349_907, "Smartphone Galaxy 10x", "shopping", installments=10
+            self.nu_card,
+            back(110),
+            349_907,
+            "Smartphone Galaxy 10x",
+            "shopping",
+            installments=10,
+            merchant="Magazine Luiza",
         )
-        self.buy(self.bb_card, back(75), 329_999, "Sofá retrátil 6x", "home", installments=6)
-        self.buy(self.nu_card, back(40), 156_050, "Passagem aérea 3x", "other", installments=3)
+        self.buy(
+            self.bb_card,
+            back(75),
+            329_999,
+            "Sofá retrátil 6x",
+            "home",
+            installments=6,
+            merchant="Tok&Stok",
+        )
+        # an itemized plan: R$ 450,00 in 3 x R$ 150,00, the items spread over the installments
+        # (117,00 + 33,00 · 117,00 + 33,00 · 116,00 + 34,00): no cent lost, no installment category
+        self.buy(
+            self.inter_card,
+            back(20),
+            45_000,
+            "Monitor gamer e acessórios 3x",
+            "shopping",
+            installments=3,
+            merchant="Kabum",
+            splits=(
+                SplitItem("Monitor Gamer", self.cat["shopping"], 35_000),
+                SplitItem("Cabo HDMI e Suporte", self.cat["home"], 10_000),
+            ),
+        )
+        self.buy(
+            self.nu_card,
+            back(40),
+            156_050,
+            "Passagem aérea 3x",
+            "other",
+            installments=3,
+            merchant="LATAM",
+        )
+
+    def _showcase(self) -> None:
+        """One entry of each recent capability, so the demo shows it without any typing:
+
+        - an itemized supermarket run (R$ 380,00 in three categories),
+        - two card purchases of the same day and statement, ready for "Mesclar lançamentos",
+        - a card purchase marked as refunded ("Compra estornada").
+
+        Running installment plans (anticipation, plan deletion, installment editing) and the card
+        face telemetry come from the rest of the seed. Dated at or before today, never in the
+        future; everything goes through the use cases like real entries.
+        """
+        today = self.today
+
+        def back(days: int) -> dt.date:
+            return max(START, today - dt.timedelta(days=days))
+
+        run = RegisterTransaction(self.uow).execute(
+            RegisterTransactionCommand(
+                self.bb_checking,
+                back(3),
+                _EXPENSE,
+                38_000,
+                "Compra do mês no Pão de Açúcar",
+                self.cat["groceries"],
+                merchant="Supermercado Pão de Açúcar",
+            )
+        )
+        UpdateTransaction(self.uow, self.clock).execute(
+            UpdateTransactionCommand(
+                run.id,
+                run.posted_on,
+                38_000,
+                run.description,
+                splits=(
+                    SplitItem("Feira e laticínios", self.cat["groceries"], 22_000),
+                    SplitItem("Higiene pessoal", self.cat["health"], 9_000),
+                    SplitItem("Casa e limpeza", self.cat["home"], 7_000),
+                ),
+            )
+        )
+        # two plain purchases on one card and one day: pick both and "Mesclar em um só lançamento"
+        self.buy(
+            self.inter_card,
+            today,
+            7_840,
+            "Feira orgânica",
+            "groceries",
+            merchant="Quitanda da Vila",
+        )
+        self.buy(
+            self.inter_card, today, 3_260, "Produtos de limpeza", "home", merchant="Casa Limpa"
+        )
+        # a purchase that was given back: listed, struck through, counted nowhere
+        self.buy(
+            self.nu_card,
+            back(4),
+            29_990,
+            "Tênis esportivo (devolvido)",
+            "shopping",
+            merchant="Centauro",
+        )
+        # typed with " - Estabelecimento": the suffix becomes the merchant and leaves the text
+        self.buy(self.inter_card, back(6), 15_990, "Mouse gamer - Kabum", "shopping")
+        self.buy(self.nu_card, back(5), 8_950, "Capa de celular - amazon.com.br", "shopping")
+        # raw card-statement text and nothing else: left for "Revisão Rápida" (/revisar)
+        self.buy(self.nu_card, back(1), 12_790, "PAG*MERCADOLIVRE 123", "uncategorized")
+        self.buy(self.nu_card, back(2), 6_450, "SHOPEE *BR", "uncategorized")
+        self.buy(self.bb_card, back(3), 9_730, "COMPRA DROGASIL 0451", "uncategorized")
+        with self.uow as work:
+            returned = next(
+                t
+                for t in work.transactions.list_by_account(self.nu_card)
+                if t.description == "Tênis esportivo (devolvido)"
+            )
+        UpdateTransaction(self.uow, self.clock).execute(
+            UpdateTransactionCommand(
+                returned.id,
+                returned.posted_on,
+                29_990,
+                returned.description,
+                is_refunded=True,
+                acknowledge_closed=True,  # its statement may already be closed: this is the seed
+            )
+        )
 
     def _statements(self) -> None:
         """Pay every statement that is due; inform the total of the first closed, unpaid one."""
@@ -532,7 +787,13 @@ class _Builder:
 
     def _summary(self) -> DemoSummary:
         with self.uow as work:
+            everything = work.transactions.list_between(
+                dt.date.min, dt.date.max, include_refunded=True
+            )
             return DemoSummary(
+                itemized=len(work.transactions.splits_for(t.id for t in everything)),
+                pending_review=work.transactions.count_pending_review(self.cat["uncategorized"]),
+                refunded=sum(1 for t in everything if t.is_refunded),
                 institutions=len(work.institutions.list_all()),
                 accounts=len(work.accounts.list_all()),
                 transactions=len(work.transactions.list_between(dt.date.min, dt.date.max)),

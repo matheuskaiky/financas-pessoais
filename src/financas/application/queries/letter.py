@@ -23,6 +23,7 @@ from financas.application.queries.whatif import GetWhatIfFacts
 from financas.domain.models import AccountKind, CategoryKind, HoldingStatus, StatementStatus
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork
+from financas.domain.services.splits import allocations, split_ids
 
 UNCATEGORIZED_SLUG = "uncategorized"
 PREVIOUS_MONTHS = 3
@@ -61,8 +62,15 @@ class GetLetterFacts:
                 (c for c in uow.categories.list_all() if c.slug == UNCATEGORIZED_SLUG), None
             )
             entries = uow.transactions.list_for_competence(month.day(1), month.last_day())
+            splits = uow.transactions.splits_for(split_ids(entries))
             count = (
-                sum(1 for t in entries if t.category_id == uncategorized.id) if uncategorized else 0
+                sum(
+                    1
+                    for t in entries
+                    if any(cat == uncategorized.id for cat, _ in allocations(t, splits))
+                )
+                if uncategorized
+                else 0
             )
         recurring = GetRecurring(self._uow, self._clock).execute()
         recurring_count = (

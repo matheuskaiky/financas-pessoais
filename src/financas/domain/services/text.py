@@ -2,6 +2,8 @@
 
 import unicodedata
 
+from financas.domain.errors import DomainError
+
 
 def clean_text(text: str) -> str:
     """Trim and NFC-normalize text that is stored as data (names, descriptions, notes)."""
@@ -19,3 +21,18 @@ def slugify(text: str) -> str:
     """ASCII slug (``a-z0-9_``) from a display name: ``"Conta Salário"`` → ``conta_salario``."""
     key = normalize_search(text)
     return "_".join("".join(c if c.isascii() and c.isalnum() else " " for c in key).split())
+
+
+MAX_MERCHANT = 120
+
+
+def clean_merchant(text: str | None) -> str | None:
+    """A merchant name as stored: NFC, trimmed, inner whitespace collapsed; empty means none."""
+    if text is None:
+        return None
+    cleaned = " ".join(unicodedata.normalize("NFC", text).split())
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_MERCHANT:
+        raise DomainError("MERCHANT_TOO_LONG", max_length=MAX_MERCHANT)
+    return cleaned

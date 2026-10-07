@@ -268,7 +268,7 @@ def verify_import(uow: UnitOfWork, plan: ImportPlan, account_ids: dict[str, str]
             for t in rows:
                 if t.transfer_id:
                     legs[t.transfer_id].append(t.amount_cents)
-                else:
+                elif t.category_id is not None:
                     validate_category_kind(t.kind, categories[t.category_id].kind)
                 if key in card_keys and t.kind is not TransactionKind.TRANSFER:
                     result.add("CARD_ENTRY_STATEMENT", t.statement_id in statement_ids, key)

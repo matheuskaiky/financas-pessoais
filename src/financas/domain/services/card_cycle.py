@@ -130,3 +130,15 @@ def last_day_in_statement(closing: dt.date) -> dt.date:
 def is_frozen(closing: dt.date, today: dt.date) -> bool:
     """A statement is frozen from its closing date on: its dates never follow the card again."""
     return today >= closing
+
+
+def check_payment_date(paid_on: dt.date, min_date: dt.date, today: dt.date) -> None:
+    """A statement payment is dated between ``min_date`` and today (both included).
+
+    A future payment is refused first (it would distort today's balances and the statement's
+    state; scheduled payments do not exist yet), then one before ``min_date``.
+    """
+    if paid_on > today:
+        raise DomainError("FUTURE_PAYMENT_FORBIDDEN")
+    if paid_on < min_date:
+        raise DomainError("PAYMENT_DATE_BEFORE_PREVIOUS_DUE", min_date=min_date.isoformat())

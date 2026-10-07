@@ -528,3 +528,43 @@ def test_account_add_with_an_opening_balance() -> None:
     assert "valor e a data" in run(
         "account", "add", "Outra", "-i", "banco", "--opening", "10,00", ok=False
     )
+
+
+def test_merchants_backfill_dry_run_then_apply_shows_counts_only(tmp_path: Path) -> None:
+    import sqlite3
+
+    setup_basic()
+    path = tmp_path / "data" / "f.db"
+    with sqlite3.connect(path) as db:
+        account = db.execute(
+            "select id from accounts where nickname = 'Conta Corrente'"
+        ).fetchone()[0]
+        category = db.execute("select id from categories where slug = 'uncategorized'").fetchone()[
+            0
+        ]
+        for number, text in enumerate(("Mouse - Kabum", "PAG*MERCADOLIVRE 123", "Sem pista")):
+            db.execute(
+                "insert into transactions (id, account_id, posted_on, kind, category_id,"
+                " amount_cents, description, description_search, is_recurring)"
+                " values (?, ?, '2026-07-01', 'expense', ?, -1000, ?, ?, 0)",
+                (f"t{number}".ljust(32, "0"), account, category, text, text.lower()),
+            )
+    dry = run("merchants", "backfill", "--dry-run")
+    assert "3 despesas e estornos analisados; 2 mudariam." in dry
+    assert "pelo sufixo da descrição: 1" in dry and "por um nome conhecido na descrição: 1" in dry
+    assert "Nada foi gravado" in dry
+    assert "Kabum" not in dry and "Mouse" not in dry  # counts only: never the text of an entry
+    with sqlite3.connect(path) as db:
+        assert db.execute(
+            "select count(*) from transactions where merchant is not null"
+        ).fetchone() == (0,)
+    done = run("merchants", "backfill")
+    assert "2 mudaram." in done and "1 descrição(ões) perderam o sufixo" in done
+    with sqlite3.connect(path) as db:
+        rows = db.execute("select description, merchant from transactions order by id").fetchall()
+    assert rows == [
+        ("Mouse", "Kabum"),
+        ("PAG*MERCADOLIVRE 123", "Mercado Livre"),
+        ("Sem pista", None),
+    ]
+    assert "0 mudaram." in run("merchants", "backfill")  # nothing left to do

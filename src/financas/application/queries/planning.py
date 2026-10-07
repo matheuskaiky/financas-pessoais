@@ -28,6 +28,7 @@ from financas.domain.services.budget import (
 )
 from financas.domain.services.daily_flow import DayFlow, daily_flow
 from financas.domain.services.recurring import RecurringAlert, recurring_alerts
+from financas.domain.services.splits import split_ids
 
 
 class BudgetRange(StrEnum):
@@ -66,9 +67,14 @@ class GetBudget:
                 transactions = uow.transactions.list_for_competence(
                     months[0].day(1), months[-1].last_day()
                 )
+                splits = uow.transactions.splits_for(split_ids(transactions))
                 for month in months:
                     summary = summarize(
-                        transactions, categories, Period.month(month), statement_months
+                        transactions,
+                        categories,
+                        Period.month(month),
+                        statement_months,
+                        splits=splits,
                     )
                     for row in summary.by_category:
                         spending.setdefault(row.category_id, {})[month] = row.total_cents
@@ -117,6 +123,9 @@ class GetRecurring:
             transactions = uow.transactions.list_for_competence(
                 months[0].day(1), current.last_day()
             )
+            itemized = uow.transactions.splits_for(
+                [t.id for t in transactions if t.category_id is None]
+            )
         amounts: dict[str, dict[YearMonth, int]] = {}
         latest: dict[str, tuple[dt.date, str, str]] = {}
         for t in sorted(transactions, key=lambda t: t.posted_on):
@@ -130,7 +139,13 @@ class GetRecurring:
             key = t.description_search
             amounts.setdefault(key, {})
             amounts[key][month] = amounts[key].get(month, 0) - t.amount_cents
-            latest[key] = (t.posted_on, t.description, t.category_id)
+            category_id = t.category_id
+            if category_id is None:  # an itemized entry: file it under its biggest item's category
+                parts = itemized.get(t.id)
+                if not parts:
+                    continue
+                category_id = max(parts, key=lambda i: i.amount_cents).category_id
+            latest[key] = (t.posted_on, t.description, category_id)
         closed_only = {k: {m: v for m, v in s.items() if m < current} for k, s in amounts.items()}
         alerts = recurring_alerts(closed_only, closed[-1]) if closed else []
         items = [

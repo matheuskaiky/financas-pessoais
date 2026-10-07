@@ -11,6 +11,7 @@ from financas.application.use_cases.catalog import (
     CreateCategoryCommand,
     CreateInstitution,
     CreateInstitutionCommand,
+    RenameCategory,
     SetAccountActive,
     SetAppearance,
     SetAppearanceCommand,
@@ -232,3 +233,38 @@ def test_categories_have_color_but_no_image(
     with pytest.raises(DomainError) as exc:
         use_case.execute(SetAppearanceCommand(AppearanceTarget.CATEGORY, category.id, image=PNG))
     assert code(exc) == "IMAGE_NOT_SUPPORTED"
+
+
+def test_rename_category_keeps_the_slug(uow: MemoryUnitOfWork) -> None:
+    food = uow.categories.get_by_slug("food")
+    assert food
+    renamed = RenameCategory(uow).execute(food.id, "  Restaurantes e Açaí ")
+    assert renamed.name == "Restaurantes e Açaí" and renamed.slug == "food"
+    assert uow.categories.get(food.id) == renamed
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_rename_category_rejects_empty_name(uow: MemoryUnitOfWork, name: str) -> None:
+    food = uow.categories.get_by_slug("food")
+    assert food
+    with pytest.raises(DomainError) as exc:
+        RenameCategory(uow).execute(food.id, name)
+    assert exc.value.code == "EMPTY_NAME"
+
+
+def test_rename_category_name_is_unique_ignoring_case_and_accents(uow: MemoryUnitOfWork) -> None:
+    food = uow.categories.get_by_slug("food")
+    health = uow.categories.get_by_slug("health")
+    assert food and health
+    with pytest.raises(DomainError) as exc:
+        RenameCategory(uow).execute(food.id, "SAUDE")  # "Saúde" exists
+    assert exc.value.code == "DUPLICATE_NAME"
+    assert uow.categories.get(food.id) == food
+    # keeping its own name (even with another case) is not a conflict
+    assert RenameCategory(uow).execute(health.id, "saúde").name == "saúde"
+
+
+def test_rename_unknown_category(uow: MemoryUnitOfWork) -> None:
+    with pytest.raises(DomainError) as exc:
+        RenameCategory(uow).execute("nope", "Algo")
+    assert exc.value.code == "NOT_FOUND"

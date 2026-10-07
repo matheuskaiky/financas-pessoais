@@ -10,6 +10,7 @@ from financas.interfaces import messages
 from financas.interfaces.formatting import (
     format_date,
     format_date_short,
+    format_day_header,
     format_day_label,
     format_month,
     format_month_long,
@@ -117,3 +118,11 @@ def test_format_rate() -> None:
 def test_day_label_names_the_weekday_in_portuguese() -> None:
     assert format_day_label(dt.date(2026, 9, 24)) == "quinta-feira, 24 de setembro"
     assert format_day_label(dt.date(2026, 3, 1)) == "domingo, 1 de março"
+
+
+def test_day_header_is_relative_for_today_and_yesterday() -> None:
+    today = dt.date(2026, 10, 6)
+    assert format_day_header(today, today) == "Hoje · 06 de outubro"
+    assert format_day_header(dt.date(2026, 10, 5), today) == "Ontem · 05 de outubro"
+    assert format_day_header(dt.date(2026, 10, 4), today) == "04 de outubro · Domingo"
+    assert format_day_header(dt.date(2026, 3, 1), today) == "01 de março · Domingo"

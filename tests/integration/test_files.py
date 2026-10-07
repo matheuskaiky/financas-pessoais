@@ -141,3 +141,26 @@ def test_settings_keep_absolute_paths_and_other_databases(
     assert absolute.db_url == f"sqlite:///{tmp_path}/x.db" and absolute.data_dir == tmp_path
     memory = Settings(db_url="sqlite:///:memory:", _env_file=None)  # type: ignore[call-arg]
     assert memory.db_url == "sqlite:///:memory:"
+
+
+def test_the_forbidden_product_name_appears_in_no_shipped_file() -> None:
+    """The quick-review feature is "Revisão Rápida" and nothing else: no screen, label, script,
+    stylesheet, guide or source file may carry the name of a dating app (spelled apart here)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    word = "tin" + "der"
+    checked = 0
+    for folder in ("src", "docs"):
+        for path in (root / folder).rglob("*"):
+            if not path.is_file() or path.suffix not in {
+                ".py", ".html", ".js", ".css", ".md", ".txt", ".json", ".toml", ".csv",
+            }:  # fmt: skip
+                continue
+            checked += 1
+            assert word not in path.read_text(encoding="utf-8").lower(), path
+    assert checked > 100
+    for name in ("README.md", "pyproject.toml"):
+        file = root / name
+        if file.exists():
+            assert word not in file.read_text(encoding="utf-8").lower(), name

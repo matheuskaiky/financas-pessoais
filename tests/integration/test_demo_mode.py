@@ -26,6 +26,7 @@ from financas.application.queries.investments import GetNetWorth
 from financas.application.use_cases.catalog import CreateInstitution, CreateInstitutionCommand
 from financas.container import Container, build_container
 from financas.domain.models import AccountKind, StatementStatus, TransactionKind
+from financas.domain.money import YearMonth
 from financas.domain.rules import validate_category_kind, validate_sign
 from financas.infrastructure.db.demo_seed import demo_is_empty, seed_demo, wipe_demo_files
 from financas.infrastructure.settings import Settings
@@ -181,7 +182,7 @@ def test_seed_demo_command_creates_and_recreates_only_the_demo(project: Path) ->
     stamp = (project / "demo.db").stat().st_mtime_ns
     forced = runner.invoke(cli.app, ["seed-demo", "--force"])
     assert forced.exit_code == 0 and "recriado" in forced.output, forced.output
-    assert re.search(r"6 contas, \d+ lançamentos, \d+ faturas, 3 compras parceladas", forced.output)
+    assert re.search(r"6 contas, \d+ lançamentos, \d+ faturas, 4 compras parceladas", forced.output)
     assert (project / "demo.db").stat().st_mtime_ns != stamp
     assert fingerprint(project) == before
 
@@ -275,7 +276,7 @@ def test_demo_data_has_the_planned_shape(demo: Container) -> None:
     assert (cards[nu].due_day, cards[nu].closing_days_before_due) == (26, 7)
     assert (cards[inter].due_day, cards[inter].closing_days_before_due) == (20, 6)
     assert {h.name for h in holdings} == {"Tesouro Selic 2029", "CDB Banco Inter 100% CDI"}
-    assert len(plans) == 3
+    assert len(plans) == 4  # three plain plans and the itemized one
     assert min(t.posted_on for t in entries) >= dt.date(2026, 1, 1)
     descriptions = {t.description for t in entries}
     for expected in ("Salário CLT", "Aluguel", "Condomínio", "iFood", "Uber", "Netflix", "Spotify"):
@@ -283,11 +284,61 @@ def test_demo_data_has_the_planned_shape(demo: Container) -> None:
     assert any(d.startswith("Farmácia") or d in {"Drogasil", "Droga Raia"} for d in descriptions)
 
 
+def test_demo_showcases_itemizing_merging_and_refunds(demo: Container) -> None:
+    """Every capability the user can reach from the screens has data in the demo (CLAUDE.md 14)."""
+    from financas.application.queries.cards import statement_view
+    from financas.domain.services.splits import validate_split_amounts
+
+    with demo.uow as work:
+        everything = work.transactions.list_between(dt.date.min, dt.date.max, include_refunded=True)
+        splits = work.transactions.splits_for(t.id for t in everything)
+        by_id = {t.id: t for t in everything}
+        assert splits, "an itemized entry is seeded"
+        for parent_id, items in splits.items():  # the sum invariant holds for every one
+            parent = by_id[parent_id]
+            validate_split_amounts(-parent.amount_cents, [i.amount_cents for i in items])
+        run = next(t for t in everything if t.description == "Compra do mês no Pão de Açúcar")
+        assert [i.amount_cents for i in splits[run.id]] == [22_000, 9_000, 7_000]
+        assert len({i.category_id for i in splits[run.id]}) == 3
+        assert run.amount_cents == -38_000  # the parent keeps the whole amount
+
+        # two plain purchases of one card, one day and one statement: the "Mesclar" demo
+        pair = [t for t in everything if t.description in {"Feira orgânica", "Produtos de limpeza"}]
+        assert len(pair) == 2
+        assert len({(t.account_id, t.statement_id, t.posted_on) for t in pair}) == 1
+        assert all(t.plan_id is None and not t.is_refunded and t.id not in splits for t in pair)
+
+        # a refunded purchase: listed, flagged, and out of its statement's total
+        returned = next(t for t in everything if t.is_refunded)
+        assert returned.kind is TransactionKind.EXPENSE and returned.statement_id
+        statement = work.statements.get(returned.statement_id)
+        assert statement
+        view = statement_view(work, statement, TODAY)
+        counted = [t for t in work.transactions.list_by_statement(statement.id)]
+        assert returned.id not in {t.id for t in counted}
+        assert view.total_cents == -sum(t.amount_cents for t in counted)
+
+
+def test_demo_summary_counts_the_showcase(project: Path, seeded_template: Path) -> None:
+    c = demo_container(project, template=seeded_template)
+    try:
+        with c.uow as work:
+            everything = work.transactions.list_between(
+                dt.date.min, dt.date.max, include_refunded=True
+            )
+            assert (
+                len(work.transactions.splits_for(t.id for t in everything)) == 4
+            )  # the supermarket run and the three installments of the itemized plan
+            assert sum(1 for t in everything if t.is_refunded) == 1
+    finally:
+        c.close()
+
+
 def test_installment_plans_put_the_remainder_on_the_first_installment(demo: Container) -> None:
     expected = {"Smartphone Galaxy 10x": (349_907, 10), "Sofá retrátil 6x": (329_999, 6)}
     with demo.uow as work:
         plans = {p.description: p for p in work.plans.list_all()}
-        assert set(plans) >= set(expected) and len(plans) == 3
+        assert set(plans) >= set(expected) and len(plans) == 4
         for description, plan in plans.items():
             parts = sorted(
                 work.transactions.list_by_plan(plan.id), key=lambda t: t.installment_number or 0
@@ -305,6 +356,48 @@ def test_installment_plans_put_the_remainder_on_the_first_installment(demo: Cont
             t.statement_id for p in plans.values() for t in work.transactions.list_by_plan(p.id)
         }
         assert len(statements) >= 6  # installments spread over many statements
+
+
+def test_demo_has_an_itemized_installment_plan_that_reconciles_to_the_cent(demo: Container) -> None:
+    from financas.domain.services.splits import allocations
+
+    with demo.uow as work:
+        plan = next(p for p in work.plans.list_all() if p.description.startswith("Monitor gamer"))
+        parts = work.transactions.list_by_plan(plan.id)
+        splits = work.transactions.splits_for([t.id for t in parts])
+        shopping = work.categories.get_by_slug("shopping")
+        home = work.categories.get_by_slug("home")
+    assert shopping and home and len(parts) == 3
+    assert [-t.amount_cents for t in parts] == [15_000] * 3  # R$ 450,00 in 3 x R$ 150,00
+    assert all(t.category_id is None for t in parts)  # no installment has a category of its own
+    rows = [[(i.description, i.amount_cents) for i in splits[t.id]] for t in parts]
+    assert rows == [  # 117,00 + 33,00 · 117,00 + 33,00 · 116,00 + 34,00
+        [("Monitor Gamer", 11_667), ("Cabo HDMI e Suporte", 3_333)],
+        [("Monitor Gamer", 11_667), ("Cabo HDMI e Suporte", 3_333)],
+        [("Monitor Gamer", 11_666), ("Cabo HDMI e Suporte", 3_334)],
+    ]
+    for t in parts:  # every installment adds up, and so does what the categories see
+        assert sum(c for _, c in allocations(t, splits)) == t.amount_cents
+    assert sum(i.amount_cents for t in parts for i in splits[t.id]) == 45_000
+    assert plan.category_id == shopping.id
+
+
+def test_demo_entries_list_consolidates_every_installment_plan_into_one_purchase(
+    demo: Container,
+) -> None:
+    from financas.application.queries.plan_purchases import ListPlanPurchases
+
+    purchases = ListPlanPurchases(demo.uow).execute()
+    with demo.uow as work:
+        plans = work.plans.list_all()
+    assert len(purchases) == len(plans) >= 4  # one row per plan, none lost
+    monitor = next(p for p in purchases if p.plan.description.startswith("Monitor gamer"))
+    assert (monitor.total_cents, monitor.count, monitor.installment_cents) == (45_000, 3, 15_000)
+    assert [(i.description, i.total_cents) for i in monitor.items] == [
+        ("Monitor Gamer", 35_000),
+        ("Cabo HDMI e Suporte", 10_000),
+    ]
+    assert monitor.items[0].breakdown == ((2, 11_667), (1, 11_666))  # 350,00 over three statements
 
 
 def test_cards_show_every_status_and_both_limit_badges(demo: Container) -> None:
@@ -330,7 +423,10 @@ def test_every_entry_honors_the_domain_rules(demo: Container) -> None:
     assert len(entries) > 300
     for t in entries:
         validate_sign(t.kind, t.amount_cents)
-        validate_category_kind(t.kind, categories[t.category_id].kind)
+        if t.category_id is not None:  # only an itemized expense has none: its items do
+            validate_category_kind(t.kind, categories[t.category_id].kind)
+        else:
+            assert t.kind is TransactionKind.EXPENSE
         if t.statement_id is not None:  # statement x account
             assert accounts[t.account_id].kind is AccountKind.CREDIT_CARD
             assert statements[t.statement_id].account_id == t.account_id
@@ -442,6 +538,92 @@ def test_every_page_renders_on_the_demo(client: TestClient) -> None:
         response = client.get(path)
         assert response.status_code == 200, path
         assert "Modo demonstração" in response.text, path
+
+
+def test_demo_merchants_feed_the_ranking_and_the_suggestions(demo: Container) -> None:
+    from financas.application.queries.merchants import GetTopMerchants, ListMerchants
+    from financas.application.queries.summary import Period
+
+    names = ListMerchants(demo.uow).execute()
+    for expected in (
+        "Amazon",
+        "Uber",
+        "iFood",
+        "Mercado Livre",
+        "Droga Raia",
+        "Posto Ipiranga",
+        "Restaurante Mocotó",
+        "Supermercado Pão de Açúcar",
+    ):
+        assert expected in names, expected
+    ranking = GetTopMerchants(demo.uow).execute(Period.month(YearMonth(2026, 9)))
+    assert len(ranking.rows) >= 5 and ranking.unidentified is None  # a closed month is filled in
+    assert ranking.rows[0].total_spent_cents >= ranking.rows[-1].total_spent_cents
+    assert all(r.transaction_count >= 1 and r.average_ticket_cents > 0 for r in ranking.rows)
+    # the three entries waiting in "Revisão Rápida" are the unidentified ones of the open month
+    october = GetTopMerchants(demo.uow).execute(Period.month(YearMonth(2026, 10)))
+    assert october.unidentified is not None and october.unidentified.transaction_count == 3
+
+
+def test_merchant_analytics_render_with_the_synthetic_merchants(client: TestClient) -> None:
+    page = client.get("/analises?month=2026-09")
+    assert page.status_code == 200
+    section = page.text.split('id="h-mer"')[1]
+    for merchant in ("Imobiliária Central", "Supermercado Pão de Açúcar"):
+        assert merchant in section, merchant
+    assert 'class="mer-share"' in section and "% da despesa" in section
+    october = client.get("/analises?month=2026-10").text.split('id="h-mer"')[1]
+    assert "Outros / Sem identificação" in october  # the entries waiting for review
+    entries = client.get("/entries?month=2026-09").text
+    assert 'class="c-merchant"' in entries and '<datalist id="merchants-list">' in entries
+
+
+def forbidden_word() -> str:
+    return "tin" + "der"  # never in the product's copy (spelled apart so this file never says it)
+
+
+def test_demo_has_three_expenses_waiting_in_the_review_deck(demo: Container) -> None:
+    from financas.application.queries.review import CountPendingReview, GetReviewDeck
+
+    assert CountPendingReview(demo.uow).execute() == 3
+    with demo.uow as work:
+        everything = work.transactions.list_between(dt.date.min, dt.date.max, include_refunded=True)
+    waiting = sorted(
+        t.description for t in everything if t.kind.value == "expense" and not t.merchant
+    )
+    assert waiting == ["COMPRA DROGASIL 0451", "PAG*MERCADOLIVRE 123", "SHOPEE *BR"]
+    # what the deck suggests for each: aliases and what the demo's own entries say
+    suggestions: dict[str, str | None] = {}
+    seen: list[str] = []
+    for _ in range(3):
+        deck = GetReviewDeck(demo.uow).execute(seen)
+        assert deck.card is not None
+        suggestions[deck.card.entry.description] = deck.card.suggested_merchant
+        seen.append(deck.card.entry.id)
+    assert suggestions == {
+        "PAG*MERCADOLIVRE 123": "Mercado Livre",
+        "SHOPEE *BR": "Shopee",
+        "COMPRA DROGASIL 0451": "Drogasil",
+    }
+    assert GetReviewDeck(demo.uow).execute(seen).card is None
+
+
+def test_demo_suffix_entries_were_parsed_when_they_were_typed(demo: Container) -> None:
+    with demo.uow as work:
+        entries = {
+            t.description: t for t in work.transactions.list_between(dt.date.min, dt.date.max)
+        }
+    assert entries["Mouse gamer"].merchant == "Kabum"
+    assert entries["Capa de celular"].merchant == "Amazon"  # the alias, not "amazon.com.br"
+    assert not any(" - " in description for description in entries)
+
+
+def test_review_deck_renders_on_the_demo_without_the_forbidden_name(client: TestClient) -> None:
+    page = client.get("/revisar")
+    assert page.status_code == 200 and "Revisão Rápida" in page.text
+    assert "para revisar" in page.text and "Salvar e avançar" in page.text
+    assert forbidden_word() not in page.text.lower()
+    assert '<span class="nav-count">(3)</span>' in client.get("/").text  # the sidebar counter
 
 
 def test_chart_endpoints_answer_with_real_shapes(client: TestClient) -> None:
@@ -573,6 +755,35 @@ def test_the_committed_demo_database_is_synthetic_and_healthy() -> None:
         "Renda fixa",
     }
     assert institutions == {"Banco do Brasil", "Nubank", "Banco Inter", "Tesouro Nacional"}
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as db:
+        # the committed file is at the newest schema and shows the newest features (CLAUDE.md 14)
+        from financas.infrastructure.db.migrate import head_revision
+
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone() == (
+            head_revision(f"sqlite:///{path}"),
+        )
+        assert db.execute("PRAGMA journal_mode").fetchone() == ("delete",)  # not WAL: it is tracked
+        assert db.execute("SELECT count(*) FROM transaction_splits").fetchone()[0] >= 3
+        assert db.execute("SELECT count(DISTINCT merchant) FROM transactions").fetchone()[0] >= 8
+        # an itemized entry has no category of its own: its items carry them (CLAUDE.md 9.10)
+        assert (
+            db.execute(
+                "SELECT count(*) FROM transactions t WHERE t.category_id IS NOT NULL AND EXISTS"
+                " (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)"
+            ).fetchone()[0]
+            == 0
+        )
+        # exactly three expenses wait in the review deck (no merchant), as in the seed
+        assert (
+            db.execute(
+                "SELECT count(*) FROM transactions WHERE kind = 'expense' AND is_refunded = 0"
+                " AND transfer_id IS NULL AND (merchant IS NULL OR merchant = '')"
+            ).fetchone()[0]
+            == 3
+        )
+        assert (
+            db.execute("SELECT count(*) FROM transactions WHERE is_refunded = 1").fetchone()[0] >= 1
+        )
     assert (
         not (ROOT / "data" / "demo.db-wal").exists()
         or (ROOT / "data" / "demo.db-wal").stat().st_size == 0

@@ -44,6 +44,24 @@ def readable_text_color(background: str) -> str:
     )
 
 
+CARD_INK = "#0F172A"  # the dark text of a light card: deep slate, softer than pure black
+_AA = 4.5
+
+
+def card_text_color(background: str) -> str:
+    """Text colour for a card face: deep slate on light/bright colours, white on rich/dark ones.
+
+    Picks whichever of white and slate has the better WCAG contrast, and only falls back to pure
+    black when neither reaches AA (4.5:1), which happens in a narrow band of mid-luminance colours.
+    """
+    white = contrast_ratio(background, "#FFFFFF")
+    ink = contrast_ratio(background, CARD_INK)
+    best, color = (white, "#FFFFFF") if white >= ink else (ink, CARD_INK)
+    if best >= _AA:
+        return color
+    return readable_text_color(background)
+
+
 def initials(name: str) -> str:
     words = [w for w in name.split() if w[:1].isalnum()]
     letters = "".join(w[0] for w in words[:2]) or name.strip()[:1]

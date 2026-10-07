@@ -483,3 +483,292 @@ def test_database_rejects_more_invalid_rows(sql_uow: SqlUnitOfWork) -> None:
         " values ('ok', 'k', '2026-12', '2026-12-25', '2027-01-05')"
     )
     raw.close()
+
+
+def test_refunded_migration_keeps_rows_defaults_to_false_and_round_trips(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "c3a9d5f7e2b1")  # the schema before ``is_refunded``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense')"
+    )
+    raw.execute(
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring)"
+        " values ('t1', 'a', '2026-07-01', 'expense', 'c', -500, 'x', 'x', 0)"
+    )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select id, amount_cents, is_refunded from transactions").fetchall() == [
+            ("t1", -500, 0)
+        ]
+        db.execute("update transactions set is_refunded = 1 where id = 't1'")  # an expense: fine
+        with pytest.raises(sqlite3.IntegrityError):  # only expenses can be refunded
+            db.execute(
+                "insert into transactions (id, account_id, posted_on, kind, category_id,"
+                " amount_cents, description, description_search, is_recurring, is_refunded)"
+                " values ('t2', 'a', '2026-07-01', 'income', 'c', 500, 'x', 'x', 0, 1)"
+            )
+        with pytest.raises(sqlite3.IntegrityError):  # and the flag cannot be NULL
+            db.execute("update transactions set is_refunded = NULL where id = 't1'")
+
+    command.downgrade(config, "c3a9d5f7e2b1")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        columns = [r[1] for r in db.execute("pragma table_info(transactions)")]
+        assert "is_refunded" not in columns
+        assert db.execute("select count(*) from transactions").fetchone() == (1,)
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select is_refunded from transactions").fetchall() == [(0,)]
+
+
+def test_splits_migration_adds_the_table_with_cascade_and_check_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "d4e8f1a2b6c7")  # the schema before ``transaction_splits``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense')"
+    )
+    raw.execute(
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring)"
+        " values ('t1', 'a', '2026-07-01', 'expense', 'c', -1000, 'x', 'x', 0)"
+    )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        db.execute("pragma foreign_keys = on")
+        assert db.execute("select count(*) from transactions").fetchone() == (1,)
+        db.execute(
+            "insert into transaction_splits values ('s1', 't1', 'item 1', 'c', 600),"
+            " ('s2', 't1', 'item 2', 'c', 400)"
+        )
+        with pytest.raises(sqlite3.IntegrityError):  # an item is a positive amount
+            db.execute("insert into transaction_splits values ('s3', 't1', 'x', 'c', 0)")
+        with pytest.raises(sqlite3.IntegrityError):  # and belongs to a real entry
+            db.execute("insert into transaction_splits values ('s4', 'nope', 'x', 'c', 5)")
+        db.execute("delete from transactions where id = 't1'")  # ON DELETE CASCADE
+        assert db.execute("select count(*) from transaction_splits").fetchone() == (0,)
+
+    command.downgrade(config, "d4e8f1a2b6c7")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        tables = {r[0] for r in db.execute("select name from sqlite_master where type = 'table'")}
+        assert "transaction_splits" not in tables
+    command.upgrade(config, "head")
+
+
+def test_merchant_migration_adds_an_indexed_nullable_column_and_round_trips(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "e5f9a2b3c8d1")  # the schema before ``merchant``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense')"
+    )
+    raw.execute(
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring)"
+        " values ('t1', 'a', '2026-07-01', 'expense', 'c', -1000, 'x', 'x', 0)"
+    )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select id, merchant from transactions").fetchall() == [("t1", None)]
+        db.execute("update transactions set merchant = 'Amazon' where id = 't1'")
+        indexes = {r[1] for r in db.execute("pragma index_list(transactions)")}
+        assert "ix_transactions_merchant" in indexes
+        columns = {r[1]: r for r in db.execute("pragma table_info(transactions)")}
+        assert columns["merchant"][3] == 0  # nullable
+
+    command.downgrade(config, "e5f9a2b3c8d1")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert "merchant" not in [r[1] for r in db.execute("pragma table_info(transactions)")]
+        assert db.execute("select count(*) from transactions").fetchone() == (1,)
+    command.upgrade(config, "head")
+
+
+def test_backfill_migration_enriches_legacy_rows_once_and_keeps_the_rest(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "f6a1b3c9d2e4")  # the schema before the backfill
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense'),"
+        " ('s', 'salary', 'Salário', 'income', 'income')"
+    )
+    raw.execute(
+        "insert into installment_plans"
+        " (id, account_id, description, category_id, installment_total)"
+        " values ('p', 'a', 'Fone - Amazon', 'c', 2)"
+    )
+    legacy = [
+        ("t1", "expense", "Mouse - Kabum", None, None),
+        ("t2", "expense", "PAG*MERCADOLIVRE 123", None, None),
+        ("t3", "expense", "Remédio", "Drogasil", None),
+        ("t4", "expense", "Remédio", None, None),  # learns "Drogasil" from t3
+        ("t5", "expense", "Almoço", "mercadolivre", None),  # an alias spelling
+        ("t6", "expense", "Almoço", "Restaurante do Zé", None),  # typed: untouched
+        ("t7", "income", "Salário - Empresa", None, None),  # not an expense: untouched
+        ("t8", "expense", "Fone - Amazon", None, "p"),  # an installment: the plan follows
+        ("t9", "expense", "Aluguel - Outubro", None, None),  # a month, not a merchant
+    ]
+    for entry_id, kind, text, merchant, plan in legacy:
+        category = "s" if kind == "income" else "c"
+        sign = 1 if kind == "income" else -1
+        raw.execute(
+            "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+            " description, description_search, is_recurring, merchant, plan_id, installment_number)"
+            " values (?, 'a', '2026-07-01', ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            (
+                entry_id,
+                kind,
+                category,
+                sign * 1000,
+                text,
+                text.lower(),
+                merchant,
+                plan,
+                1 if plan else None,
+            ),
+        )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        rows = {
+            r[0]: r[1:]
+            for r in db.execute(
+                "select id, description, description_search, merchant from transactions"
+            )
+        }
+        plan_text = db.execute("select description from installment_plans").fetchone()[0]
+    assert rows["t1"] == ("Mouse", "mouse", "Kabum")
+    assert rows["t2"] == ("PAG*MERCADOLIVRE 123", "pag*mercadolivre 123", "Mercado Livre")
+    assert rows["t3"][2] == "Drogasil" and rows["t4"][2] == "Drogasil"
+    assert rows["t5"][2] == "Mercado Livre"
+    assert rows["t6"][2] == "Restaurante do Zé"
+    assert rows["t7"] == ("Salário - Empresa", "salário - empresa", None)
+    assert rows["t8"][0] == "Fone" and rows["t8"][2] == "Amazon" and plan_text == "Fone"
+    assert rows["t9"] == ("Aluguel - Outubro", "aluguel - outubro", None)
+
+    command.downgrade(config, "f6a1b3c9d2e4")  # the schema goes back; the data stays as it is
+    command.upgrade(config, "head")  # and a second pass finds nothing left to do
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select description from transactions where id = 't1'").fetchone() == (
+            "Mouse",
+        )
+
+
+def test_itemized_parent_migration_clears_their_category_and_restores_it_on_downgrade(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "a8d4e6f1b2c3")  # category_id is still NOT NULL here
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('g', 'groceries', 'Supermercado', 'essential', 'expense'),"
+        " ('h', 'health', 'Saúde', 'essential', 'expense'),"
+        " ('s', 'salary', 'Salário', 'income', 'income'),"
+        " ('u', 'uncategorized', 'Não categorizado', 'review', 'expense')"
+    )
+    for entry_id, kind, category, cents in (
+        ("big", "expense", "g", -1000),  # itemized below: loses its category
+        ("plain", "expense", "g", -500),
+        ("pay", "income", "s", 900),
+    ):
+        raw.execute(
+            "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+            " description, description_search, is_recurring)"
+            " values (?, 'a', '2026-07-01', ?, ?, ?, 'x', 'x', 0)",
+            (entry_id, kind, category, cents),
+        )
+    raw.execute(
+        "insert into transaction_splits values ('s1', 'big', 'Feira', 'g', 300),"
+        " ('s2', 'big', 'Remédio', 'h', 700)"
+    )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        categories = dict(db.execute("select id, category_id from transactions"))
+        assert categories == {"big": None, "plain": "g", "pay": "s"}  # only the itemized parent
+        assert db.execute("select count(*) from transaction_splits").fetchone() == (2,)  # kept
+        db.execute("update transactions set category_id = NULL where id = 'plain'")  # an expense
+        with pytest.raises(sqlite3.IntegrityError):  # but an income always has its category
+            db.execute("update transactions set category_id = NULL where id = 'pay'")
+
+    command.downgrade(config, "a8d4e6f1b2c3")  # each such parent gets its biggest item's category
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        restored = dict(db.execute("select id, category_id from transactions where id = 'big'"))
+        assert restored == {"big": "h"}  # 7,00 of Saúde is the biggest item
+        # the expense the test emptied by hand is "uncategorized" again: nothing is left NULL
+        assert db.execute("select category_id from transactions where id = 'plain'").fetchone() == (
+            "u",
+        )
+        info = {r[1]: r for r in db.execute("pragma table_info(transactions)")}
+        assert info["category_id"][3] == 1  # NOT NULL again
+    command.upgrade(config, "head")

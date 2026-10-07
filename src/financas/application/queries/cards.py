@@ -24,7 +24,8 @@ from financas.domain.models import (
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork, Work
-from financas.domain.services.card_cycle import closing_date
+from financas.domain.services.card_cycle import assign_statement, closing_date, statement_dates
+from financas.domain.services.countdown import Countdown, countdown
 from financas.domain.services.statements import (
     LimitUsage,
     Reconciliation,
@@ -48,10 +49,27 @@ class StatementView:
 
 
 @dataclass(frozen=True)
+class CardTelemetry:
+    """What the card face shows: the open statement's running total and the day counts.
+
+    The *open* statement is the one that receives a purchase made today. A card that has none yet
+    (no purchase in this cycle) gets the dates its settings give and a balance of zero. On the
+    closing day itself the statement is already closed (9.3), so the open one is the next.
+    """
+
+    open_balance_cents: int  # purchases and charges minus refunds on the open statement
+    closing: Countdown  # of the open statement
+    due: Countdown  # of the open statement
+    pending_month: YearMonth | None = None  # oldest closed statement still owing money...
+    pending_due: Countdown | None = None  # ...and how far its due date is
+
+
+@dataclass(frozen=True)
 class CardView:
     account: Account
     usage: LimitUsage
     statements: list[StatementView]  # oldest month first
+    telemetry: CardTelemetry | None = None
 
     @property
     def open_statement(self) -> StatementView | None:
@@ -82,6 +100,7 @@ class PlanView:
     remaining_count: int
     to_pay_cents: int
     next_statement_month: YearMonth | None
+    future_count: int = 0  # installments on statements that are not open yet (can be anticipated)
 
 
 @dataclass(frozen=True)
@@ -98,6 +117,38 @@ def is_locked(view: StatementView) -> bool:
     An empty closed statement counts as paid for the status but holds nothing to protect.
     """
     return view.status is StatementStatus.PAID and (view.total_cents != 0 or view.paid_cents != 0)
+
+
+@dataclass(frozen=True)
+class PaymentBounds:
+    """The dates a payment of a statement may have (9.5)."""
+
+    min_date: dt.date
+    max_date: dt.date  # today: payments are never dated in the future
+    from_previous_due: bool  # False: the statement is the card's first, ``min_date`` is its opening
+
+
+def payment_date_boundaries(
+    uow: Work, statement: Statement, today: dt.date | None = None
+) -> PaymentBounds:
+    """``min_date`` is the due date of the card's previous statement (the closest one before this
+    one); a first statement has none, so it starts when its cycle opens (the closing date of the
+    month before, from the card's settings). ``max_date`` is today."""
+    card = uow.accounts.get(statement.account_id)
+    if card is None:
+        raise DomainError("NOT_FOUND", entity="account")
+    previous = max(
+        (s for s in uow.statements.list_for_card(card.id) if s.month < statement.month),
+        key=lambda s: s.month,
+        default=None,
+    )
+    if previous is not None:
+        return PaymentBounds(previous.due_date, today or dt.date.today(), True)
+    assert card.due_day is not None and card.closing_days_before_due is not None
+    opening, _ = statement_dates(
+        statement.month.add_months(-1), card.due_day, card.closing_days_before_due
+    )
+    return PaymentBounds(opening, today or dt.date.today(), False)
 
 
 def card_accounts(uow: Work) -> list[Account]:
@@ -171,6 +222,30 @@ def statement_view(uow: Work, statement: Statement, today: dt.date) -> Statement
     )
 
 
+def card_telemetry(card: Account, statements: list[StatementView], today: dt.date) -> CardTelemetry:
+    open_view = next((s for s in statements if s.status is StatementStatus.OPEN), None)
+    if open_view is not None:
+        closing, due = open_view.statement.closing_date, open_view.statement.due_date
+    else:
+        assert card.due_day is not None and card.closing_days_before_due is not None
+        known = {
+            s.statement.month: (s.statement.closing_date, s.statement.due_date) for s in statements
+        }
+        assignment = assign_statement(today, card.due_day, card.closing_days_before_due, known)
+        closing, due = assignment.closing_date, assignment.due_date
+    owing = [
+        s for s in statements if s.status is StatementStatus.CLOSED and s.outstanding_cents > 0
+    ]
+    pending = min(owing, key=lambda s: s.statement.due_date, default=None)
+    return CardTelemetry(
+        open_balance_cents=open_view.total_cents if open_view else 0,
+        closing=countdown(closing, today),
+        due=countdown(due, today),
+        pending_month=pending.statement.month if pending else None,
+        pending_due=countdown(pending.statement.due_date, today) if pending else None,
+    )
+
+
 class ListCards:
     def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
@@ -182,11 +257,13 @@ class ListCards:
         with self._uow as uow:
             for card in card_accounts(uow):
                 committed = -sum(t.amount_cents for t in uow.transactions.list_by_account(card.id))
+                views = statement_views(uow, card, today)
                 cards.append(
                     CardView(
                         card,
                         limit_usage(committed, card.credit_limit_cents),
-                        statement_views(uow, card, today),
+                        views,
+                        card_telemetry(card, views, today),
                     )
                 )
         every = [s for c in cards for s in c.statements]
@@ -218,7 +295,7 @@ class GetStatementDetail:
             card = uow.accounts.get(statement.account_id)
             assert card is not None
             view = statement_view(uow, statement, self._clock.today())
-            entries = uow.transactions.list_by_statement(statement_id)
+            entries = uow.transactions.list_by_statement(statement_id, include_refunded=True)
         return StatementDetail(card, view, entries)
 
 
@@ -258,6 +335,11 @@ class ListActiveInstallments:
                         to_pay_cents=-sum(t.amount_cents for t in unpaid),
                         next_statement_month=min(
                             (months[t.statement_id] for t in unpaid if t.statement_id), default=None
+                        ),
+                        future_count=sum(
+                            1
+                            for t in unpaid
+                            if statuses.get(t.statement_id or "") is StatementStatus.FUTURE
                         ),
                     )
                 )

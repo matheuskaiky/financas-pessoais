@@ -122,3 +122,73 @@ def test_the_maximum_is_accepted() -> None:
         count=120, first_number=1, first_statement=YM(2026, 7), total_cents=12_000
     )
     assert len(lines) == 120 and lines[-1].statement_month == YM(2036, 6)
+
+
+# --- distributing the items of an installment plan (domain/services/splits.distribute_items) ---
+
+import random  # noqa: E402
+
+from financas.domain.services.splits import distribute_items  # noqa: E402
+
+
+def check_matrix(amounts: list[int], items: list[int], matrix: list[list[int]]) -> None:
+    assert len(matrix) == len(amounts) and all(len(row) == len(items) for row in matrix)
+    assert all(cell >= 0 for row in matrix for cell in row)
+    for amount, row in zip(amounts, matrix, strict=True):  # every installment adds up
+        assert sum(row) == amount
+    for j, item in enumerate(items):  # every item adds up across the plan
+        assert sum(row[j] for row in matrix) == item
+
+
+def test_the_spec_example_450_in_three_installments() -> None:
+    """R$ 450,00 in 3x R$ 150,00: Monitor R$ 350,00 and cables R$ 100,00."""
+    matrix = distribute_items([15_000] * 3, [35_000, 10_000])
+    assert matrix == [[11_667, 3_333], [11_667, 3_333], [11_666, 3_334]]  # 117+33, 117+33, 116+34
+    check_matrix([15_000] * 3, [35_000, 10_000], matrix)
+
+
+def test_100_in_three_installments_across_three_categories_reconciles_to_the_cent() -> None:
+    amounts = split_total(10_000, 3)  # the first installment takes the remainder: 3334, 3333, 3333
+    assert amounts == [3_334, 3_333, 3_333]
+    items = [5_000, 3_000, 2_000]
+    matrix = distribute_items(amounts, items)
+    check_matrix(amounts, items, matrix)
+    assert [sum(row) for row in matrix] == amounts  # no cent lost or invented
+    assert sum(map(sum, matrix)) == 10_000
+
+
+def test_equal_installments_follow_the_floor_plus_leftover_rule() -> None:
+    """Every item but the last: ⌊C/N⌋ each, one extra cent to the first C mod N installments."""
+    matrix = distribute_items([1_000] * 3, [1_000, 1_000, 1_000])
+    assert [row[0] for row in matrix] == [334, 333, 333]  # 1000 = 3*333 + 1
+    check_matrix([1_000] * 3, [1_000, 1_000, 1_000], matrix)
+    # an item smaller than the number of installments leaves some cells empty (callers skip them)
+    tiny = distribute_items([400, 400, 300, 300], [2, 1_398])
+    assert [row[0] for row in tiny] == [1, 1, 0, 0]
+    check_matrix([400, 400, 300, 300], [2, 1_398], tiny)
+
+
+def test_one_item_takes_every_installment_whole() -> None:
+    assert distribute_items([3_334, 3_333, 3_333], [10_000]) == [[3_334], [3_333], [3_333]]
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_random_plans_never_lose_or_invent_a_cent(seed: int) -> None:
+    rng = random.Random(seed)
+    for _ in range(400):
+        count, kinds = rng.randint(1, 12), rng.randint(1, 6)
+        total = rng.randint(max(count, kinds) * 2, 500_000)
+        amounts = split_total(total, count)
+        cuts = sorted(rng.sample(range(1, total), kinds - 1)) if kinds > 1 else []
+        items = [b - a for a, b in zip([0, *cuts], [*cuts, total], strict=True)]
+        check_matrix(amounts, items, distribute_items(amounts, items))
+
+
+def test_distribution_refuses_inconsistent_input() -> None:
+    with pytest.raises(DomainError) as short:
+        distribute_items([1_000, 1_000], [1_500, 400])
+    assert short.value.code == "SPLIT_SUM_MISMATCH"
+    assert dict(short.value.params)["remaining_cents"] == 100
+    with pytest.raises(DomainError) as zero:
+        distribute_items([1_000], [1_000, 0])
+    assert zero.value.code == "AMOUNT_NOT_POSITIVE"

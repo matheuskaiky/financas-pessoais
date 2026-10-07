@@ -3,13 +3,18 @@
 import datetime as dt
 from dataclasses import dataclass, replace
 
-from financas.application.queries.cards import is_locked, statement_view
+from financas.application.queries.cards import (
+    is_locked,
+    payment_date_boundaries,
+    statement_view,
+)
 from financas.application.use_cases._cards import (
     assignment_for,
     ensure_statement,
     require_card,
 )
-from financas.application.use_cases._common import found, new_id
+from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases.transactions import SplitItem, checked_split_item
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     Account,
@@ -17,20 +22,25 @@ from financas.domain.models import (
     CategoryKind,
     InstallmentPlan,
     Statement,
+    StatementStatus,
     Transaction,
     TransactionKind,
+    TransactionSplit,
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork, Work
 from financas.domain.rules import validate_card_settings
 from financas.domain.services.card_cycle import (
     StatementAssignment,
+    check_payment_date,
     is_frozen,
     last_day_in_statement,
     statement_dates,
 )
-from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedule
-from financas.domain.services.text import clean_text, normalize_search
+from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedule, split_total
+from financas.domain.services.merchants import settle_description
+from financas.domain.services.splits import distribute_items, validate_split_amounts
+from financas.domain.services.text import clean_merchant, clean_text, normalize_search
 
 
 class SetCardSettings:
@@ -110,6 +120,8 @@ class CardPurchaseCommand:
     statement_month: YearMonth | None = None
     is_recurring: bool = False
     notes: str | None = None
+    merchant: str | None = None
+    splits: tuple[SplitItem, ...] = ()  # itemize a single payment: the entry then has no category
 
 
 @dataclass(frozen=True)
@@ -202,6 +214,15 @@ class PreviewCardPurchase:
             return _build_preview(uow, cmd)[1]
 
 
+def _schedule_amounts(cmd: CardPurchaseCommand) -> list[int]:
+    """The amount of every installment 1..N of the whole purchase (also those a running purchase
+    does not create), by the rules of ``domain/services/installments``."""
+    if cmd.total_cents is not None:
+        return split_total(cmd.total_cents, cmd.installments)
+    assert cmd.installment_cents is not None
+    return [cmd.installment_cents] * cmd.installments
+
+
 class RegisterCardPurchase:
     """Single payment: one entry. Installments: one plan plus one entry per installment,
     every one of them created now, future ones included (9.4)."""
@@ -213,13 +234,42 @@ class RegisterCardPurchase:
         description = clean_text(cmd.description)
         if not description:
             raise DomainError("EMPTY_DESCRIPTION")
+        description, merchant = settle_description(description, clean_merchant(cmd.merchant))
+        if cmd.splits and cmd.category_id:  # the items carry the categories: the purchase has none
+            raise DomainError("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS")
         with self._uow as uow:
             card, preview = _build_preview(uow, cmd)
-            category_id = _default_category_id(uow, cmd.category_id)
+            category_id = None if cmd.splits else _default_category_id(uow, cmd.category_id)
+            items = [
+                (*checked_split_item(uow, TransactionKind.EXPENSE, item), abs(item.amount_cents))
+                for item in cmd.splits
+            ]
+            # per installment, the cents of each item (installment number -> [(item, cents)])
+            shares: dict[int, list[tuple[str, str, int]]] = {}
+            plan_category = category_id
+            if items:
+                # the items are the totals of the whole purchase; each installment gets its share
+                every = _schedule_amounts(cmd)
+                validate_split_amounts(sum(every), [cents for _, _, cents in items])
+                matrix = distribute_items(every, [cents for _, _, cents in items])
+                for line in preview.lines:  # a running purchase only creates installments n..N
+                    row = matrix[line.number - 1]
+                    shares[line.number] = [
+                        (text, category, cents)
+                        for (text, category, _), cents in zip(items, row, strict=True)
+                        if cents > 0
+                    ]
+                plan_category = max(items, key=lambda i: i[2])[1]  # for display: the biggest item's
             plan = None
             if cmd.installments > 1:
+                assert plan_category is not None
                 plan = InstallmentPlan(
-                    new_id(), card.id, description, category_id, cmd.installments, cmd.purchased_on
+                    new_id(),
+                    card.id,
+                    description,
+                    plan_category,
+                    cmd.installments,
+                    cmd.purchased_on,
                 )
                 uow.plans.add(plan)
             entries: list[Transaction] = []
@@ -240,9 +290,19 @@ class RegisterCardPurchase:
                         statement_id=statement.id,
                         plan_id=plan.id if plan else None,
                         installment_number=line.number if plan else None,
+                        merchant=merchant,
                     )
                 )
             uow.transactions.add_many(entries)
+            for entry, line in zip(entries, preview.lines, strict=True):
+                if shares:  # every installment is itemized: its items add up to its amount
+                    uow.transactions.set_splits(
+                        entry.id,
+                        [
+                            TransactionSplit(new_id(), entry.id, text, category, cents)
+                            for text, category, cents in shares[line.number]
+                        ],
+                    )
             uow.commit()
         return PurchaseResult(preview, entries, plan)
 
@@ -264,6 +324,8 @@ class AdjustInstallment:
             statement = found(uow.statements.get(entry.statement_id), "statement")
             if is_locked(statement_view(uow, statement, self._clock.today())):
                 raise DomainError("STATEMENT_ALREADY_PAID")
+            if uow.transactions.splits_for([transaction_id]):  # its items would stop adding up
+                raise DomainError("SPLIT_AMOUNT_NEEDS_ITEMS")
             uow.transactions.update_amount(transaction_id, -amount_cents)
             uow.commit()
 
@@ -278,7 +340,7 @@ class DeletePurchase:
     def execute(self, plan_id: str) -> int:
         with self._uow as uow:
             found(uow.plans.get(plan_id), "plan")
-            entries = uow.transactions.list_by_plan(plan_id)
+            entries = uow.transactions.list_by_plan(plan_id, include_refunded=True)
             for entry in entries:
                 statement = found(uow.statements.get(entry.statement_id or ""), "statement")
                 if is_locked(statement_view(uow, statement, self._clock.today())):
@@ -288,6 +350,50 @@ class DeletePurchase:
             uow.plans.delete(plan_id)
             uow.commit()
         return len(entries)
+
+
+@dataclass(frozen=True)
+class PlanDeletion:
+    deleted: int
+    kept: int  # installments on paid statements: history, never removed
+    plan_removed: bool  # false when something was kept: the plan stays for the audit trail
+
+
+class DeleteInstallmentPlan:
+    """Remove the installments of a plan that are not on a paid statement (9.4).
+
+    A paid statement is history: its installments stay, and so does the plan record. When
+    nothing is paid the whole plan goes. Totals, statements and the limit are computed from the
+    entries, so there is nothing else to recalculate. All or nothing.
+    """
+
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
+        self._uow = uow
+        self._clock = clock
+
+    def execute(self, plan_id: str) -> PlanDeletion:
+        with self._uow as uow:
+            found(uow.plans.get(plan_id), "plan")
+            entries = uow.transactions.list_by_plan(plan_id, include_refunded=True)
+            locked: dict[str, bool] = {}
+            removable: list[Transaction] = []
+            for entry in entries:
+                key = entry.statement_id or ""
+                if key not in locked:
+                    statement = found(uow.statements.get(key), "statement")
+                    view = statement_view(uow, statement, self._clock.today())
+                    locked[key] = is_locked(view)
+                if not locked[key]:
+                    removable.append(entry)
+            if not removable:
+                raise DomainError("NOTHING_TO_DELETE")
+            for entry in removable:
+                uow.transactions.delete(entry.id)
+            kept = len(entries) - len(removable)
+            if kept == 0:
+                uow.plans.delete(plan_id)
+            uow.commit()
+        return PlanDeletion(len(removable), kept, plan_removed=kept == 0)
 
 
 # --- statements -------------------------------------------------------------------------------
@@ -326,7 +432,10 @@ class PayStatement:
                     raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=origin.kind.value)
                 if not origin.is_active:
                     raise DomainError("ACCOUNT_INACTIVE")
-            outstanding = statement_view(uow, statement, self._clock.today()).outstanding_cents
+            today = self._clock.today()
+            bounds = payment_date_boundaries(uow, statement, today)
+            check_payment_date(cmd.paid_on, bounds.min_date, bounds.max_date)
+            outstanding = statement_view(uow, statement, today).outstanding_cents
             amount = cmd.amount_cents if cmd.amount_cents is not None else outstanding
             if amount <= 0:
                 raise DomainError(
@@ -357,6 +466,105 @@ class PayStatement:
             uow.transactions.add_many(legs)
             uow.commit()
         return legs
+
+
+@dataclass(frozen=True)
+class UpdatePaymentCommand:
+    """The full desired state of a statement payment, named by either of its legs.
+
+    ``from_account_id`` ``UNSET`` keeps the origin, ``None`` makes it an untracked account (the
+    checking leg goes away), an id moves the debit to that checking account.
+    """
+
+    transaction_id: str
+    paid_on: dt.date
+    amount_cents: int  # positive
+    from_account_id: Unset | str | None = UNSET
+    notes: str | None = None
+
+
+@dataclass(frozen=True)
+class PaymentUpdate:
+    legs: list[Transaction]
+    statement_id: str
+    status_before: StatementStatus
+    status_after: StatementStatus  # computed again with the new payment (never stored)
+
+
+class UpdateInvoicePayment:
+    """Change a statement payment: amount, date, source account and notes (9.5).
+
+    Both legs move together and stay opposite and equal. The statement's paid amount, its status
+    (a smaller payment can take it from paid back to closed), the card limit and the checking
+    balances are all computed from the entries, so they follow at once. All or nothing.
+    """
+
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
+        self._uow = uow
+        self._clock = clock
+
+    def execute(self, cmd: UpdatePaymentCommand) -> PaymentUpdate:
+        if cmd.amount_cents <= 0:
+            raise DomainError("AMOUNT_NOT_POSITIVE")
+        today = self._clock.today()
+        with self._uow as uow:
+            tapped = found(uow.transactions.get(cmd.transaction_id), "transaction")
+            if tapped.kind is not TransactionKind.TRANSFER or tapped.transfer_id is None:
+                raise DomainError("NOT_A_STATEMENT_PAYMENT")
+            legs = uow.transactions.list_by_transfer(tapped.transfer_id)
+            card_leg = next((leg for leg in legs if leg.statement_id), None)
+            if card_leg is None:
+                raise DomainError("NOT_A_STATEMENT_PAYMENT")
+            origin_leg = next((leg for leg in legs if leg.id != card_leg.id), None)
+            statement = found(uow.statements.get(card_leg.statement_id or ""), "statement")
+            bounds = payment_date_boundaries(uow, statement, today)
+            if cmd.paid_on != card_leg.posted_on:  # an unchanged date is never re-judged
+                check_payment_date(cmd.paid_on, bounds.min_date, bounds.max_date)
+            before = statement_view(uow, statement, today).status
+
+            current = origin_leg.account_id if origin_leg else None
+            wanted = current if isinstance(cmd.from_account_id, Unset) else cmd.from_account_id
+            if wanted is not None:
+                origin = found(uow.accounts.get(wanted), "account")
+                if origin.kind is not AccountKind.CHECKING:
+                    raise DomainError("ACCOUNT_KIND_NOT_ALLOWED", account_kind=origin.kind.value)
+                if not origin.is_active and wanted != current:
+                    raise DomainError("ACCOUNT_INACTIVE")
+            notes = clean_text(cmd.notes) if cmd.notes else None
+
+            updated = [
+                replace(card_leg, amount_cents=cmd.amount_cents, posted_on=cmd.paid_on, notes=notes)
+            ]
+            uow.transactions.update(updated[0])
+            if wanted is None:
+                if origin_leg is not None:
+                    uow.transactions.delete(origin_leg.id)
+            elif origin_leg is not None:
+                debit = replace(
+                    origin_leg,
+                    account_id=wanted,
+                    amount_cents=-cmd.amount_cents,
+                    posted_on=cmd.paid_on,
+                    notes=notes,
+                )
+                uow.transactions.update(debit)
+                updated.append(debit)
+            else:  # it was paid from an untracked account and now has a tracked one
+                debit = replace(
+                    card_leg,
+                    id=new_id(),
+                    account_id=wanted,
+                    amount_cents=-cmd.amount_cents,
+                    statement_id=None,
+                    notes=notes,
+                    posted_on=cmd.paid_on,
+                    transfer_id=card_leg.transfer_id,
+                )
+                uow.transactions.add_many([debit])
+                updated.append(debit)
+            after = statement_view(uow, statement, today).status
+            uow.commit()
+        return PaymentUpdate(updated, statement.id, before, after)
 
 
 class InformStatementTotal:

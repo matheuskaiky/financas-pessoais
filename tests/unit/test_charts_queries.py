@@ -310,3 +310,35 @@ def test_category_breakdown_keeps_five_and_folds_the_long_tail(
 def test_category_breakdown_of_an_empty_month(uow: MemoryUnitOfWork) -> None:
     result = GetCategoryBreakdown(uow).execute(Period.month(YearMonth(2026, 9)))
     assert result.top == [] and result.rest == [] and result.total_cents == 0
+
+
+def test_category_breakdown_of_an_itemized_expense_has_no_orphaned_parent(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    from financas.application.use_cases.transactions import (
+        SplitItem,
+        UpdateTransaction,
+        UpdateTransactionCommand,
+    )
+
+    day = D(2026, 9, 3)
+    entry(uow, checking, day, 30_000, category="groceries")
+    entry(uow, checking, day, 4_000, category="food")
+    parent = next(t for t in uow.transactions.items.values() if t.amount_cents == -30_000)
+    health, home = (uow.categories.get_by_slug(s) for s in ("health", "home"))
+    assert health and home
+    UpdateTransaction(uow, FixedClock(day)).execute(
+        UpdateTransactionCommand(
+            parent.id,
+            day,
+            30_000,
+            parent.description,
+            splits=(SplitItem("A", health.id, 18_000), SplitItem("B", home.id, 12_000)),
+        )
+    )
+    result = GetCategoryBreakdown(uow).execute(Period.month(YearMonth(2026, 9)))
+    shown = {s.category_id: s.total_cents for s in [*result.top, *result.rest]}
+    food = uow.categories.get_by_slug("food")
+    assert food is not None
+    assert shown == {health.id: 18_000, home.id: 12_000, food.id: 4_000}
+    assert result.total_cents == 34_000 == sum(shown.values())  # = unsplit entries + child items

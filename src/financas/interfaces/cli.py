@@ -79,6 +79,7 @@ from financas.application.use_cases.investments import (
     RegisterInvestmentFlow,
     RegisterInvestmentFlowCommand,
 )
+from financas.application.use_cases.merchants import BackfillMerchants
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
     RegisterTransaction,
@@ -154,6 +155,8 @@ holding_app = typer.Typer(
     help="Aplicações de renda fixa (CDB, LCI, Tesouro...).", no_args_is_help=True
 )
 invest_app.add_typer(holding_app, name="holding")
+merchants_app = typer.Typer(help="Estabelecimentos dos lançamentos.", no_args_is_help=True)
+app.add_typer(merchants_app, name="merchants")
 log_app = typer.Typer(help="Registro de falhas deste computador.", no_args_is_help=True)
 app.add_typer(log_app, name="log")
 import_app = typer.Typer(
@@ -582,7 +585,7 @@ def list_entries(
             format_date(t.posted_on),
             accounts[t.account_id],
             messages.TRANSACTION_KIND_LABELS[t.kind],
-            categories[t.category_id],
+            categories[t.category_id] if t.category_id else "(por item)",
             t.description,
             Text(format_brl(t.amount_cents), style=style_),
         )
@@ -602,7 +605,7 @@ def delete(
     with c.uow as work:
         matches = [
             t
-            for t in work.transactions.list_between(dt.date.min, dt.date.max)
+            for t in work.transactions.list_between(dt.date.min, dt.date.max, include_refunded=True)
             if t.id.startswith(code)
         ]
     if len(matches) != 1:
@@ -1824,6 +1827,28 @@ def budget_set(
     console.print(
         f"Meta de {chosen.name}: {'removida' if clear else format_brl(parse_brl(amount or ''))}."
     )
+
+
+@merchants_app.command("backfill")
+@handle_errors
+def merchants_backfill(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Só mostra quantos lançamentos mudariam.")
+    ] = False,
+) -> None:
+    """Preenche o estabelecimento dos lançamentos antigos (só contagens). Faça backup antes."""
+    c = container()
+    result = BackfillMerchants(c.uow).execute(dry_run=dry_run)
+    verb = "mudariam" if result.dry_run else "mudaram"
+    console.print(f"{result.scanned} despesas e estornos analisados; {result.changed} {verb}.")
+    for reason, count in sorted(result.by_reason.items(), key=lambda kv: kv[0].value):
+        console.print(f"  {messages.BACKFILL_REASON_LABELS[reason]}: {count}")
+    if result.descriptions_cleaned:
+        console.print(
+            f"  {result.descriptions_cleaned} descrição(ões) perderam o sufixo “ - Loja”."
+        )
+    if result.dry_run and result.changed:
+        console.print("Nada foi gravado. Rode sem --dry-run para aplicar.")
 
 
 @recurring_app.command("list")
