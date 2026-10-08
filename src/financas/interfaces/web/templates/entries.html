@@ -111,10 +111,12 @@
         <span class="money-field big"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span>
         <small>Aceita vírgula decimal</small></label>
 
-      <label class="field"><span>Descrição</span>
-        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" list="description-suggestions" placeholder="Opcional: em branco usa a categoria"
+      <label class="field suggest-host"><span>Descrição</span>
+        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Opcional: em branco usa a categoria"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="description-suggestions" data-suggest
                hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
                hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
+        <ul id="description-suggestions" class="suggest-list" role="listbox" aria-label="Sugestões do seu histórico" hidden></ul>
       </label>
 
       <div class="only-entry" id="category-field">{% include "_category_field.html" %}</div>
@@ -167,6 +169,5 @@
 </div>
 {% include "_merge_bar.html" %}
 {{ merchant_datalist(merchants) }}
-<datalist id="description-suggestions"></datalist>
 <script type="application/json" id="suggestions-data">{{ suggestions|tojson }}</script>
 {% endblock %}

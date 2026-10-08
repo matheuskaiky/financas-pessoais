@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Scroll to the new row (app.js)</title>
+<script>history.replaceState(null, "", "#entry-abc-123");</script>
+</head>
+<body>
+<div style="height:3000px"></div>
+<div id="entry-abc-123" style="height:40px">alvo</div>
+<div id="entry-other" style="height:40px">outro</div>
+<div style="height:3000px"></div>
+<pre id="out">running</pre>
+<script>
+window.addEventListener("error", (e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + e.message + "\nDONE 1"; });
+</script>
+<script src="../../src/financas/interfaces/web/static/money-mask.js"></script>
+<script src="../../src/financas/interfaces/web/static/app.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const target = document.getElementById("entry-abc-123");
+check("the row is pulsed on load", target.classList.contains("row-highlight"), true);
+setTimeout(() => {
+  const top = target.getBoundingClientRect().top;
+  check("the row was scrolled into view", top >= 0 && top <= window.innerHeight, true);
+  setTimeout(() => {
+    check("the pulse ends", target.classList.contains("row-highlight"), false);
+    // a later swap does not pull the page back to the same row
+    window.scrollTo(0, 0);
+    document.dispatchEvent(new Event("htmx:afterSettle", { bubbles: true }));
+    check("one reveal per address", target.classList.contains("row-highlight"), false);
+    // another hash is revealed
+    history.replaceState(null, "", "#entry-other");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    check("another row is pulsed", document.getElementById("entry-other").classList.contains("row-highlight"), true);
+    const failed = results.filter((r) => r.startsWith("FAIL")).length;
+    document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+  }, 2400);
+}, 1200);
+});
+</script>
+</body>
+</html>

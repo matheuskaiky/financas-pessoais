@@ -670,3 +670,17 @@ button.icon-btn.mini:is(.row-edit, .card-rename):hover, button.icon-btn.mini:is(
 .cfg-head { display: flex; align-items: center; gap: 8px; }
 .cfg-head h2 { margin: 0; }
 .card-details { padding-top: 6px; }
+
+/* Suggestions under the description of the quick form (suggestions.js): our own listbox */
+.suggest-host { position: relative; }
+.suggest-list { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px; list-style: none; max-height: 280px; overflow-y: auto; background: var(--solid-1); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--sh-2, 0 8px 24px rgba(0, 0, 0, .18)); }
+.suggest-list[hidden] { display: none; }
+.suggest-list li { display: flex; flex-direction: column; gap: 2px; min-height: 44px; justify-content: center; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.suggest-list li:hover, .suggest-list li[aria-selected="true"] { background: var(--fill-1, rgba(15, 92, 69, .10)); }
+.suggest-title { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-meta { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the row just created: scrolled into view and pulsed for ~2 s (app.js, on #entry-<id>) */
+@keyframes highlight-fade { 0% { background-color: color-mix(in srgb, var(--accent, #0F5C45) 28%, transparent); } 100% { background-color: transparent; } }
+.row-highlight { animation: highlight-fade 2s ease-out 1; }
+@media (prefers-reduced-motion: reduce) { .row-highlight { animation: none; outline: 2px solid var(--accent, #0F5C45); outline-offset: -2px; } }

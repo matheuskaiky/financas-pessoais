@@ -527,3 +527,30 @@ document.body.addEventListener("fp:notice", function (event) {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { syncAll(document); });
   else syncAll(document);
 })();
+
+// A row just created: the server redirects to /entries?month=…&focus=<id>#entry-<id>. Scroll it to the
+// middle of the screen and pulse it for ~2 s (CSS @keyframes highlight-fade). Runs on load and after an
+// HTMX swap, once per address (a later filter swap must not pull the page back to the row).
+(function () {
+  "use strict";
+  var done = "";
+  function reveal() {
+    var hash = window.location.hash;
+    if (!/^#entry-[\w-]+$/.test(hash)) return;
+    var key = window.location.pathname + window.location.search + hash;
+    if (done === key) return;
+    var row = document.getElementById(hash.slice(1));
+    if (!row) return;
+    done = key;
+    var calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "center" });
+    row.classList.remove("row-highlight");
+    void row.offsetWidth;  // restart the animation if the class was already there
+    row.classList.add("row-highlight");
+    window.setTimeout(function () { row.classList.remove("row-highlight"); }, 2200);
+  }
+  document.addEventListener("htmx:afterSettle", reveal);
+  window.addEventListener("hashchange", function () { done = ""; reveal(); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", reveal);
+  else reveal();
+})();

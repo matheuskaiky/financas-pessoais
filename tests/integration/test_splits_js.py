@@ -65,13 +65,17 @@ def test_quick_form_shows_the_method_and_the_items_editor_by_kind_and_account() 
 
 @pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
 def test_smart_suggestions_fill_the_form_from_the_pages_habits() -> None:
-    """A datalist pick fills category, account, method and the habitual amount (never over a typed
-    amount; typing alone never fills); an income has its own list and method."""
+    """Picking from the suggestion list fills category, account, method and the habitual amount
+    (never over a typed amount; typing alone never fills); an income has its own list and method."""
     report = run_harness("tests/js/suggestions_harness.html")
     failures = [line for line in report.splitlines() if line.startswith("FAIL")]
     assert not failures and "DONE 0" in report, report
     for name in (
-        "the list holds each expense habit once",
+        "focus opens the list with each expense habit once",
+        "each option shows where it goes",
+        "typing filters the list",
+        "enter picks the highlighted one",
+        "escape closes",
         "category follows",
         "method follows",
         "the habitual amount fills an empty field",
@@ -82,5 +86,20 @@ def test_smart_suggestions_fill_the_form_from_the_pages_habits() -> None:
         "the list switches to income habits",
         "income arrives by ted",
         "income amount",
+    ):
+        assert f"PASS {name}" in report, name
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_a_new_row_is_scrolled_to_and_pulsed_from_the_url_fragment() -> None:
+    report = run_harness("tests/js/scroll_to_entry_harness.html")
+    failures = [line for line in report.splitlines() if line.startswith("FAIL")]
+    assert not failures and "DONE 0" in report, report
+    for name in (
+        "the row is pulsed on load",
+        "the row was scrolled into view",
+        "the pulse ends",
+        "one reveal per address",
+        "another row is pulsed",
     ):
         assert f"PASS {name}" in report, name

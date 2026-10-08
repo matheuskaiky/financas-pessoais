@@ -501,6 +501,7 @@ def create_app(c: Container) -> FastAPI:
         form: dict[str, str] | None = None,
         limit: int = PAGE_SIZE,
         items: list[dict[str, str]] | None = None,
+        focus: str = "",
     ) -> dict[str, object]:
         try:
             ym = YearMonth.parse(month) if month else YearMonth.from_date(today())
@@ -556,6 +557,10 @@ def create_app(c: Container) -> FastAPI:
             {a.id for a in data["accounts"] if a.kind is AccountKind.CREDIT_CARD},  # type: ignore[attr-defined]
         )
         summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
+        if focus:  # a row just created: make sure its page of the list is the one shown
+            at = next((i for i, t in enumerate(rows) if t.id == focus), None)
+            if at is not None and at >= limit:
+                limit = (at // PAGE_SIZE + 1) * PAGE_SIZE
         shown = rows[:limit]
         selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
         accounts = data["accounts"]
@@ -650,6 +655,7 @@ def create_app(c: Container) -> FastAPI:
         q: str = "",
         limit: str = "",
         method: str = "",
+        focus: str = "",
     ):
         filters = {
             "account": account,
@@ -668,19 +674,30 @@ def create_app(c: Container) -> FastAPI:
         return render(
             request,
             "entries.html",
-            entries_context(month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE),
+            entries_context(
+                month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE, focus=focus[:64]
+            ),
         )
 
     def suggestion_payload(flow: str, q: str = "", limit: int = 8) -> list[dict[str, object]]:
         """What the entry form may autofill for one flow: the description, where it went and how it
-        was paid, plus the habitual amount (cents, and the text the amount field takes)."""
+        was paid, plus the habitual amount (cents, and the text the amount field takes). The names
+        are what the dropdown shows next to the description (the ids are what it fills in)."""
+        data = lookups()
+        category_names = {x.id: x.name for x in data["categories"]}
+        account_names = {a.id: a.nickname for a in data["accounts"]}
         return [
             {
                 "description": s.description,
                 "flow": s.flow,
                 "category_id": s.category_id,
+                "category_name": category_names.get(s.category_id or ""),
                 "account_id": s.account_id,
+                "account_name": account_names.get(s.account_id),
                 "payment_method": s.payment_method.value if s.payment_method else None,
+                "payment_label": method_messages.PAYMENT_METHOD_LABELS[s.payment_method]
+                if s.payment_method
+                else None,
                 "habitual_amount_cents": s.habitual_amount_cents,
                 "habitual_amount": format_decimal_comma(s.habitual_amount_cents)
                 if s.habitual_amount_cents is not None
@@ -769,7 +786,7 @@ def create_app(c: Container) -> FastAPI:
             if kind != TransactionKind.TRANSFER.value and not account_id:
                 raise DomainError("ACCOUNT_REQUIRED")
             if kind == TransactionKind.TRANSFER.value:
-                RegisterTransfer(c.uow).execute(
+                legs = RegisterTransfer(c.uow).execute(
                     RegisterTransferCommand(
                         from_account or None,
                         to_account or None,
@@ -779,8 +796,11 @@ def create_app(c: Container) -> FastAPI:
                         notes or None,
                     )
                 )
-                return back("/entries", "transfer", **kept)
-            RegisterTransaction(c.uow).execute(
+                kept["month"] = str(YearMonth.from_date(legs[0].posted_on))
+                moved = back("/entries", "transfer", **kept, focus=legs[0].id)
+                moved.headers["location"] += f"#entry-{legs[0].id}"
+                return moved
+            created = RegisterTransaction(c.uow).execute(
                 RegisterTransactionCommand(
                     account_id=account_id,
                     posted_on=parse_date(date, today()),
@@ -815,7 +835,12 @@ def create_app(c: Container) -> FastAPI:
                 ),
                 error=error,
             )
-        return back("/entries", "entry", **kept)
+        # go to the month of the new entry (not the one the list was showing) and to its row:
+        # the fragment is read by app.js, which scrolls to it and pulses it
+        kept["month"] = str(YearMonth.from_date(created.posted_on))
+        landing = back("/entries", "entry", **kept, focus=created.id)
+        landing.headers["location"] += f"#entry-{created.id}"
+        return landing
 
     @app.post("/transfers")
     def add_transfer(

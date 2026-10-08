@@ -427,8 +427,11 @@ def test_the_suggestions_endpoint_returns_the_scored_habits_with_the_amount(
         "description": "Almoço Restaurante Central",
         "flow": "expense",
         "category_id": food,
+        "category_name": "Alimentação",
         "account_id": checking,
+        "account_name": "Conta Corrente",
         "payment_method": "debito",
+        "payment_label": "Débito",
         "habitual_amount_cents": 3_500,
         "habitual_amount": "35,00",
     }
@@ -444,10 +447,13 @@ def test_the_page_seeds_the_description_list_from_the_same_data(
 ) -> None:
     seed_habits(client, container)
     page = client.get("/entries").text
-    assert (
-        'list="description-suggestions"' in page
-        and '<datalist id="description-suggestions">' in page
+    # our own listbox, not the browser's datalist: it must exist next to the field, closed
+    assert "data-suggest" in page and 'role="combobox"' in page
+    assert re.search(
+        r'<ul id="description-suggestions" class="suggest-list" role="listbox"[^>]*hidden>', page
     )
+    assert 'list="description-suggestions"' not in page
+    assert '<datalist id="description-suggestions"' not in page
     block = re.search(r'id="suggestions-data">(.*?)</script>', page, re.S)
     assert block
     import json
@@ -457,3 +463,76 @@ def test_the_page_seeds_the_description_list_from_the_same_data(
     assert data["expense"][0]["description"] == "Almoço Restaurante Central"
     assert {s["payment_method"] for s in data["income"]} <= {"pix", "ted", "outro", None}
     assert "/static/suggestions.js" in page
+
+
+# --- landing on the new row ---
+
+
+def test_a_new_entry_lands_on_its_own_month_and_row(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = seed_entries(client, container)
+    done = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "date": "2026-03-05",
+            "amount": "12,00",
+            "description": "Lanche março",
+            "account_id": checking,
+            "payment_method": "pix",
+            "return_query": "month=2026-09",  # the list was showing another month
+        },
+    )
+    location = done.headers["location"]
+    row = by_description(container, checking)["Lanche março"]
+    assert done.status_code == 303 and "month=2026-03" in location
+    assert "month=2026-09" not in location
+    assert "ok=entry" in location and location.endswith(f"#entry-{row.id}")
+    page = client.get(location.split("#")[0]).text
+    assert f'id="entry-{row.id}"' in page and "Lanche março" in page
+
+
+def test_a_new_transfer_lands_on_its_month_and_first_leg(
+    client: TestClient, container: Container
+) -> None:
+    checking, card = seed_entries(client, container)
+    with container.uow as work:
+        other = next(a for a in work.accounts.list_all() if a.id not in (checking, card))
+    done = client.post(
+        "/entries",
+        data={
+            "kind": "transfer",
+            "date": "2026-02-10",
+            "amount": "50,00",
+            "from_account": checking,
+            "to_account": other.id,
+            "description": "Reserva",
+        },
+    )
+    location = done.headers["location"]
+    assert "month=2026-02" in location and "#entry-" in location
+    assert f'id="{location.split("#")[1]}"' in client.get(location.split("#")[0]).text
+
+
+def test_the_focus_widens_the_page_to_reach_an_old_row(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = seed_entries(client, container)
+    for n in range(55):  # more than one page of the month, all newer than the target
+        add_expense(client, checking, description=f"Item {n:02d}", date="2026-04-20")
+    done = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "date": "2026-04-01",
+            "amount": "9,00",
+            "description": "Muito antigo",
+            "account_id": checking,
+            "payment_method": "pix",
+        },
+    )
+    location = done.headers["location"]
+    row_id = location.split("#entry-")[1]
+    assert f'id="entry-{row_id}"' in client.get(location.split("#")[0]).text
+    assert f'id="entry-{row_id}"' not in client.get("/entries?month=2026-04").text
