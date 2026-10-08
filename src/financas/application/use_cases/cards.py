@@ -31,7 +31,7 @@ from financas.domain.models import (
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork, Work
-from financas.domain.rules import validate_card_settings
+from financas.domain.rules import normalize_color, validate_card_settings
 from financas.domain.services.card_cycle import (
     StatementAssignment,
     check_payment_date,
@@ -43,6 +43,45 @@ from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedu
 from financas.domain.services.merchants import settle_description
 from financas.domain.services.splits import distribute_items, validate_split_amounts
 from financas.domain.services.text import clean_merchant, clean_text, normalize_search
+
+
+@dataclass(frozen=True)
+class UpdateCardDetailsCommand:
+    account_id: str
+    name: str  # the nickname shown everywhere (faces, chips, tags, entries)
+    color: Unset | str | None = UNSET  # ``UNSET`` keeps it, ``None`` clears it, ``#RRGGBB`` sets it
+
+
+class UpdateCardDetails:
+    """Rename a card and/or change its colour (presentation only: no figure depends on either).
+
+    Everything that associates entries, statements and limits with a card goes through its id, never
+    through its name, so a rename (or an accented name such as "Banco Inter cartão") changes nothing
+    in the totals. The new name must not repeat another account's, ignoring case and accents.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: UpdateCardDetailsCommand) -> Account:
+        name = clean_text(cmd.name)
+        if not name:
+            raise DomainError("EMPTY_NAME")
+        with self._uow as uow:
+            card = found(uow.accounts.get(cmd.account_id), "account")
+            if card.kind is not AccountKind.CREDIT_CARD:
+                raise DomainError("CARD_REQUIRED")
+            key = normalize_search(name)
+            if any(
+                a.id != card.id and normalize_search(a.nickname) == key
+                for a in uow.accounts.list_all()
+            ):
+                raise DomainError("DUPLICATE_ACCOUNT_NAME")
+            color = card.color if isinstance(cmd.color, Unset) else normalize_color(cmd.color)
+            updated = replace(card, nickname=name, color=color)
+            uow.accounts.update(updated)
+            uow.commit()
+        return updated
 
 
 class SetCardSettings:

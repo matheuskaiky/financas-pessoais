@@ -26,9 +26,12 @@ from financas.application.use_cases.cards import (
     RegisterCardPurchase,
     SetCardSettings,
     SetStatementDates,
+    UpdateCardDetails,
+    UpdateCardDetailsCommand,
     UpdateInvoicePayment,
     UpdatePaymentCommand,
 )
+from financas.application.use_cases.catalog import CreateAccount, CreateAccountCommand
 from financas.application.use_cases.transactions import (
     RegisterTransaction,
     RegisterTransactionCommand,
@@ -1214,3 +1217,94 @@ def test_future_installments_are_committed_with_the_open_statement(
     view = ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards[0]
     assert view.usage.committed_cents == 10_000
     assert view.telemetry and view.telemetry.open_balance_cents == 4_000  # 3,000 + 1,000
+
+
+# --- accented names and renaming: cards are matched by id, never by their name ---
+
+
+def accented_card(uow: MemoryUnitOfWork, institution: Institution, name: str) -> Account:
+    return CreateAccount(uow).execute(
+        CreateAccountCommand(
+            AccountKind.CREDIT_CARD,
+            institution.id,
+            name,
+            closing_days_before_due=11,
+            due_day=5,
+            credit_limit_cents=1_000_000,
+        )
+    )
+
+
+def test_an_accented_card_name_changes_nothing_in_the_committed_limit(
+    uow: MemoryUnitOfWork, institution: Institution
+) -> None:
+    """ "Banco Inter cartão" (tilde) next to "Banco do Brasil cartao" (none): the same figures."""
+    accented = accented_card(uow, institution, "Banco Inter cartão")
+    plain = accented_card(uow, institution, "Banco do Brasil cartao")
+    for account in (accented, plain):
+        buy(uow, account, purchased_on=D(2026, 7, 10), total_cents=6_456)  # open statement
+        buy(uow, account, purchased_on=D(2026, 7, 11), installments=3, total_cents=9_000)
+    views = {
+        v.account.nickname: v for v in ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards
+    }
+    for view in views.values():
+        assert view.telemetry and view.telemetry.open_balance_cents == 6_456 + 3_000
+        assert view.usage.committed_cents == 6_456 + 9_000  # open statement + future installments
+    assert (
+        views["Banco Inter cartão"].usage.committed_cents
+        == views["Banco do Brasil cartao"].usage.committed_cents
+    )
+
+
+# --- UpdateCardDetails ---
+
+
+def test_renaming_a_card_changes_the_name_and_leaves_every_figure_alone(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), installments=2, total_cents=5_000)
+    before = ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards[0]
+    changed = UpdateCardDetails(uow).execute(
+        UpdateCardDetailsCommand(card.id, "  Banco Inter cartão ")
+    )
+    assert changed.nickname == "Banco Inter cartão"  # trimmed, like every name
+    after = ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards[0]
+    assert after.account.nickname == "Banco Inter cartão"
+    assert after.usage == before.usage and after.telemetry == before.telemetry
+    assert uow.accounts.get(card.id) == changed
+
+
+def test_rename_validates_blank_duplicates_and_the_account_kind(
+    uow: MemoryUnitOfWork, institution: Institution, card: Account, checking: Account
+) -> None:
+    other = accented_card(uow, institution, "Itaú")
+    for bad, code in (
+        ("   ", "EMPTY_NAME"),
+        ("itau", "DUPLICATE_ACCOUNT_NAME"),  # case and accents are ignored
+        (checking.nickname.upper(), "DUPLICATE_ACCOUNT_NAME"),  # any account counts
+    ):
+        with pytest.raises(DomainError) as exc:
+            UpdateCardDetails(uow).execute(UpdateCardDetailsCommand(card.id, bad))
+        assert exc.value.code == code
+    with pytest.raises(DomainError) as exc2:
+        UpdateCardDetails(uow).execute(UpdateCardDetailsCommand(checking.id, "Outra"))
+    assert exc2.value.code == "CARD_REQUIRED"
+    with pytest.raises(DomainError) as exc3:
+        UpdateCardDetails(uow).execute(UpdateCardDetailsCommand("nope", "X"))
+    assert exc3.value.code == "NOT_FOUND"
+    # the same name (or only its case/accents) on the card itself is fine
+    assert (
+        UpdateCardDetails(uow).execute(UpdateCardDetailsCommand(other.id, "ITAÚ")).nickname
+        == "ITAÚ"
+    )
+    assert uow.accounts.get(card.id) == card  # nothing was saved by the failures
+
+
+def test_rename_keeps_clears_or_sets_the_colour(uow: MemoryUnitOfWork, card: Account) -> None:
+    run = UpdateCardDetails(uow).execute
+    assert run(UpdateCardDetailsCommand(card.id, "A", "#820ad1")).color == "#820AD1"
+    assert run(UpdateCardDetailsCommand(card.id, "B")).color == "#820AD1"  # not mentioned: kept
+    assert run(UpdateCardDetailsCommand(card.id, "C", None)).color is None  # cleared
+    with pytest.raises(DomainError) as exc:
+        run(UpdateCardDetailsCommand(card.id, "D", "roxo"))
+    assert exc.value.code == "INVALID_COLOR"

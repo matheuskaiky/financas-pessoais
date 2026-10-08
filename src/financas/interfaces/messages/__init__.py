@@ -262,6 +262,7 @@ ERROR_MESSAGES: dict[str, str] = {
         "Esta parcela faz parte de uma compra parcelada: apague a compra inteira."
     ),
     "DUPLICATE_NAME": "Já existe uma categoria com esse nome.",
+    "DUPLICATE_ACCOUNT_NAME": "Já existe uma conta ou um cartão com esse nome.",
     "NOTHING_TO_SAVE": "Informe o estabelecimento ou escolha outra categoria; ou use Pular.",
     "REVIEW_ONLY_FOR_EXPENSES": "A revisão rápida só vale para despesas.",
     "NOT_A_STATEMENT_PAYMENT": "Este lançamento não é um pagamento de fatura.",
@@ -365,6 +366,7 @@ FLASH_MESSAGES: dict[str, str] = {
     "backup": "Backup criado. Guarde também uma cópia em outro disco ou dispositivo.",
     "card": "Cartão salvo.",
     "card_settings": "Cartão atualizado. Faturas já criadas mantêm as datas.",
+    "card_details": "Nome e cor do cartão atualizados.",
     "purchase": "Compra salva. Todas as parcelas, inclusive as futuras, já foram geradas.",
     "payment": "Pagamento registrado.",
     "informed": "Total informado atualizado.",

@@ -234,3 +234,65 @@ def test_cancelling_an_edit_in_the_feed_keeps_the_date_and_card_columns(
     assert "card-entry--feed" in row and 'class="c-card"' in row and 'class="c-date tnum"' in row
     plain = client.get(f"/entries/{entry.id}/row?from=cards&card={first}", headers=HX).text
     assert "card-entry--feed" not in plain
+
+
+def test_renaming_a_card_updates_faces_entries_chips_and_the_feed_column(
+    client: TestClient, container: Container
+) -> None:
+    first, second = two_cards(client, container)
+    buy_on_card(client, first, days_ago=0, amount="300,00", description="Fone")
+    form = client.get(f"/cards/{first}/details", headers=HX)
+    assert form.status_code == 200 and 'value="Nubank"' in form.text and "<html" not in form.text
+    assert 'type="color"' in form.text and "Salvar alterações" in form.text
+    assert "Editar nome e cor" in client.get(f"/cards?card={first}").text  # the ghost pencil
+    saved = client.post(
+        f"/cards/{first}/details",
+        data={"nickname": "Banco Inter cartão", "color": "#ff7a00", "use_color": "1"},
+        headers=HX,
+    )
+    assert saved.status_code == 200 and saved.headers["hx-redirect"].startswith(
+        f"/cards?card={first}"
+    )
+    assert "Nome e cor do cartão atualizados." in client.get(saved.headers["hx-redirect"]).text
+    with container.uow as work:
+        renamed = work.accounts.get(first)
+    assert renamed and (renamed.nickname, renamed.color) == ("Banco Inter cartão", "#FF7A00")
+    assert "Banco Inter cartão" in client.get("/cards").text
+    assert "Banco Inter cartão" in client.get("/entries").text  # the account of the entry
+    unified = client.get("/cards?card=all").text
+    chips = re.findall(r'class="card-chip__t">([^<]+)<', unified)
+    assert chips == ["Todos", "Banco Inter cartão", "Itaú"]
+    assert (
+        'class="c-card" title="Banco Inter cartão"' in unified
+        and "--card-color: #FF7A00" in unified
+    )
+    assert "Mostrando Banco Inter cartão." in client.get(f"/cards?card=all&cards={first}").text
+    assert second  # the other card is untouched
+
+
+def test_the_rename_form_reports_a_duplicate_blank_or_unknown_card(
+    client: TestClient, container: Container
+) -> None:
+    first, _ = two_cards(client, container)
+    clash = client.post(f"/cards/{first}/details", data={"nickname": "itau"}, headers=HX)
+    assert (
+        clash.status_code == 200 and "Já existe uma conta ou um cartão com esse nome." in clash.text
+    )
+    assert 'value="itau"' in clash.text and "hx-redirect" not in clash.headers  # typed text kept
+    blank = client.post(f"/cards/{first}/details", data={"nickname": "  "}, headers=HX)
+    assert "Informe um nome." in blank.text
+    plain = client.post(f"/cards/{first}/details", data={"nickname": "Roxinho"})
+    assert plain.status_code == 303 and "ok=card_details" in plain.headers["location"]
+    assert client.get("/cards/zzz/details").status_code in (400, 404)
+    assert client.get(f"/cards/{first}/details/close").text == ""
+
+
+def test_an_accented_card_shows_the_same_committed_limit_in_the_unified_hero(
+    client: TestClient, container: Container
+) -> None:
+    first, second = two_cards(client, container)
+    for card in (first, second):
+        buy_on_card(client, card, days_ago=0, amount="100,00", description="Compra")
+    client.post(f"/cards/{second}/details", data={"nickname": "Banco Inter cartão"})
+    page = client.get("/cards?card=all").text
+    assert 'data-cents="20000"' in page  # the hero adds both open statements, accent or not

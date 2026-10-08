@@ -446,10 +446,10 @@ tr.editing td { background: var(--fill-1, var(--solid-1)); }
    `button` rule gives every button a 48 px filled box, so the ghost resets all of it. */
 .card-entry .c-desc { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .card-entry .c-desc .c-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-button.icon-btn.mini.row-edit { flex: none; width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%;
+button.icon-btn.mini:is(.row-edit, .card-rename) { flex: none; width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%;
   background: transparent; box-shadow: none; color: var(--text-tertiary); opacity: .7; }
-button.icon-btn.mini.row-edit svg { width: 14px; height: 14px; display: block; }
-button.icon-btn.mini.row-edit:hover, button.icon-btn.mini.row-edit:focus-visible { background: var(--fill-1, rgba(0, 0, 0, .05)); color: var(--forest); opacity: 1; box-shadow: none; }
+button.icon-btn.mini:is(.row-edit, .card-rename) svg { width: 14px; height: 14px; display: block; }
+button.icon-btn.mini:is(.row-edit, .card-rename):hover, button.icon-btn.mini:is(.row-edit, .card-rename):focus-visible { background: var(--fill-1, rgba(0, 0, 0, .05)); color: var(--forest); opacity: 1; box-shadow: none; }
 .card-entry:hover button.icon-btn.mini.row-edit { opacity: 1; }
 
 /* Day groups: the date once per day, then that day's rows (cards statement and entries list) */
@@ -665,3 +665,8 @@ button.icon-btn.mini.row-edit:hover, button.icon-btn.mini.row-edit:focus-visible
   .card-entry--feed .c-cat { grid-area: cat; }
   .card-head--feed { display: none; }
 }
+
+/* Card panel: the name with its ghost pencil, and the rename form that opens under it */
+.cfg-head { display: flex; align-items: center; gap: 8px; }
+.cfg-head h2 { margin: 0; }
+.card-details { padding-top: 6px; }

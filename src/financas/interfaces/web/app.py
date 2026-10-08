@@ -63,6 +63,8 @@ from financas.application.use_cases.cards import (
     RegisterCardPurchase,
     SetCardSettings,
     SetStatementDates,
+    UpdateCardDetails,
+    UpdateCardDetailsCommand,
 )
 from financas.application.use_cases.catalog import (
     AppearanceTarget,
@@ -1145,6 +1147,59 @@ def create_app(c: Container) -> FastAPI:
         except DomainError as error:
             return render(request, "cards.html", cards_context(card_id, None), error=error)
         return back("/cards", "card_settings", card=card_id)
+
+    def card_details_fragment(
+        request: Request,
+        card_id: str,
+        error: DomainError | None = None,
+        typed: dict[str, str] | None = None,
+    ) -> HTMLResponse:
+        with c.uow as work:
+            card = work.accounts.get(card_id)
+        if card is None or card.kind is not AccountKind.CREDIT_CARD:
+            raise DomainError("NOT_FOUND", entity="account")
+        looks = lookups()["account_looks"]
+        return templates.TemplateResponse(
+            request,
+            "_card_details.html",
+            {
+                "card": card,
+                "look_color": looks[card.id].color,
+                "typed": typed or {},
+                "error": messages.render_error(error) if error else None,
+            },
+        )
+
+    @app.get("/cards/{card_id}/details", response_class=HTMLResponse)
+    def card_details_form(request: Request, card_id: str):
+        return card_details_fragment(request, card_id)
+
+    @app.get("/cards/{card_id}/details/close", response_class=HTMLResponse)
+    def card_details_close(card_id: str):
+        return HTMLResponse("")  # "Cancelar": the slot goes back to empty
+
+    @app.post("/cards/{card_id}/details")
+    def card_details(
+        request: Request,
+        card_id: str,
+        nickname: Annotated[str, Form()],
+        color: Annotated[str, Form()] = "",
+        use_color: Annotated[str, Form()] = "",
+    ):
+        try:
+            UpdateCardDetails(c.uow).execute(
+                UpdateCardDetailsCommand(card_id, nickname, _color(color, use_color))
+            )
+        except DomainError as error:
+            if error.code == "NOT_FOUND":
+                raise
+            return card_details_fragment(
+                request, card_id, error, {"nickname": nickname, "color": color}
+            )
+        target = "/cards?" + urlencode({"card": card_id, "ok": "card_details"})
+        if request.headers.get("hx-request"):
+            return Response(status_code=200, headers={"HX-Redirect": target})
+        return RedirectResponse(target, status_code=303)
 
     def statement_redirect(statement_id: str, ok: str) -> RedirectResponse:
         with c.uow as work:
