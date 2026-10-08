@@ -181,6 +181,38 @@ def test_set_appearance_sets_color_and_image(
     assert stored and stored.color == "#1E395F" and stored.image_id in images.files
 
 
+@pytest.mark.parametrize(("typed", "stored"), [("#FF7A00", "#FF7A00"), ("#820ad1", "#820AD1")])
+def test_account_color_is_persisted_and_normalized(
+    uow: MemoryUnitOfWork, images: MemoryImageStore, checking: Account, typed: str, stored: str
+) -> None:
+    SetAppearance(uow, images).execute(
+        SetAppearanceCommand(AppearanceTarget.ACCOUNT, checking.id, color=typed)
+    )
+    saved = uow.accounts.get(checking.id)
+    assert saved and saved.color == stored
+
+
+@pytest.mark.parametrize("bad", ["roxo", "#12345", "#GGGGGG", "FF7A00", "#FF7A001"])
+def test_an_invalid_account_color_is_rejected_and_changes_nothing(
+    uow: MemoryUnitOfWork, images: MemoryImageStore, checking: Account, bad: str
+) -> None:
+    with pytest.raises(DomainError) as exc:
+        SetAppearance(uow, images).execute(
+            SetAppearanceCommand(AppearanceTarget.ACCOUNT, checking.id, color=bad)
+        )
+    assert code(exc) == "INVALID_COLOR"
+    assert (saved := uow.accounts.get(checking.id)) and saved.color == checking.color
+
+
+def test_an_empty_color_clears_the_accounts_own_color(
+    uow: MemoryUnitOfWork, images: MemoryImageStore, checking: Account
+) -> None:
+    use_case = SetAppearance(uow, images)
+    use_case.execute(SetAppearanceCommand(AppearanceTarget.ACCOUNT, checking.id, color="#FF7A00"))
+    use_case.execute(SetAppearanceCommand(AppearanceTarget.ACCOUNT, checking.id, color=""))
+    assert (saved := uow.accounts.get(checking.id)) and saved.color is None
+
+
 def test_replacing_or_removing_an_image_deletes_the_old_file(
     uow: MemoryUnitOfWork, images: MemoryImageStore, checking: Account
 ) -> None:

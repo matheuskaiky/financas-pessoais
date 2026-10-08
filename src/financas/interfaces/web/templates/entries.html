@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% from "_macros.html" import avatar, dot, day_group_header, merchant_input, merchant_datalist %}
 {% from "_ui.html" import odometer, state_empty %}
+{% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Lançamentos{% endblock %}
+{% block head %}<script src="/static/suggestions.js" defer></script>{% endblock %}
 {% macro filter_url(extra) -%}
 /entries?month={{ month_value }}{% for k, v in filters.items() if v and k not in extra %}&{{ k }}={{ v|urlencode }}{% endfor %}{% for k, v in extra.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
@@ -10,7 +12,7 @@
 /entries?month={{ month }}{% for k, v in filters.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
 {% block content %}
-{% set filtered = filters.q or filters.kind or filters.account or filters.category %}
+{% set filtered = filters.q or filters.kind or filters.account or filters.category or filters.method %}
 <header class="page-head">
   <div>
     <span class="eyebrow">Movimento</span><h1>Lançamentos</h1>
@@ -26,8 +28,10 @@
 
 <div class="cols entries">
   <div class="stack" style="gap: 16px">
+    <div id="entries-results" class="stack" style="gap: 16px">
     <form method="get" action="/entries" role="search" class="filter-bar">
       <input type="hidden" name="month" value="{{ month_value }}">
+      <input type="hidden" name="method" value="{{ filters.method or '' }}">
       <label class="field f-search"><span class="sr-only">Buscar (ignora acentos)</span>
         <span class="search-box"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input type="search" name="q" value="{{ filters.q }}" placeholder="Buscar" title="A busca ignora acentos e maiúsculas (ex.: café são joão)"></span></label>
       <label class="field"><span class="sr-only">Tipo</span>
@@ -46,6 +50,12 @@
       {% if filtered %}<a class="btn secondary" href="/entries?month={{ month_value }}">Limpar filtros</a>{% endif %}
     </form>
 
+    <div class="method-chips" role="group" aria-label="Forma de pagamento">
+      {% for code, label in method_chips %}
+      <a class="method-chip" id="method-chip-{{ code or 'all' }}" href="{{ filter_url({'method': code}) }}"{% if (filters.method or '') == code %} aria-current="true"{% endif %} hx-get="{{ filter_url({'method': code}) }}" hx-target="#entries-results" hx-select="#entries-results" hx-swap="outerHTML" hx-push-url="true" hx-sync="#entries-results:replace">{{ label }}</a>
+      {% endfor %}
+    </div>
+
     <div class="statstrip totals">
       <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True, private="transactions") }}</span></div>
       <div><span class="label">Despesas</span><span class="fig neg">{{ odometer(-summary.expenses_cents, size=30, flat=True, private="transactions") }}</span></div>
@@ -53,6 +63,8 @@
       <div class="note"><small>Transferências ficam fora destes totais</small></div>
     </div>
 
+    <div data-sel-scope data-selecting="false">
+    {% if rows %}{{ sel_toolbar('lista') }}{% endif %}
     <section class="list-box" id="lista" aria-label="Lista de lançamentos">
       {% if rows %}
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
@@ -74,6 +86,9 @@
         'Limpar filtros' if filtered else None, ('/entries?month=' ~ month_value) if filtered else None, 'search' if filtered else 'inbox') }}</div>
       {% endif %}
     </section>
+    {{ sel_dock() }}
+    </div>
+    </div>
   </div>
 
   <aside id="form" class="panel quick" aria-labelledby="h-quick">
@@ -82,6 +97,7 @@
       <p class="empty">Cadastre uma conta corrente em <a href="/accounts">Contas</a> para lançar receitas e despesas.</p>
     {% else %}
     <form method="post" action="/entries" class="quick-form">
+      <input type="hidden" name="return_query" value="{{ return_query }}">
       <div class="segmented" role="radiogroup" aria-label="Tipo"
            hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
            hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
@@ -95,36 +111,55 @@
         <span class="money-field big"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0,00" value="{{ form.amount }}" autocomplete="off" required></span>
         <small>Aceita vírgula decimal</small></label>
 
-      <label class="field"><span>Descrição</span>
-        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off"
+      <label class="field suggest-host"><span>Descrição</span>
+        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Opcional: em branco usa a categoria"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="description-suggestions" data-suggest
                hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
                hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
+        <ul id="description-suggestions" class="suggest-list" role="listbox" aria-label="Sugestões do seu histórico" hidden></ul>
       </label>
 
       <div class="only-entry" id="category-field">{% include "_category_field.html" %}</div>
 
       <div class="only-entry">{{ merchant_input(form.merchant) }}</div>
 
+      {#- Itemized breakdown of an expense (PIX, débito, boleto, card): the category above is locked while it is on -#}
+      <fieldset class="split-wrap" data-split-field{% if form.kind not in ('expense', '') %} hidden disabled{% endif %}>
+        {% set split_items = form_items %}{% set split_categories = expense_categories %}
+        {% set split_names = {"description": "item_description", "category": "item_category", "amount": "item_amount"} %}
+        {% set split_bank = true %}
+        {% include "_splits_editor.html" %}
+      </fieldset>
+
       <div class="pair">
       <label class="field only-entry"><span>Conta ou cartão</span>
         <select name="account_id" data-entry-account>
           <option value="" disabled {{ 'selected' if not form.account_id }}>Escolha…</option>
           {# a card takes purchases and refunds, never income: the options follow the chosen type #}
-          {% for a in entry_accounts %}{% set kinds = 'expense refund' if a.kind.value == 'credit_card' else 'expense income refund' %}<option value="{{ a.id }}" data-kinds="{{ kinds }}" {{ 'selected' if form.account_id == a.id and (form.kind or 'expense') in kinds.split() }} {{ 'hidden disabled' if (form.kind or 'expense') not in kinds.split() }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
+          {% for a in entry_accounts %}{% set kinds = 'expense refund' if a.kind.value == 'credit_card' else 'expense income refund' %}<option value="{{ a.id }}" data-kinds="{{ kinds }}" data-account-kind="{{ a.kind.value }}" {{ 'selected' if form.account_id == a.id and (form.kind or 'expense') in kinds.split() }} {{ 'hidden disabled' if (form.kind or 'expense') not in kinds.split() }}>{{ a.nickname }} · {{ 'cartão' if a.kind.value == 'credit_card' else institutions[a.institution_id].name }}</option>{% endfor %}
         </select></label>
 
       <label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>
       </div>
 
+      {% set chosen_account = entry_accounts|selectattr('id', 'equalto', form.account_id)|first %}
+      {% with method_current = form.payment_method, method_kind = form.kind, method_hidden = (form.kind == 'transfer' or (chosen_account is defined and chosen_account.kind.value == 'credit_card')) %}{% include "snippets/payment-method-field.html" %}{% endwith %}
+
       <div class="only-transfer stack-form">
         <label class="field"><span>De</span>
           <select name="from_account" data-transfer-from><option value="">Conta não controlada</option>
-            {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.from_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
+            {% for a in transfer_accounts %}<option value="{{ a.id }}" data-account-kind="{{ a.kind.value }}" data-tracking="{{ a.tracking.value if a.tracking else '' }}" {{ 'selected' if form.from_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
         <label class="field"><span>Para</span>
           <select name="to_account" data-transfer-to><option value="">Conta não controlada</option>
-            {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.to_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
+            {% for a in transfer_accounts %}<option value="{{ a.id }}" data-account-kind="{{ a.kind.value }}" data-tracking="{{ a.tracking.value if a.tracking else '' }}" {{ 'selected' if form.to_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
+        <label class="field" data-transfer-holding hidden><span data-transfer-holding-label>Destino do aporte</span>
+          <select name="holding_id">
+            <option value="" data-free>Saldo livre da conta / corretora</option>
+            {% for h in transfer_holdings %}<option value="{{ h.id }}" data-account="{{ h.account_id }}" {{ 'selected' if form.holding_id == h.id }}>{{ h.name }}</option>{% endfor %}
+          </select>
+          <small class="hint"><a href="/investments#holdings">+ Nova nota de investimento</a></small></label>
         <p class="hint">Transferências, aportes e resgates não contam como receita nem despesa.</p>
       </div>
 
@@ -140,4 +175,5 @@
 </div>
 {% include "_merge_bar.html" %}
 {{ merchant_datalist(merchants) }}
+<script type="application/json" id="suggestions-data">{{ suggestions|tojson }}</script>
 {% endblock %}

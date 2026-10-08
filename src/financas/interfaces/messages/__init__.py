@@ -262,6 +262,7 @@ ERROR_MESSAGES: dict[str, str] = {
         "Esta parcela faz parte de uma compra parcelada: apague a compra inteira."
     ),
     "DUPLICATE_NAME": "Já existe uma categoria com esse nome.",
+    "DUPLICATE_ACCOUNT_NAME": "Já existe uma conta ou um cartão com esse nome.",
     "NOTHING_TO_SAVE": "Informe o estabelecimento ou escolha outra categoria; ou use Pular.",
     "REVIEW_ONLY_FOR_EXPENSES": "A revisão rápida só vale para despesas.",
     "NOT_A_STATEMENT_PAYMENT": "Este lançamento não é um pagamento de fatura.",
@@ -285,12 +286,29 @@ ERROR_MESSAGES: dict[str, str] = {
     ),
     "MERGE_ACCOUNT_MISMATCH": "Os lançamentos precisam ser da mesma conta ou do mesmo cartão.",
     "MERGE_STATEMENT_MISMATCH": "Os lançamentos do cartão precisam estar na mesma fatura.",
+    "INVALID_PAYMENT_METHOD": "Forma de pagamento inválida para este lançamento ou esta conta.",
+    "MERGE_ITEMIZED_FORBIDDEN": "Lançamento com itens não pode ser mesclado.",
+    "MERGE_OUTSIDE_CURRENT_MONTH": (
+        "Apenas compras do mês atual podem ser mescladas. "
+        "Lançamentos de meses anteriores já estão consolidados."
+    ),
+    "DELETE_OUTSIDE_CURRENT_MONTH": (
+        "Só lançamentos do mês atual podem ser apagados em lote. "
+        "Os de outros meses são apagados um a um."
+    ),
+    "BAD_SELECTION_ID": "A seleção contém um lançamento inválido.",
+    "TOO_MANY_IDS": "Selecione até {max} lançamentos por vez.",
     "REFUND_ONLY_FOR_EXPENSES": "Só despesas e compras podem ser marcadas como estornadas.",
     "NOTHING_TO_DELETE": (
         "Todas as parcelas deste parcelamento estão em faturas pagas e ficam no histórico."
     ),
     "TRANSFER_NOT_EDITABLE": (
-        "Transferências não podem ser editadas: apague e lance de novo para corrigir."
+        "Esta transferência não pode ser editada aqui: pagamentos de fatura e movimentos de "
+        "aplicações têm tela própria. Para corrigir, apague e lance de novo."
+    ),
+    "TRANSFER_SIDES_CHANGED": (
+        "Uma transferência não pode ganhar nem perder uma conta controlada: "
+        "apague e lance de novo para corrigir."
     ),
     "INSTALLMENT_FIELD_LOCKED": (
         "Data e conta de uma parcela seguem a fatura e o cartão da compra: só descrição, "
@@ -353,6 +371,7 @@ FLASH_MESSAGES: dict[str, str] = {
     "backup": "Backup criado. Guarde também uma cópia em outro disco ou dispositivo.",
     "card": "Cartão salvo.",
     "card_settings": "Cartão atualizado. Faturas já criadas mantêm as datas.",
+    "card_details": "Nome e cor do cartão atualizados.",
     "purchase": "Compra salva. Todas as parcelas, inclusive as futuras, já foram geradas.",
     "payment": "Pagamento registrado.",
     "informed": "Total informado atualizado.",
@@ -364,12 +383,14 @@ FLASH_MESSAGES: dict[str, str] = {
         "Parcelas pendentes apagadas. As de faturas já pagas ficaram no histórico."
     ),
     "entry_updated": "Lançamento atualizado.",
+    "transfer_updated": "Transferência atualizada nas duas contas.",
     "category_renamed": "Categoria renomeada.",
     "payment_updated": "Pagamento atualizado. Saldos e situação da fatura foram recalculados.",
     "merged": "Lançamentos mesclados em um só. Cada item continua na sua categoria.",
     "anticipated": "Parcelas antecipadas para a fatura aberta.",
     "budget": "Metas atualizadas.",
     "valuation": "Avaliação registrada.",
+    "snapshot_deleted": "Registro de saldo removido.",
     "valuation_yield": "Avaliação registrada.",
     "flow": "Movimentação registrada.",
     "investment_settings": "Conta de investimento atualizada.",
@@ -387,6 +408,11 @@ PARAMETERLESS_ERRORS = frozenset(
         "MERGE_ONLY_PLAIN_EXPENSES",
         "MERGE_ACCOUNT_MISMATCH",
         "MERGE_STATEMENT_MISMATCH",
+        "INVALID_PAYMENT_METHOD",
+        "MERGE_ITEMIZED_FORBIDDEN",
+        "MERGE_OUTSIDE_CURRENT_MONTH",
+        "DELETE_OUTSIDE_CURRENT_MONTH",
+        "BAD_SELECTION_ID",
         "STATEMENT_CLOSED_NEEDS_ACK",
         "USE_DELETE_PURCHASE",
         "NOT_A_CARD_PURCHASE",
@@ -427,6 +453,10 @@ def render_error(error: DomainError) -> str:
             if remaining > 0
             else f"ultrapassou {format_brl(-remaining)}"
         )
+    if "sum_cents" in params:
+        params["sum_text"] = format_brl(int(params["sum_cents"]))
+    if "total_cents" in params:
+        params["total_text"] = format_brl(int(params["total_cents"]))
     if "max_bytes" in params:
         params["max_kb"] = int(params["max_bytes"]) // 1024
     template = ERROR_MESSAGES.get(error.code)

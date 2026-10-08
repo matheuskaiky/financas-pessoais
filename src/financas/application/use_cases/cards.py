@@ -13,7 +13,8 @@ from financas.application.use_cases._cards import (
     ensure_statement,
     require_card,
 )
-from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases._common import UNSET, Unset, entry_title, found, new_id
+from financas.application.use_cases.deletion import PlanDeletion, delete_plan_pending
 from financas.application.use_cases.transactions import SplitItem, checked_split_item
 from financas.domain.errors import DomainError
 from financas.domain.models import (
@@ -21,6 +22,7 @@ from financas.domain.models import (
     AccountKind,
     CategoryKind,
     InstallmentPlan,
+    PaymentMethod,
     Statement,
     StatementStatus,
     Transaction,
@@ -29,7 +31,7 @@ from financas.domain.models import (
 )
 from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork, Work
-from financas.domain.rules import validate_card_settings
+from financas.domain.rules import normalize_color, validate_card_settings
 from financas.domain.services.card_cycle import (
     StatementAssignment,
     check_payment_date,
@@ -41,6 +43,45 @@ from financas.domain.services.installments import MAX_INSTALLMENTS, build_schedu
 from financas.domain.services.merchants import settle_description
 from financas.domain.services.splits import distribute_items, validate_split_amounts
 from financas.domain.services.text import clean_merchant, clean_text, normalize_search
+
+
+@dataclass(frozen=True)
+class UpdateCardDetailsCommand:
+    account_id: str
+    name: str  # the nickname shown everywhere (faces, chips, tags, entries)
+    color: Unset | str | None = UNSET  # ``UNSET`` keeps it, ``None`` clears it, ``#RRGGBB`` sets it
+
+
+class UpdateCardDetails:
+    """Rename a card and/or change its colour (presentation only: no figure depends on either).
+
+    Everything that associates entries, statements and limits with a card goes through its id, never
+    through its name, so a rename (or an accented name such as "Banco Inter cartão") changes nothing
+    in the totals. The new name must not repeat another account's, ignoring case and accents.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: UpdateCardDetailsCommand) -> Account:
+        name = clean_text(cmd.name)
+        if not name:
+            raise DomainError("EMPTY_NAME")
+        with self._uow as uow:
+            card = found(uow.accounts.get(cmd.account_id), "account")
+            if card.kind is not AccountKind.CREDIT_CARD:
+                raise DomainError("CARD_REQUIRED")
+            key = normalize_search(name)
+            if any(
+                a.id != card.id and normalize_search(a.nickname) == key
+                for a in uow.accounts.list_all()
+            ):
+                raise DomainError("DUPLICATE_ACCOUNT_NAME")
+            color = card.color if isinstance(cmd.color, Unset) else normalize_color(cmd.color)
+            updated = replace(card, nickname=name, color=color)
+            uow.accounts.update(updated)
+            uow.commit()
+        return updated
 
 
 class SetCardSettings:
@@ -231,15 +272,17 @@ class RegisterCardPurchase:
         self._uow = uow
 
     def execute(self, cmd: CardPurchaseCommand) -> PurchaseResult:
-        description = clean_text(cmd.description)
-        if not description:
-            raise DomainError("EMPTY_DESCRIPTION")
-        description, merchant = settle_description(description, clean_merchant(cmd.merchant))
+        description = clean_text(cmd.description)  # blank: the category names the purchase (below)
+        merchant = clean_merchant(cmd.merchant)
+        if description:
+            description, merchant = settle_description(description, merchant)
         if cmd.splits and cmd.category_id:  # the items carry the categories: the purchase has none
             raise DomainError("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS")
         with self._uow as uow:
             card, preview = _build_preview(uow, cmd)
             category_id = None if cmd.splits else _default_category_id(uow, cmd.category_id)
+            chosen = uow.categories.get(category_id) if category_id else None
+            description = entry_title(description, chosen if cmd.category_id else None)
             items = [
                 (*checked_split_item(uow, TransactionKind.EXPENSE, item), abs(item.amount_cents))
                 for item in cmd.splits
@@ -291,6 +334,7 @@ class RegisterCardPurchase:
                         plan_id=plan.id if plan else None,
                         installment_number=line.number if plan else None,
                         merchant=merchant,
+                        payment_method=PaymentMethod.CREDIT_CARD,
                     )
                 )
             uow.transactions.add_many(entries)
@@ -352,20 +396,8 @@ class DeletePurchase:
         return len(entries)
 
 
-@dataclass(frozen=True)
-class PlanDeletion:
-    deleted: int
-    kept: int  # installments on paid statements: history, never removed
-    plan_removed: bool  # false when something was kept: the plan stays for the audit trail
-
-
 class DeleteInstallmentPlan:
-    """Remove the installments of a plan that are not on a paid statement (9.4).
-
-    A paid statement is history: its installments stay, and so does the plan record. When
-    nothing is paid the whole plan goes. Totals, statements and the limit are computed from the
-    entries, so there is nothing else to recalculate. All or nothing.
-    """
+    """Remove the installments of a plan that are not on a paid statement (9.4); all or nothing."""
 
     def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
         self._uow = uow
@@ -373,27 +405,9 @@ class DeleteInstallmentPlan:
 
     def execute(self, plan_id: str) -> PlanDeletion:
         with self._uow as uow:
-            found(uow.plans.get(plan_id), "plan")
-            entries = uow.transactions.list_by_plan(plan_id, include_refunded=True)
-            locked: dict[str, bool] = {}
-            removable: list[Transaction] = []
-            for entry in entries:
-                key = entry.statement_id or ""
-                if key not in locked:
-                    statement = found(uow.statements.get(key), "statement")
-                    view = statement_view(uow, statement, self._clock.today())
-                    locked[key] = is_locked(view)
-                if not locked[key]:
-                    removable.append(entry)
-            if not removable:
-                raise DomainError("NOTHING_TO_DELETE")
-            for entry in removable:
-                uow.transactions.delete(entry.id)
-            kept = len(entries) - len(removable)
-            if kept == 0:
-                uow.plans.delete(plan_id)
+            result = delete_plan_pending(uow, plan_id, self._clock.today())
             uow.commit()
-        return PlanDeletion(len(removable), kept, plan_removed=kept == 0)
+        return result
 
 
 # --- statements -------------------------------------------------------------------------------
@@ -618,6 +632,7 @@ class PostStatementDifference:
                 description=text,
                 description_search=normalize_search(text),
                 statement_id=statement.id,
+                payment_method=PaymentMethod.CREDIT_CARD,
             )
             uow.transactions.add_many([entry])
             uow.commit()

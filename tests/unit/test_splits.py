@@ -297,17 +297,15 @@ def test_merge_checking_expenses_and_keep_spending_by_category(
     }
 
 
-def test_merging_an_itemized_entry_brings_its_items_along(
-    uow: MemoryUnitOfWork, checking: Account
-) -> None:
+def test_merging_an_itemized_entry_is_refused(uow: MemoryUnitOfWork, checking: Account) -> None:
     big = spend(uow, checking, 38_000)
     itemize(uow, big, market_items(uow))
     small = spend(uow, checking, 2_000, description="Bala", category_id=cat(uow, "food"))
-    parent = merge(uow, [big.id, small.id])
-    items = uow.transactions.splits_for([parent.id])[parent.id]
-    assert [i.amount_cents for i in items] == [22_000, 9_000, 7_000, 2_000]
-    assert parent.amount_cents == -40_000
-    assert uow.transactions.splits_for([big.id]) == {}
+    with pytest.raises(DomainError) as exc:
+        merge(uow, [big.id, small.id])
+    assert code(exc) == "MERGE_ITEMIZED_FORBIDDEN"
+    assert len(uow.transactions.splits_for([big.id])[big.id]) == 3  # nothing changed
+    assert uow.transactions.get(small.id) is not None
 
 
 @pytest.mark.parametrize("count", [0, 1])

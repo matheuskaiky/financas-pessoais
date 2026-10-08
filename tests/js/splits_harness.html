@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>Items editor and merge toolbar (app.js)</title>
+<title>Items editor and row breakdown toggle (app.js)</title>
 </head>
 <body>
 <form id="f">
@@ -27,22 +27,8 @@
   <button type="submit" id="save">Salvar</button>
 </form>
 
-<div>
-  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id1" data-merge-desc="Feira" data-merge-date="2026-10-02"></div>
-  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id2" data-merge-desc="Sabão" data-merge-date="2026-10-05"></div>
-  <div class="row"><input type="checkbox" class="merge-pick" data-merge-id="id3" data-merge-desc="Pão" data-merge-date="2026-10-03"></div>
-</div>
 <div class="row" id="rowx"><div class="c-desc"><button type="button" id="tg" data-split-toggle aria-expanded="false" aria-controls="split-x">▾ 3 categorias</button></div>
   <div id="split-x" class="split-detail" hidden>detalhe</div></div>
-<div id="merge-bar" hidden><strong data-merge-count>0</strong><button type="button" data-merge-open>Mesclar</button><button type="button" data-merge-clear>Limpar</button></div>
-<dialog id="merge-dialog">
-  <form id="mf">
-    <div data-merge-ids></div>
-    <input name="description"><input name="date"><input type="checkbox" name="ack">
-    <div id="merge-error"><p>old</p></div>
-    <button type="button" data-merge-cancel>Cancelar</button>
-  </form>
-</dialog>
 <pre id="out">running</pre>
 <script>
 const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
@@ -125,26 +111,6 @@ check("arrow flips", $("tg").textContent.startsWith("▴"), true);
 $("tg").click();
 check("closes", $("split-x").hidden, true);
 check("arrow back", $("tg").textContent.startsWith("▾"), true);
-
-// merge toolbar: appears with two picks
-const picks = document.querySelectorAll(".merge-pick");
-check("bar hidden at 0", $("merge-bar").hidden, true);
-picks[0].checked = true; fire(picks[0], "change");
-check("bar hidden at 1", $("merge-bar").hidden, true);
-picks[1].checked = true; fire(picks[1], "change");
-check("bar shown at 2", $("merge-bar").hidden, false);
-check("count", document.querySelector("[data-merge-count]").textContent, "2");
-document.querySelector("[data-merge-open]").click();
-check("dialog open", $("merge-dialog").open, true);
-check("hidden ids", Array.from(document.querySelectorAll('#mf input[name="ids"]')).map((i) => i.value).join(","), "id1,id2");
-check("default description is the first picked", $("mf").elements["description"].value, "Feira");
-check("default date is the latest", $("mf").elements["date"].value, "2026-10-05");
-check("old error cleared", $("merge-error").children.length, 0);
-document.querySelector("[data-merge-cancel]").click();
-check("dialog closed", $("merge-dialog").open, false);
-document.querySelector("[data-merge-clear]").click();
-check("cleared", document.querySelectorAll(".merge-pick:checked").length, 0);
-check("bar hidden after clear", $("merge-bar").hidden, true);
 
 // --- cases from the bug report: typed one digit at a time, the way a person does ---
 function fresh(totalDigits) {

@@ -1,6 +1,7 @@
 """Consistent backups: SQLite's backup API plus ``data/images/`` (CLAUDE.md section 14)."""
 
 import datetime as dt
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -89,6 +90,9 @@ def replace_database(db_url: str, replacement: Path) -> None:
     destination = sqlite_path(db_url)
     for suffix in ("-wal", "-shm", "-journal"):
         destination.with_name(destination.name + suffix).unlink(missing_ok=True)
-    shutil.move(str(replacement), destination)
+    try:
+        os.replace(replacement, destination)  # atomic, and overwrites on Windows too
+    except OSError:  # another drive: copy then remove
+        shutil.move(str(replacement), destination)
     for suffix in ("-wal", "-shm", "-journal"):
         replacement.with_name(replacement.name + suffix).unlink(missing_ok=True)

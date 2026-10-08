@@ -30,6 +30,7 @@ from financas.application.use_cases.transactions import (
     RegisterTransactionCommand,
     RegisterTransfer,
     RegisterTransferCommand,
+    SplitItem,
 )
 from financas.domain.errors import DomainError
 from financas.domain.models import AccountKind
@@ -100,6 +101,12 @@ class ApplyFeed:
                 is_recurring=action.recurring,
                 notes=action.notes,
                 statement_month=action.statement.month if action.statement else None,
+                merchant=action.merchant,
+                splits=tuple(
+                    SplitItem(i.description, i.category_id, i.amount_cents) for i in action.splits
+                ),
+                is_refunded=action.refunded,
+                payment_method=action.payment_method,
             )
         )
 
@@ -117,6 +124,10 @@ class ApplyFeed:
                 statement_month=action.statement.month,
                 is_recurring=False,
                 notes=action.notes,
+                merchant=action.merchant,
+                splits=tuple(
+                    SplitItem(i.description, i.category_id, i.amount_cents) for i in action.splits
+                ),
             )
         )
         made = [(ln.number, ln.statement_month, ln.amount_cents) for ln in result.preview.lines]
@@ -181,7 +192,7 @@ def snapshot(uow: UnitOfWork, plan: FeedPlan) -> Snapshot:
     transfers: set[str] = set()
     with uow as work:
         for account_id in _involved(plan):
-            rows = work.transactions.list_by_account(account_id)
+            rows = work.transactions.list_by_account(account_id, include_refunded=True)
             by_account[account_id] = frozenset(t.id for t in rows)
             transfers |= {t.transfer_id for t in rows if t.transfer_id}
     return Snapshot(by_account, frozenset(transfers))
@@ -198,7 +209,11 @@ def verify_feed(uow: UnitOfWork, plan: FeedPlan, before: Snapshot) -> Verificati
         cards = {a.id for a in work.accounts.list_all() if a.kind is AccountKind.CREDIT_CARD}
         statement_ids = {s.id for s in work.statements.list_all()}
         for account_id, known in before.by_account.items():
-            rows = [t for t in work.transactions.list_by_account(account_id) if t.id not in known]
+            rows = [
+                t
+                for t in work.transactions.list_by_account(account_id, include_refunded=True)
+                if t.id not in known
+            ]
             new[account_id] = [(t.id, t.amount_cents, t.statement_id, t.transfer_id) for t in rows]
             for t in rows:
                 if t.transfer_id and t.transfer_id not in before.transfers:
@@ -220,7 +235,9 @@ def verify_feed(uow: UnitOfWork, plan: FeedPlan, before: Snapshot) -> Verificati
             linked = (
                 [
                     t
-                    for t in work.transactions.list_by_statement(statement.id)
+                    for t in work.transactions.list_by_statement(
+                        statement.id, include_refunded=True
+                    )
                     if t.id not in before.by_account[touch.account_id]
                 ]
                 if statement

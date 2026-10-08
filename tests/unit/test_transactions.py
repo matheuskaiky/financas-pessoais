@@ -22,15 +22,23 @@ from financas.application.use_cases.transactions import (
     RegisterTransactionCommand,
     RegisterTransfer,
     RegisterTransferCommand,
+    SplitItem,
     SuggestCategory,
     UpdateTransaction,
     UpdateTransactionCommand,
 )
 from financas.domain.errors import DomainError
-from financas.domain.models import Account, AccountKind, Transaction, TransactionKind
+from financas.domain.models import (
+    Account,
+    AccountKind,
+    PaymentMethod,
+    Transaction,
+    TransactionKind,
+)
 from financas.domain.money import YearMonth
 
 K = TransactionKind
+PM = PaymentMethod
 D = dt.date
 
 
@@ -98,10 +106,8 @@ def test_amount_must_be_positive(uow: MemoryUnitOfWork, checking: Account, amoun
     assert exc.value.code == "AMOUNT_NOT_POSITIVE"
 
 
-def test_description_is_required(uow: MemoryUnitOfWork, checking: Account) -> None:
-    with pytest.raises(DomainError) as exc:
-        register(uow, checking, description="   ")
-    assert exc.value.code == "EMPTY_DESCRIPTION"
+def test_description_is_optional(uow: MemoryUnitOfWork, checking: Account) -> None:
+    assert register(uow, checking, description="   ").description == "Sem descrição"
 
 
 def test_transfers_do_not_go_through_register_transaction(
@@ -278,7 +284,6 @@ def test_edit_validates_category_kind_amount_and_description(
     for overrides, code in [
         ({"category_id": category_id(uow, "salary")}, "CATEGORY_KIND_MISMATCH"),
         ({"amount_cents": 0}, "AMOUNT_NOT_POSITIVE"),
-        ({"description": "  "}, "EMPTY_DESCRIPTION"),
     ]:
         with pytest.raises(DomainError) as exc:
             edit(uow, entry.id, **overrides)
@@ -696,3 +701,178 @@ def test_edit_state_recognizes_both_legs_of_a_statement_payment(
     with pytest.raises(DomainError) as exc:
         edit(uow, legs[0].id, today=today, amount_cents=100)
     assert exc.value.code == "TRANSFER_NOT_EDITABLE"
+
+
+# --- payment method ---
+
+
+def test_a_bank_entry_keeps_the_payment_method_it_was_given(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    assert register(uow, checking).payment_method is None  # not informed
+    for method in (PM.PIX, PM.DEBIT, PM.BOLETO, PM.TRANSFER, PM.CASH, PM.OTHER):
+        stored = uow.transactions.get(register(uow, checking, payment_method=method).id)
+        assert stored and stored.payment_method is method
+    salary = register(uow, checking, kind=K.INCOME, payment_method=PM.PIX)
+    assert salary.payment_method is PM.PIX  # a PIX received
+
+
+def test_a_card_purchase_is_always_credit_card(uow: MemoryUnitOfWork, card: Account) -> None:
+    assert register(uow, card).payment_method is PM.CREDIT_CARD
+    assert register(uow, card, payment_method=PM.CREDIT_CARD).payment_method is PM.CREDIT_CARD
+    with pytest.raises(DomainError) as exc:
+        register(uow, card, payment_method=PM.PIX)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_credit_card_is_not_a_bank_method(uow: MemoryUnitOfWork, checking: Account) -> None:
+    with pytest.raises(DomainError) as exc:
+        register(uow, checking, payment_method=PM.CREDIT_CARD)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_installments_and_statement_lines_are_credit_card(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    result = RegisterCardPurchase(uow).execute(
+        CardPurchaseCommand(
+            account_id=card.id,
+            description="Monitor",
+            purchased_on=D(2026, 7, 10),
+            installments=3,
+            total_cents=9_000,
+        )
+    )
+    assert {t.payment_method for t in result.transactions} == {PM.CREDIT_CARD}
+
+
+def test_editing_changes_or_keeps_the_payment_method(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    entry = register(uow, checking, payment_method=PM.PIX)
+
+    def edit(**kw: object) -> Transaction:
+        return UpdateTransaction(uow, FixedClock(D(2026, 7, 20))).execute(
+            UpdateTransactionCommand(
+                entry.id,
+                entry.posted_on,
+                12_345,
+                entry.description,
+                **kw,  # type: ignore[arg-type]
+            )
+        )
+
+    assert edit().payment_method is PM.PIX  # not mentioned: kept
+    assert edit(payment_method=PM.BOLETO).payment_method is PM.BOLETO
+    assert edit(payment_method=None).payment_method is None  # cleared
+    with pytest.raises(DomainError) as exc:
+        edit(payment_method=PM.CREDIT_CARD)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+
+
+def test_transfers_carry_no_payment_method(
+    uow: MemoryUnitOfWork, checking: Account, savings: Account
+) -> None:
+    legs = RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, savings.id, D(2026, 7, 10), 5_000, "Aporte")
+    )
+    assert {leg.payment_method for leg in legs} == {None}
+
+
+# --- TED, and the money's direction decides the methods ---
+
+
+def test_an_income_can_arrive_by_ted_and_the_ted_is_stored(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    salary = register(uow, checking, kind=K.INCOME, payment_method=PM.TED, description="Salário")
+    stored = uow.transactions.get(salary.id)
+    assert stored and stored.payment_method is PM.TED
+    assert register(uow, checking, payment_method=PM.TED).payment_method is PM.TED  # an expense too
+
+
+@pytest.mark.parametrize("method", [PM.DEBIT, PM.BOLETO])
+def test_money_coming_in_is_not_paid_with_debit_or_boleto(
+    uow: MemoryUnitOfWork, checking: Account, method: PM
+) -> None:
+    with pytest.raises(DomainError) as exc:
+        register(uow, checking, kind=K.INCOME, payment_method=method)
+    assert exc.value.code == "INVALID_PAYMENT_METHOD"
+    assert register(uow, checking, kind=K.INCOME, payment_method=PM.PIX).payment_method is PM.PIX
+    assert register(uow, checking, payment_method=method).payment_method is method  # expenses do
+
+
+# --- a blank description: the category names the entry ---
+
+
+def test_a_blank_description_takes_the_category_name(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    income = register(
+        uow, checking, kind=K.INCOME, description="", category_id=category_id(uow, "salary")
+    )
+    assert income.description == "Salário" and income.description_search == "salario"
+    expense = register(uow, checking, description="   ", category_id=category_id(uow, "groceries"))
+    assert expense.description == "Supermercado"
+
+
+def test_a_blank_description_without_a_useful_category_is_sem_descricao(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    assert register(uow, checking, description="").description == "Sem descrição"  # no category
+    assert (
+        register(
+            uow, checking, description="", category_id=category_id(uow, "uncategorized")
+        ).description
+        == "Sem descrição"
+    )
+    itemized = register(
+        uow,
+        checking,
+        description="",
+        category_id=None,
+        amount_cents=1_000,
+        splits=(
+            SplitItem("A", category_id(uow, "groceries"), 600),
+            SplitItem("B", category_id(uow, "home"), 400),
+        ),
+    )
+    assert itemized.description == "Sem descrição"  # its items carry the categories
+    assert register(uow, checking, description="Feira").description == "Feira"  # typed text wins
+
+
+def test_editing_to_a_blank_description_uses_the_category_name(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    entry = register(uow, checking, description="Remédios", category_id=category_id(uow, "health"))
+    edited = UpdateTransaction(uow, FixedClock(D(2026, 7, 20))).execute(
+        UpdateTransactionCommand(entry.id, entry.posted_on, 12_345, "  ")
+    )
+    assert edited.description == "Saúde"
+    moved = UpdateTransaction(uow, FixedClock(D(2026, 7, 20))).execute(
+        UpdateTransactionCommand(
+            entry.id, entry.posted_on, 12_345, "", category_id=category_id(uow, "food")
+        )
+    )
+    assert moved.description == "Alimentação"
+
+
+def test_a_card_purchase_with_no_description_is_named_by_its_category(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    bought = RegisterCardPurchase(uow).execute(
+        CardPurchaseCommand(
+            account_id=card.id,
+            description="",
+            purchased_on=D(2026, 7, 10),
+            total_cents=3_000,
+            category_id=category_id(uow, "health"),
+        )
+    )
+    assert bought.transactions[0].description == "Saúde"
+    plain = RegisterCardPurchase(uow).execute(
+        CardPurchaseCommand(
+            account_id=card.id, description="", purchased_on=D(2026, 7, 11), total_cents=1_000
+        )
+    )
+    assert plain.transactions[0].description == "Sem descrição"

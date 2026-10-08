@@ -1,0 +1,13 @@
+{# Rename a card and pick its colour. Loaded into #card-edit-slot by the pencil of the card panel; a save
+   reloads the page (faces, chips, tags and entries all show the new name). Needs: card, look_color, typed, error. #}
+{% from "_macros.html" import color_picker %}
+<form class="grid-form card-details" method="post" action="/cards/{{ card.id }}/details" hx-post="/cards/{{ card.id }}/details" hx-target="#card-edit-slot" hx-swap="innerHTML">
+  {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+  <label class="field wide"><span>Nome do cartão</span>
+    <input type="text" name="nickname" value="{{ typed.nickname if typed.nickname is defined else card.nickname }}" required maxlength="120" autocomplete="off" autofocus></label>
+  {{ color_picker(typed.color if typed.color is defined else (card.color or ""), look_color) }}
+  <div class="edit-actions">
+    <button type="submit">Salvar alterações</button>
+    <button type="button" class="secondary" hx-get="/cards/{{ card.id }}/details/close" hx-target="#card-edit-slot" hx-swap="innerHTML">Cancelar</button>
+  </div>
+</form>

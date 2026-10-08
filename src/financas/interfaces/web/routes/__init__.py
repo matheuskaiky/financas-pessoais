@@ -117,6 +117,10 @@ from financas.interfaces.web.routes import review  # noqa: E402
 
 MODULES.append(review)
 
+from financas.interfaces.web.routes import selection  # noqa: E402
+
+MODULES.append(selection)
+
 __all__ = [
     "MODULES",
     "Lookups",

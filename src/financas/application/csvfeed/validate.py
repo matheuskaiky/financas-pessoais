@@ -6,15 +6,18 @@ Business rules that need the database (accounts, categories, statements) are in 
 
 import datetime as dt
 from collections.abc import Callable
+from dataclasses import replace
 
 from financas.application.csvfeed.model import (
     MAX_DESCRIPTION_LENGTH,
+    MAX_MERCHANT_LENGTH,
     MAX_NOTES_LENGTH,
     AmountType,
     FeedColumn,
     FeedIssue,
     FeedKind,
     FeedRow,
+    FeedSplit,
     RawRow,
 )
 from financas.application.csvfeed.parsing import (
@@ -24,6 +27,7 @@ from financas.application.csvfeed.parsing import (
     parse_date,
     parse_int,
     parse_kind,
+    parse_payment_method,
     parse_statement_month,
 )
 from financas.domain.errors import DomainError
@@ -31,16 +35,30 @@ from financas.domain.models import TransactionKind
 from financas.domain.money import YearMonth
 from financas.domain.rules import validate_sign
 from financas.domain.services.installments import MAX_INSTALLMENTS
+from financas.domain.services.text import normalize_search
 
 C = FeedColumn
 
 _COMMON = {C.DATE, C.KIND, C.ACCOUNT, C.AMOUNT, C.DESCRIPTION, C.NOTES}
 _ENTRY = _COMMON | {C.CATEGORY, C.RECURRING, C.STATEMENT}
 ALLOWED: dict[FeedKind, set[FeedColumn]] = {
-    FeedKind.EXPENSE: _ENTRY | {C.INSTALLMENTS, C.INSTALLMENT_NUMBER, C.AMOUNT_TYPE},
-    FeedKind.INCOME: _ENTRY - {C.STATEMENT},
+    FeedKind.EXPENSE: _ENTRY
+    | {
+        C.INSTALLMENTS,
+        C.INSTALLMENT_NUMBER,
+        C.AMOUNT_TYPE,
+        C.MERCHANT,
+        C.REFUNDED,
+        C.GROUP,
+        C.PAYMENT_METHOD,
+    },
+    FeedKind.INCOME: (_ENTRY - {C.STATEMENT}) | {C.MERCHANT, C.PAYMENT_METHOD},
     FeedKind.REFUND: _ENTRY
-    | {C.INSTALLMENTS},  # present only to say "refunds are not installments"
+    | {
+        C.INSTALLMENTS,
+        C.MERCHANT,
+        C.PAYMENT_METHOD,
+    },  # installments: only to say "refunds are not installments"
     FeedKind.TRANSFER: _COMMON | {C.TO_ACCOUNT, C.CATEGORY, C.STATEMENT, C.RECURRING},
     FeedKind.BALANCE: _COMMON | {C.GROSS_AMOUNT, C.RECURRING},
 }
@@ -121,6 +139,21 @@ def validate_row(raw: RawRow, today: dt.date) -> tuple[FeedRow | None, list[Feed
 
     installments, number, amount_type = _installments(raw, kind, recurring, out)
 
+    merchant = raw.get(C.MERCHANT)
+    if len(merchant) > MAX_MERCHANT_LENGTH:
+        out.add("FIELD_TOO_LONG", C.MERCHANT, max=MAX_MERCHANT_LENGTH)
+    method = None
+    if raw.get(C.PAYMENT_METHOD):
+        method = out.attempt(
+            C.PAYMENT_METHOD, lambda: parse_payment_method(raw.get(C.PAYMENT_METHOD))
+        )
+    refunded = False
+    if raw.get(C.REFUNDED):
+        parsed_refunded = out.attempt(C.REFUNDED, lambda: parse_bool(raw.get(C.REFUNDED)))
+        refunded = bool(parsed_refunded)
+        if refunded and installments is not None and installments >= 2:
+            out.add("REFUNDED_NOT_FOR_INSTALLMENTS", C.REFUNDED)
+
     if out.issues or day is None or amount_cents is None:
         return None, out.issues
     return (
@@ -140,6 +173,10 @@ def validate_row(raw: RawRow, today: dt.date) -> tuple[FeedRow | None, list[Feed
             installment_number=number,
             amount_type=amount_type,
             gross_cents=gross,
+            merchant=merchant,
+            refunded=refunded,
+            group=raw.get(C.GROUP),
+            payment_method=method,
         ),
         [],
     )
@@ -222,13 +259,124 @@ def _installments(
     return count, number, amount_type
 
 
+def _group_key(raw: RawRow) -> str:
+    return normalize_search(raw.get(C.GROUP))
+
+
+# columns an item row may fill: its own description, category and amount; the shared ones
+# (group, kind, date, account) only if they repeat the parent's
+_ITEM_OWN = {C.DESCRIPTION, C.CATEGORY, C.AMOUNT, C.GROUP}
+_ITEM_SHARED = {C.KIND, C.DATE, C.ACCOUNT}
+
+
+def _item(raw: RawRow, parent: RawRow, today: dt.date, out: _Collector) -> FeedSplit | None:
+    """One item row of an itemized purchase (the row after the parent with the same group)."""
+    for column, text in raw.values.items():
+        if text and column not in _ITEM_OWN | _ITEM_SHARED:
+            out.add("NOT_ALLOWED_FOR_SPLIT_ITEM", column)
+    for column in _ITEM_SHARED:
+        text = raw.get(column)
+        if not text:
+            continue
+        if column is C.DATE:
+            day = out.attempt(C.DATE, lambda t=text: parse_date(t, today))
+            same = day is None or day == _quiet_date(parent, today)
+        elif column is C.KIND:
+            kind = out.attempt(C.KIND, lambda t=text: parse_kind(t))
+            same = kind is None or kind is FeedKind.EXPENSE
+        else:
+            same = normalize_search(text) == normalize_search(parent.get(C.ACCOUNT))
+        if not same:
+            out.add("SPLIT_ITEM_MISMATCH", column)
+    description = raw.get(C.DESCRIPTION)
+    if not description:
+        out.add("REQUIRED_FIELD", C.DESCRIPTION)
+    elif len(description) > MAX_DESCRIPTION_LENGTH:
+        out.add("FIELD_TOO_LONG", C.DESCRIPTION, max=MAX_DESCRIPTION_LENGTH)
+    category = raw.get(C.CATEGORY)
+    if not category:
+        out.add("REQUIRED_FIELD", C.CATEGORY)
+    amount = _amount(raw, FeedKind.EXPENSE, out)
+    if out.issues or amount is None:
+        return None
+    return FeedSplit(raw.line, description, category, amount)
+
+
+def _quiet_date(raw: RawRow, today: dt.date) -> dt.date | None:
+    try:
+        return parse_date(raw.get(C.DATE), today) if raw.get(C.DATE) else None
+    except DomainError:
+        return None
+
+
+def validate_group(run: list[RawRow], today: dt.date) -> tuple[FeedRow | None, list[FeedIssue]]:
+    """An itemized purchase: the first row is the purchase (date, description, total, account,
+    merchant, no category), the rows after it are its items (description, category, amount).
+    The items must add up to the total, to the cent."""
+    parent_raw, items_raw = run[0], run[1:]
+    row, issues = validate_row(parent_raw, today)
+    head = _Collector(parent_raw.line)
+    if parent_raw.get(C.CATEGORY):
+        head.add("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS", C.CATEGORY)
+    if row is not None and row.amount_type is AmountType.INSTALLMENT:
+        head.add("SPLIT_REQUIRES_TOTAL_AMOUNT", C.AMOUNT_TYPE)
+    if len(items_raw) < 2:
+        head.add("SPLIT_NEEDS_TWO_ITEMS", C.GROUP)
+    issues = [*issues, *head.issues]
+    splits: list[FeedSplit] = []
+    for raw in items_raw:
+        out = _Collector(raw.line)
+        item = _item(raw, parent_raw, today, out)
+        issues.extend(out.issues)
+        if item is not None:
+            splits.append(item)
+    if row is not None and not issues and len(splits) == len(items_raw):
+        total = sum(item.amount_cents for item in splits)
+        if total != row.amount_cents:
+            issues.append(
+                FeedIssue(
+                    "SPLIT_GROUP_SUM_MISMATCH",
+                    parent_raw.line,
+                    None,
+                    {"sum_cents": total, "total_cents": row.amount_cents},
+                )
+            )
+    if issues or row is None:
+        return None, issues
+    return replace(row, splits=tuple(splits)), []
+
+
 def validate_rows(
     rows: tuple[RawRow, ...], today: dt.date
 ) -> tuple[list[FeedRow], list[FeedIssue]]:
     valid: list[FeedRow] = []
     issues: list[FeedIssue] = []
-    for raw in rows:
-        row, found = validate_row(raw, today)
+    first_seen: dict[str, int] = {}
+    index = 0
+    while index < len(rows):
+        raw = rows[index]
+        key = _group_key(raw)
+        if not key:  # a flat row: one line, one entry (what every older file looks like)
+            row, found = validate_row(raw, today)
+            index += 1
+        else:  # consecutive rows sharing a group id: one itemized purchase
+            end = index + 1
+            while end < len(rows) and _group_key(rows[end]) == key:
+                end += 1
+            if key in first_seen:
+                issues.append(
+                    FeedIssue(
+                        "SPLIT_GROUP_NOT_CONSECUTIVE",
+                        raw.line,
+                        C.GROUP.value,
+                        {"first_line": first_seen[key]},
+                    )
+                )
+                index = end
+                continue
+            first_seen[key] = raw.line
+            row, found = validate_group(list(rows[index:end]), today)
+            index = end
         issues.extend(found)
         if row is not None:
             valid.append(row)

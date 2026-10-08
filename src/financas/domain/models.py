@@ -14,6 +14,34 @@ class TransactionKind(StrEnum):
     TRANSFER = "transfer"
 
 
+class PaymentMethod(StrEnum):
+    """How an entry was paid. The codes are the owner's vocabulary (also the CSV's): a deliberate
+    exception to the English-codes rule, since "pix" and "boleto" have no English names.
+
+    Bank accounts use the first six; ``CREDIT_CARD`` is what every card purchase carries.
+    """
+
+    PIX = "pix"
+    DEBIT = "debito"
+    BOLETO = "boleto"
+    TED = "ted"  # a TED: what an employer, a client or a person sends to the account
+    TRANSFER = "transferencia"  # DOC and other transfers to or from a third party
+    CASH = "dinheiro"
+    OTHER = "outro"
+    CREDIT_CARD = "cartao_credito"
+
+
+BANK_PAYMENT_METHODS = (
+    PaymentMethod.PIX,
+    PaymentMethod.DEBIT,
+    PaymentMethod.BOLETO,
+    PaymentMethod.TED,
+    PaymentMethod.TRANSFER,
+    PaymentMethod.CASH,
+    PaymentMethod.OTHER,
+)
+
+
 class CategoryKind(StrEnum):
     EXPENSE = "expense"
     INCOME = "income"
@@ -159,6 +187,7 @@ class Transaction:
     holding_id: str | None = None  # investment legs on a holdings-level account
     is_refunded: bool = False  # an expense that was given back: kept as a record, counted nowhere
     merchant: str | None = None  # where the money went ("Amazon", "Posto Ipiranga"), optional
+    payment_method: PaymentMethod | None = None  # how it was paid; ``None``: not informed
 
 
 @dataclass(frozen=True)

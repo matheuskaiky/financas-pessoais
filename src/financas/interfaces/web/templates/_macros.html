@@ -36,9 +36,6 @@
 </div>
 {% endmacro %}
 
-{# A checkbox that picks an entry to merge with others (the toolbar appears with two or more). #}
-{% macro merge_pick(t) %}<input type="checkbox" class="merge-pick" data-merge-id="{{ t.id }}" data-merge-desc="{{ t.description }}" data-merge-date="{{ t.posted_on.isoformat() }}" aria-label="Selecionar {{ t.description }} para mesclar">{% endmacro %}
-
 {# A day cluster's header: the date once, and (optionally) what was spent that day. #}
 {% macro day_group_header(day, total_cents=none, total_label="Total do dia", private="transactions") %}
 <div class="day-head day-group__header"><span class="day-group__title">{{ day|day_title }}</span>{% if total_cents is not none %}<span class="day-group__total">{{ total_label }}: {{ total_cents|money(private=private) }}</span>{% endif %}</div>
@@ -46,10 +43,34 @@
 
 {% macro dot(color) %}<span class="dot" style="background: {{ color }}" aria-hidden="true"></span>{% endmacro %}
 
+{# Color picker (static/color-picker.js): swatch that opens the system dialog, HEX text (the field that is posted;
+   empty = no color of its own), bank presets, eyedropper (shown only where the browser has EyeDropper).
+   `value` is the stored color or empty; `fallback` is what the swatch shows while there is none. #}
+{% macro color_picker(value="", fallback="#0F5C45", label="Cor", preview_target="") %}
+{% set bank_presets = [("Roxo", "#820AD1"), ("Laranja", "#FF7A00"), ("Amarelo", "#FFF159"), ("Azul", "#003399"), ("Vermelho", "#CC092F"), ("Preto", "#242424"), ("Dourado", "#D4A017")] %}{# the brand colors of the main Brazilian banks, named by color so no bank name leaks into the page #}
+<div class="field color-picker" data-color-picker data-fallback="{{ fallback }}"{% if preview_target %} data-preview-target="{{ preview_target }}"{% endif %}>
+  <span>{{ label }}</span>
+  <div class="cp-row">
+    <label class="cp-swatch" title="Escolher cor">
+      <span class="cp-preview{{ ' is-empty' if not value }}" data-cp-preview style="background: {{ value or fallback }}"></span>
+      <input type="color" class="sr-only" data-cp-native value="{{ value or fallback }}" aria-label="Seletor de cor do sistema" tabindex="-1">
+    </label>
+    <input type="text" name="color" class="cp-hex" data-cp-hex value="{{ value }}" placeholder="#RRGGBB" maxlength="7" autocomplete="off" spellcheck="false" pattern="#?[0-9A-Fa-f]{6}" aria-label="Cor em hexadecimal (#RRGGBB)" title="Formato #RRGGBB">
+    <button type="button" class="secondary cp-eyedropper" data-cp-eyedropper hidden>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z"/></svg>
+      Conta-gotas</button>
+    <button type="button" class="secondary cp-clear" data-cp-clear>Sem cor própria</button>
+  </div>
+  <div class="cp-presets" role="group" aria-label="Cores sugeridas">
+    {% for name, hex in bank_presets %}<button type="button" class="cp-preset" data-cp-preset="{{ hex }}" style="background: {{ hex }}" title="{{ name }} {{ hex }}" aria-label="{{ name }} {{ hex }}"></button>{% endfor %}
+  </div>
+  <small class="cp-feedback" data-cp-feedback role="status" aria-live="polite"></small>
+</div>
+{% endmacro %}
+
 {% macro appearance_form(target, entity_id, color, has_image, allow_image=True) %}
 <form method="post" action="/appearance/{{ target }}/{{ entity_id }}" enctype="multipart/form-data" class="row-form">
-  <label class="field"><span>Cor</span><input type="color" name="color" value="{{ color or '#0F5C45' }}"></label>
-  <label class="check"><input type="checkbox" name="use_color" value="1" {{ 'checked' if color }}> Usar esta cor</label>
+  {{ color_picker(color or "") }}
   {% if allow_image %}
   <label class="field"><span>Imagem (PNG, JPEG ou WebP, até 512 KB)</span><input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
   {% if has_image %}<label class="check"><input type="checkbox" name="remove_image" value="1"> Remover imagem</label>{% endif %}
@@ -59,8 +80,7 @@
 {% endmacro %}
 
 {% macro color_fields(name_prefix='') %}
-<label class="field"><span>Cor</span><input type="color" name="color" value="#0F5C45"></label>
-<label class="check"><input type="checkbox" name="use_color" value="1"> Usar esta cor</label>
+{{ color_picker("") }}
 {% endmacro %}
 
 {% macro status_pill(status) %}

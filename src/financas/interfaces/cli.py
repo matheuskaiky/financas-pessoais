@@ -80,6 +80,7 @@ from financas.application.use_cases.investments import (
     RegisterInvestmentFlowCommand,
 )
 from financas.application.use_cases.merchants import BackfillMerchants
+from financas.application.use_cases.reconcile_transfers import ApplyTransferPairs, ScanTransfers
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
     RegisterTransaction,
@@ -168,6 +169,7 @@ app.add_typer(import_app, name="import")
 # reject it); colors are applied with styles instead
 console = Console(markup=False)
 err_console = Console(stderr=True, markup=False)
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")  # `serve` never listens beyond this computer
 
 Color = Annotated[str | None, typer.Option("--color", help="Cor no formato #RRGGBB.")]
 Image = Annotated[
@@ -553,6 +555,59 @@ def transfer(
     console.print(f"Transferência lançada ({len(legs)} perna(s)). Código: {legs[0].id[:8]}")
 
 
+@app.command("reconcile-transfers")
+@handle_errors
+def reconcile_transfers(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--dry-run",
+            help="--dry-run (padrão) só mostra os pares; --apply liga os pares seguros.",
+        ),
+    ] = False,
+) -> None:
+    """Acha lançamentos antigos que são as duas pontas de uma transferência entre contas.
+
+    A busca compara valor (iguais e de sinais opostos), data (no máximo 1 dia de diferença) e
+    palavras como PIX, TED e Transf. Ao aplicar, as duas pontas deixam de ser receita e despesa e
+    viram uma transferência ligada. Pares ambíguos ou de baixa confiança nunca são ligados.
+    """
+    c = container()
+    report = ScanTransfers(c.uow).execute()
+    table = Table(title="Transferências a ligar")
+    for column in ("Data", "Valor", "Origem", "Destino", "Confiança"):
+        table.add_column(column, justify="right" if column in ("Valor", "Confiança") else "left")
+    for view in report.pairs:
+        out, inc = view.proposal.outgoing, view.proposal.incoming
+        table.add_row(
+            format_date(view.posted_on),
+            format_brl(view.amount_cents),
+            f"{view.outgoing_account} [{out.id[:8]}] {view.outgoing_description}",
+            f"{view.incoming_account} [{inc.id[:8]}] {view.incoming_description}",
+            f"{view.proposal.confidence}%" + ("" if view.proposal.applicable else " (revisar)"),
+        )
+    if report.pairs:
+        console.print(table)
+    console.print(
+        f"{len(report.pairs)} par(es) encontrado(s), {len(report.applicable)} seguro(s) para "
+        "ligar; "
+        f"{report.ambiguous} lançamento(s) ambíguo(s) ficaram de fora "
+        f"({report.considered} analisado(s))."
+    )
+    if not apply:
+        console.print("Simulação: nada foi alterado. Use --apply para ligar os pares seguros.")
+        return
+    if not report.applicable:
+        console.print("Nenhum par seguro para ligar.")
+        return
+    console.print(f"Backup criado em {c.backup()}.")
+    result = ApplyTransferPairs(c.uow).execute()
+    console.print(
+        f"{result.linked} transferência(s) ligada(s). Esses lançamentos não contam mais "
+        "como receita nem despesa."
+    )
+
+
 @app.command("list")
 @handle_errors
 def list_entries(
@@ -719,17 +774,29 @@ def backup() -> None:
 
 
 @app.command("serve")
-def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) -> None:
+def serve(
+    port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000,
+    host: Annotated[
+        str | None,
+        typer.Option("--host", help="Endereço local (padrão: FINANCAS_HOST, 127.0.0.1)."),
+    ] = None,
+) -> None:
     """Inicia o painel web em http://127.0.0.1:8000."""
     import uvicorn
 
     from financas.interfaces.web.app import create_app
 
     c = container()
+    wanted = host or c.settings.host
+    if wanted not in _LOOPBACK_HOSTS:  # rule: never exposed beyond this computer without approval
+        err_console.print(
+            "Endereço recusado: o painel só escuta neste computador (127.0.0.1).", style="red"
+        )
+        raise typer.Exit(2)
     c.migrate()
     c.seed()
     # no access log: URLs can carry search text (descriptions never go to logs, rule 4)
-    uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
+    uvicorn.run(create_app(c), host=wanted, port=port, access_log=False)
 
 
 @app.command("demo")
@@ -2004,8 +2071,17 @@ def _demo_requested(argv: list[str]) -> bool:
     return "--demo" in argv or bool(argv[:1] and argv[0] in {"demo", "seed-demo"})
 
 
+def _force_utf8_streams() -> None:
+    """Accents and the minus sign must print on a Windows console or pipe (cp1252 by default)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
     """Entry point of the ``financas`` command: unexpected failures go to the failure log."""
+    _force_utf8_streams()
     try:
         app()
     except Exception as error:

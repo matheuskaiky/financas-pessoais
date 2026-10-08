@@ -1,0 +1,19 @@
+{# Result of the investments: KPI cards and the snapshot history of each account tracked as a whole.
+   Needs: profit (InvestmentProfit). #}
+{% from "_ui.html" import delta_chip %}
+<section class="panel" id="resultado" aria-labelledby="h-res">
+  <h2 id="h-res">Resultado dos investimentos</h2>
+  <dl class="kpi-row" data-profit-kpis>
+    <div class="kpi"><dt>Saldo atual</dt><dd><strong>{{ profit.value_cents|money(private="investments") }}</strong></dd></div>
+    <div class="kpi"><dt>Total aportado</dt><dd><strong>{{ profit.cost_cents|money(private="investments") }}</strong><small class="soft">aportes − resgates</small></dd></div>
+    <div class="kpi"><dt>Lucro total</dt><dd>
+      {% if profit.pending == profit.series|length %}<span class="pill grey">Sem saldos registrados</span>
+      {% else %}{{ delta_chip((profit.profit_cents|money(sign="always")|string) ~ ((' (' ~ (profit.return_rate|percent) ~ ')') if profit.return_rate is not none else ''), 'pos' if profit.profit_cents >= 0 else 'neg', 'up' if profit.profit_cents >= 0 else 'down', private="investments") }}{% endif %}</dd></div>
+  </dl>
+  {% if profit.pending %}<span class="pill warn" style="align-self: flex-start">Parcial · {{ profit.pending }} sem saldo registrado</span>{% endif %}
+  <small class="soft">Usa o saldo bruto quando informado (senão, o líquido) e só os aportes e resgates lançados aqui. O sistema não calcula imposto.</small>
+  {% for series in profit.series if series.holding is none and series.rows %}
+  <h3>{{ series.label }}</h3>
+  {% include "_holding_history.html" %}
+  {% endfor %}
+</section>

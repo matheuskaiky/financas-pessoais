@@ -16,6 +16,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from financas.application.queries.merchants import ListMerchants
 from financas.application.queries.plan_purchases import GetPlanPurchase
+from financas.application.queries.selection import ListRowSelections
+from financas.application.queries.transfer_links import GetTransfer, ListTransferLinks
+from financas.application.use_cases._common import UNSET
 from financas.application.use_cases.anticipation import (
     AnticipateInstallments,
     AnticipationCommand,
@@ -36,11 +39,13 @@ from financas.application.use_cases.transactions import (
     UpdateTransaction,
     UpdateTransactionCommand,
 )
+from financas.application.use_cases.transfers import UpdateTransfer, UpdateTransferCommand
 from financas.domain.errors import DomainError
 from financas.domain.models import (
     AccountKind,
     CategoryGroup,
     CategoryKind,
+    PaymentMethod,
     Transaction,
     TransactionKind,
 )
@@ -49,9 +54,15 @@ from financas.interfaces import messages
 from financas.interfaces.formatting import format_decimal_comma, parse_date, parse_percent_bps
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import WebContext
+from financas.interfaces.web.routes.selection import error_response
+from financas.interfaces.web.shared import transfer_title
 
 BPS_PER_UNIT = Decimal(10_000)
 NOT_FOUND = 404
+# merge failures the Selection Mode script answers by locking rows (422 + JSON)
+SELECTION_CODES = frozenset(
+    {"MERGE_OUTSIDE_CURRENT_MONTH", "MERGE_ITEMIZED_FORBIDDEN", "MERGE_ONLY_PLAIN_EXPENSES"}
+)
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -164,6 +175,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "refunded": "1" if entry.is_refunded else "",
             "refund_all": "",
             "merchant": entry.merchant or "",
+            "payment_method": entry.payment_method.value if entry.payment_method else "",
         }
 
     def edit_form(
@@ -182,11 +194,28 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             else CategoryKind(entry.kind.value)
         )
         current = next((a for a in lookups["accounts"] if a.id == entry.account_id), None)
+        transfer = GetTransfer(c.uow).execute(entry.id) if state.is_transfer else None
         return fragment(
             request,
             "_entry_edit.html",
             {
                 "state": state,
+                "transfer": transfer,
+                # the notes an investment leg can move money into or out of (and the current one)
+                "transfer_holdings": [
+                    h
+                    for h in holding_list()
+                    if h.status.value == "active" or (transfer and h.id == transfer.holding_id)
+                ],
+                # a transfer's accounts: active checking and investment ones (and the ones it has)
+                "transfer_choices": [
+                    a
+                    for a in lookups["accounts"]
+                    if a.kind in (AccountKind.CHECKING, AccountKind.INVESTMENT)
+                    and (
+                        a.is_active or (transfer and a.id in {x.account_id for x in transfer.legs})
+                    )
+                ],
                 "form": form,
                 "error": messages.render_error(error) if error else None,
                 "origin_qs": urlencode(origin or {}),
@@ -225,6 +254,18 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             },
         )
 
+    def transfer_form(entry: Transaction) -> dict[str, str]:
+        legs = GetTransfer(c.uow).execute(entry.id)
+        return {
+            "amount": format_decimal_comma(abs(entry.amount_cents)),
+            "date": entry.posted_on.isoformat(),
+            "description": entry.description,
+            "notes": entry.notes or "",
+            "from_account": legs.outgoing.account_id if legs.outgoing else "",
+            "to_account": legs.incoming.account_id if legs.incoming else "",
+            "holding_id": legs.holding_id or "",
+        }
+
     def payment_form(state: EntryEditState) -> dict[str, str]:
         assert state.payment is not None
         card_leg, origin_leg = state.payment.card_leg, state.payment.origin_leg
@@ -248,6 +289,14 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             for s in (plan_wide or state.splits)
         ]
 
+    def holding_list():
+        with c.uow as work:
+            return work.holdings.list_all()
+
+    def holding_names() -> dict[str, str]:
+        with c.uow as work:
+            return {h.id: h.name for h in work.holdings.list_all()}
+
     @app.get("/entries/{transaction_id}/row", response_class=HTMLResponse)
     def entry_row(
         request: Request,
@@ -266,21 +315,53 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "category_by_id": {x.id: x for x in lookups["categories"]},
             "category_colors": lookups["category_colors"],
             "splits": {state.entry.id: list(state.splits)} if state.splits else {},
+            "transfer_links": ListTransferLinks(c.uow).execute([state.entry]),
+            "holding_names": holding_names(),
         }
+        purchase = (
+            GetPlanPurchase(c.uow).execute(state.entry.plan_id) if state.entry.plan_id else None
+        )
+        by_plan = {purchase.plan.id: purchase} if purchase is not None else {}
         if not origin:
-            purchase = (
-                GetPlanPurchase(c.uow).execute(state.entry.plan_id) if state.entry.plan_id else None
-            )
             if purchase is not None:  # an installment is listed as its whole purchase here
                 context["t"] = purchase.as_entry()
                 context["plan_purchases"] = {purchase.anchor.id: purchase}
+            shown = purchase.as_entry() if purchase is not None else state.entry
+            context["selections"] = ListRowSelections(c.uow, c.clock).execute(
+                [shown], by_plan, {state.entry.id: list(state.splits)} if state.splits else {}
+            )
             return fragment(request, "_entry_row.html", context)
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
+        rows: list[Transaction] = [] if state.entry.transfer_id else [state.entry]
+        context["selections"] = ListRowSelections(c.uow, c.clock).execute(
+            rows,
+            by_plan,
+            {state.entry.id: list(state.splits)} if state.splits else {},
+        )
+        feed: dict[str, object] = {}
+        if origin.get("card") == "all":  # the unified feed: the row keeps its date and card columns
+            mine = next((a for a in lookups["accounts"] if a.id == state.entry.account_id), None)
+            if mine is not None:
+                feed = {
+                    "show_card_tag": True,
+                    "card_tags": {
+                        mine.id: {
+                            "name": mine.nickname,
+                            "color": lookups["account_looks"][mine.id].color,
+                        }
+                    },
+                }
         return fragment(
             request,
             "_card_entry_row.html",
-            {**context, "plans": plans, "locked": state.is_locked, "origin_qs": urlencode(origin)},
+            {
+                **context,
+                **feed,
+                "plans": plans,
+                "locked": state.is_locked,
+                "origin_qs": urlencode(origin),
+            },
         )
 
     @app.get("/entries/{transaction_id}/edit", response_class=HTMLResponse)
@@ -294,7 +375,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     ):
         state = GetEntryEditState(c.uow, c.clock).execute(transaction_id)
         origin = origin_of(from_, card, month, ano)
-        form = payment_form(state) if state.is_payment else entry_form(state.entry)
+        if state.is_payment:
+            form = payment_form(state)
+        elif state.is_transfer:
+            form = transfer_form(state.entry)
+        else:
+            form = entry_form(state.entry)
         if state.is_installment and not origin:
             purchase = GetPlanPurchase(c.uow).execute(state.entry.plan_id or "")
             if purchase is not None:
@@ -325,6 +411,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         amount: Annotated[str, Form()],
         description: Annotated[str, Form()] = "",
         from_account: Annotated[str, Form()] = "",
+        to_account: Annotated[str, Form()] = "",
+        holding_id: Annotated[str, Form()] = "",
         date: Annotated[str, Form()] = "",
         category_id: Annotated[str, Form()] = "",
         account_id: Annotated[str, Form()] = "",
@@ -336,6 +424,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         refund_all: Annotated[str, Form()] = "",
         splits_present: Annotated[str, Form()] = "",
         merchant: Annotated[str, Form()] = "",
+        payment_method: Annotated[str, Form()] = "",
         item_description: Annotated[list[str] | None, Form()] = None,
         item_category: Annotated[list[str] | None, Form()] = None,
         item_amount: Annotated[list[str] | None, Form()] = None,
@@ -358,10 +447,24 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "refunded": refunded,
             "refund_all": refund_all,
             "merchant": merchant,
+            "payment_method": payment_method,
         }
         state = GetEntryEditState(c.uow, c.clock).execute(transaction_id)
         if state.is_payment:
             return save_payment(request, state, amount, date, from_account, notes, origin)
+        if state.is_transfer:
+            return save_transfer(
+                request,
+                state,
+                amount,
+                date,
+                description,
+                from_account,
+                to_account,
+                holding_id,
+                notes,
+                origin,
+            )
         installment = state.is_installment  # its date and card are not on the form
         typed = [
             {"description": d, "category_id": k, "amount": a}
@@ -389,6 +492,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     is_refunded=bool(refunded),
                     refund_pending_installments=bool(refund_all),
                     merchant=merchant,
+                    payment_method=(
+                        ctx.enum_of(PaymentMethod, payment_method) if payment_method else UNSET
+                    ),
                     purchase_date=(
                         parse_date(purchase_date, ctx.today())
                         if purchase_date and installment and not origin
@@ -416,6 +522,55 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             back_to = {k: v for k, v in origin.items() if k != "from"}
             return redirect(request, "/cards?" + urlencode({**back_to, "ok": "entry_updated"}))
         return redirect(request, list_url(request, "entry_updated"))
+
+    def save_transfer(
+        request: Request,
+        state: EntryEditState,
+        amount: str,
+        date: str,
+        description: str,
+        from_account: str,
+        to_account: str,
+        holding_id: str,
+        notes: str,
+        origin: dict[str, str],
+    ) -> Response:
+        """An internal transfer: both legs take the new accounts, date, amount and text together."""
+        form = {
+            "amount": amount,
+            "date": date,
+            "description": description,
+            "notes": notes,
+            "from_account": from_account,
+            "to_account": to_account,
+            "holding_id": holding_id,
+        }
+        try:
+            if not date:
+                raise DomainError("INVALID_DATE")
+            UpdateTransfer(c.uow).execute(
+                UpdateTransferCommand(
+                    transaction_id=state.entry.id,
+                    from_account_id=from_account or None,
+                    to_account_id=to_account or None,
+                    posted_on=parse_date(date, ctx.today()),
+                    amount_cents=abs(parse_brl(amount)),
+                    description=transfer_title(
+                        description,
+                        from_account or None,
+                        to_account or None,
+                        ctx.lookups()["accounts"],
+                    ),
+                    notes=notes or None,
+                    holding_id=holding_id or None,  # the form always says which note (or none)
+                )
+            )
+        except DomainError as error:
+            if error.code == "NOT_FOUND":
+                raise
+            fresh = GetEntryEditState(c.uow, c.clock).execute(state.entry.id)
+            return edit_form(request, fresh, form, error, origin)
+        return redirect(request, list_url(request, "transfer_updated"))
 
     def save_payment(
         request: Request,
@@ -597,6 +752,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except DomainError as error:
             if error.code == "NOT_FOUND":
                 raise
+            if htmx(request) and error.code in SELECTION_CODES:
+                # 422 + JSON: the Selection Mode script locks the offending rows (HTMX swaps no 4xx)
+                return error_response(error)
             if htmx(request):  # the dialog shows the message; HTMX does not swap 4xx pages
                 return HTMLResponse(
                     f'<p class="hint" data-tone="error" role="alert">'

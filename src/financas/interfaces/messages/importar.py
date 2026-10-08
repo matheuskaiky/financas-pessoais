@@ -66,4 +66,6 @@ COUNT_LABELS = {
     "payments": "Pagamentos de fatura",
     "refund": "Estornos",
     "balance": "Saldos informados",
+    "itemized": "Compras com subitens",
+    "refunded": "Compras estornadas",
 }

@@ -6,7 +6,7 @@
       before the first paint), then the modules from one directory (charts.js imports ./fp-money.js: same URL, no ?v=).
       app.css and the other app styles come after: they own `body` and may override the bundle. -#}
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}Finanças{% endblock %} · finanças pessoais{% if demo_mode %} · demonstração{% endif %}</title>
   {#- Theme (patch 3.1): the stored choice is written on <html> before the first paint: a BLOCKING classic script, first. -#}
   <meta name="theme-color" content="#F3F6F2" data-fp-theme-color>
@@ -30,9 +30,12 @@
   <script type="module" src="/static/fp-scrub.js"></script>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/screens.css">
+  <link rel="stylesheet" href="/static/selection-mode.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/money-mask.js" defer></script>
   <script src="/static/app.js" defer></script>
+  <script src="/static/color-picker.js" defer></script>
+  <script src="/static/selection-mode.js" defer></script>
   <script src="/static/ui.js" defer></script>
   <link rel="stylesheet" href="/static/palette.css">
   <script src="/static/palette.js" defer></script>

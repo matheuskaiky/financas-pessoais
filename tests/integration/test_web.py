@@ -931,7 +931,7 @@ def body_of(html: str) -> str:
     """The page after ``</head>``: a template bug can hide content inside ``<title>``."""
     assert html.count("<title>") == 1 and html.count("</title>") == 1
     head, _, body = html.partition("</head>")
-    assert len(head) < 2_000, "the head is suspiciously large: content leaked into <title>"
+    assert len(head) < 2_500, "the head is suspiciously large: content leaked into <title>"
     return body
 
 
@@ -1516,9 +1516,7 @@ def test_card_face_binds_the_account_colour_and_a_readable_text_colour(
     face = page[page.index('class="card-face card-face--tinted') :]
     face = face[: face.index(">")]
     assert "--card-color: #2E7D32" in face
-    assert (
-        "--face-fg: #FFFFFF" in face and "--face-shade: -.06" in face
-    )  # white text, deeper corner
+    assert "--face-fg: #FFFFFF" in face and "--face-shade" not in face  # white text, deeper corner
     assert "data-card-tilt" in face
     css = client.get("/static/cards.css").text
     assert (
@@ -1533,9 +1531,7 @@ def test_a_bright_account_colour_gets_slate_text_and_a_lighter_corner(
     face = client.get(f"/cards?card={card}").text
     face = face[face.index('class="card-face card-face--tinted') :]
     face = face[: face.index(">")]
-    assert (
-        "--face-fg: #0F172A" in face and "--face-shade: .04" in face
-    )  # slate text, lighter corner
+    assert "--face-fg: #0F172A" in face and "--face-shade" not in face  # slate text, lighter corner
 
 
 def test_cards_year_filter_shows_only_the_months_of_the_chosen_year(
@@ -1730,7 +1726,9 @@ def test_edit_entry_errors_keep_the_form(client: TestClient, container: Containe
     assert only_entry(container, checking) == entry  # nothing was saved
 
 
-def test_a_transfer_cannot_be_edited(client: TestClient, container: Container) -> None:
+def test_a_transfer_between_own_accounts_is_edited_on_both_legs(
+    client: TestClient, container: Container
+) -> None:
     checking, savings = setup_accounts(client, container)
     client.post(
         "/transfers",
@@ -1744,13 +1742,19 @@ def test_a_transfer_cannot_be_edited(client: TestClient, container: Container) -
     with container.uow as work:
         leg = work.transactions.list_by_account(checking)[0]
     form = client.get(f"/entries/{leg.id}/edit", headers=HX)
-    assert "Transferências não podem ser editadas" in form.text and "<form" not in form.text
-    refused = client.post(
+    assert "Salvar transferência" in form.text and 'name="to_account"' in form.text
+    saved = client.post(
         f"/entries/{leg.id}/edit",
-        data={"amount": "1,00", "date": dt.date.today().isoformat(), "description": "x"},
+        data={
+            "amount": "1,00",
+            "date": dt.date.today().isoformat(),
+            "description": "x",
+            "from_account": checking,
+            "to_account": savings,
+        },
         headers=HX,
     )
-    assert "Transferências não podem ser editadas" in refused.text
+    assert saved.status_code == 200 and "transfer_updated" in saved.headers["hx-redirect"]
 
 
 def buy_on_card(client: TestClient, card: str, days_ago: int, **extra: str) -> None:
@@ -2605,7 +2609,8 @@ def test_unchecking_the_items_removes_them(client: TestClient, container: Contai
     client.post(f"/entries/{entry.id}/edit", data=base, headers=HX)  # the toggle is off: no items
     with container.uow as work:
         assert work.transactions.splits_for([entry.id]) == {}
-    assert "data-split-toggle" not in client.get("/entries").text.split('id="lista"')[1]
+    listed = client.get("/entries").text.split('id="lista"')[1].split("</section>")[0]
+    assert "data-split-toggle" not in listed  # the rows have no "▾ N itens" (the quick form does)
 
 
 def test_the_category_filter_matches_the_items_of_an_entry(
@@ -2627,8 +2632,18 @@ def test_the_category_filter_matches_the_items_of_an_entry(
     )
     home = category_by_slug(container, "home")
     other = category_by_slug(container, "taxes")
-    assert "Mercado" in client.get(f"/entries?category={home.id}").text.split('id="lista"')[1]
-    assert "Mercado" not in client.get(f"/entries?category={other.id}").text.split('id="lista"')[1]
+    assert (
+        "Mercado"
+        in client.get(f"/entries?category={home.id}")
+        .text.split('id="lista"')[1]
+        .split("</section>")[0]
+    )
+    assert (
+        "Mercado"
+        not in client.get(f"/entries?category={other.id}")
+        .text.split('id="lista"')[1]
+        .split("</section>")[0]
+    )
 
 
 def two_card_purchases(client: TestClient, container: Container):
@@ -2640,7 +2655,7 @@ def two_card_purchases(client: TestClient, container: Container):
     return card, rows["Feira"], rows["Sabão"]
 
 
-def test_rows_offer_merge_checkboxes_only_when_eligible_and_the_toolbar_is_there(
+def test_rows_carry_selection_hooks_and_the_dock_and_dialog_are_there(
     client: TestClient, container: Container
 ) -> None:
     _, card = make_card(client, container)
@@ -2649,12 +2664,23 @@ def test_rows_offer_merge_checkboxes_only_when_eligible_and_the_toolbar_is_there
         client, card, days_ago=0, installments="2", amount="100,00", description="Parcelada"
     )
     page = client.get("/entries").text
-    assert page.count('class="merge-pick"') == 1  # the installment cannot be merged
-    assert 'id="merge-bar"' in page and "Mesclar em um só lançamento" in page
-    assert "selecionados" in page and 'hx-post="/entries/merge"' in page
+    assert 'class="merge-pick"' not in page and 'id="merge-bar"' not in page  # the old UI is gone
+    assert page.count("data-sel-row") == 2 and page.count('class="sel-slot"') == 2
+    assert 'data-sel-scope data-selecting="false"' in page and 'class="sel-toggle"' in page
+    assert 'class="sel-dock"' in page and 'role="group" aria-label="Ações de seleção"' in page
+    assert (
+        page.index('class="sel-cancel"')
+        < page.index('class="sel-delete"')
+        < page.index('class="sel-merge"')
+    )  # DOM order = visual order
+    assert page.count('data-sel-merge="no"') == 1  # the installment purchase cannot be merged...
+    assert "Compra parcelada em 2 faturas não pode ser mesclada" in page
+    assert 'data-sel-id="plan:' in page and 'data-sel-id="entry:' in page  # ...but can be deleted
+    assert 'id="merge-dialog"' in page and 'hx-post="/entries/merge"' in page
     assert "Estou ciente de que a fatura já está fechada" in page  # in the dialog
     cards = client.get(f"/cards?card={card}").text
-    assert 'class="merge-pick"' in cards and 'id="merge-dialog"' in cards
+    assert 'class="sel-slot"' in cards and 'id="merge-dialog"' in cards
+    assert 'class="sel-dock"' in cards
 
 
 def test_merge_endpoint_unifies_the_purchases_and_redirects_back(
@@ -2757,7 +2783,7 @@ def test_merchant_is_saved_shown_on_the_row_and_editable(
         assert work.transactions.get(entry.id).merchant is None  # type: ignore[union-attr]
     # searching the list finds entries by merchant too
     add_with_merchant(client, checking, "Mercado Livre", description="Cabo USB")
-    found = client.get("/entries?q=mercado").text.split('id="lista"')[1]
+    found = client.get("/entries?q=mercado").text.split('id="lista"')[1].split("</section>")[0]
     assert "Cabo USB" in found and "Remédio" not in found
 
 

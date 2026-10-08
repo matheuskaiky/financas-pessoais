@@ -55,7 +55,7 @@ dialog.fp-priv-dialog[open]::backdrop{opacity:1}
 .fp-priv-switch[aria-checked="true"] .fp-priv-track i{transform:translateX(20px)}
 .fp-priv-switch:active .fp-priv-track i{width:33px}
 .fp-priv-switch[aria-checked="true"]:active .fp-priv-track i{transform:translateX(14px)}
-.fp-priv-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 24px calc(20px + env(safe-area-inset-bottom,0px)) 28px;border-top:1px solid var(--line)}
+.fp-priv-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 24px calc(20px + var(--safe-b,0px)) 28px;border-top:1px solid var(--line)}
 .fp-priv-note{flex:1 1 100%;margin:0;font-size:12.5px;line-height:1.4;color:var(--text-tertiary)}
 .fp-priv-btn-primary{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:48px;padding:0 28px;border:0;border-radius:12px;background:var(--accent);color:var(--on-accent);font:600 15px/1 var(--sans);cursor:pointer;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 1px 0 rgba(255,255,255,.14),0 1px 2px rgba(var(--sh-ink),.2),0 6px 14px -6px rgba(var(--sh-accent),.45)}
 .fp-priv-btn-quiet{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:var(--accent);font:600 14px/1 var(--sans);cursor:pointer}

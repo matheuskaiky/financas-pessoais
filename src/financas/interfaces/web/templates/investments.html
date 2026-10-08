@@ -43,6 +43,8 @@
   </div>
 </section>
 
+{% include "_investment_profit.html" %}
+
 <section class="panel" aria-labelledby="h-acc">
   <h2 id="h-acc">Contas de investimento</h2>
   {% if overview.accounts %}
@@ -62,6 +64,11 @@
         <td data-label="Avaliação">{% if v.age_days is none %}<span class="pill grey">Sem avaliação</span>
           {% elif v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>
           {% else %}<span class="soft age"><span class="led" aria-hidden="true"></span>há {{ v.age_days }} dia(s)</span>{% endif %}
+          {% if v.account.tracking.value == 'account' %}<details><summary>Atualizar saldo</summary>
+            <form method="post" action="/investments/{{ v.account.id }}/valuation" class="row-form" data-snapshot-form>
+              <label class="field"><span>Data de referência</span><input type="date" name="date" value="{{ today }}" required></label>
+              <label class="field"><span>Novo saldo bruto</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="gross" inputmode="decimal" placeholder="0,00" required></span></label>
+              <button type="submit" class="secondary">Salvar</button></form></details>{% endif %}
           <details><summary>Ajustes</summary>
             <form method="post" action="/investments/{{ v.account.id }}/settings" class="row-form">
               <label class="field"><span>Classe</span>
@@ -176,6 +183,12 @@
           {% else %}<strong>{{ v.current_value_cents|money(private="investments") }}</strong>{% if v.yield_cents is not none %}<br><small class="{{ 'pos' if v.yield_cents >= 0 else 'neg' }}">{{ v.yield_cents|money(sign="always", private="investments") }}</small>{% endif %}{% endif %}</td>
         <td data-label="Avaliação">{% if h.status.value == 'active' %}
           {% if v.stale %}<span class="pill warn">Desatualizada · {{ v.age_days }} dias</span>{% elif v.age_days is not none %}<span class="soft">há {{ v.age_days }} dia(s)</span>{% endif %}
+          <details><summary>Atualizar saldo da nota</summary>
+            <form method="post" action="/investments/holdings/{{ h.id }}/snapshots" class="row-form" data-snapshot-form>
+              <p class="soft">{{ h.name }} · {{ v.issuer.name }}</p>
+              <label class="field"><span>Data de referência</span><input type="date" name="as_of_date" value="{{ today }}" required></label>
+              <label class="field"><span>Novo saldo bruto</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="gross" inputmode="decimal" placeholder="0,00" required></span></label>
+              <button type="submit" class="secondary">Registrar saldo</button></form></details>
           <details><summary>Avaliar</summary>
             <form method="post" action="/investments/holdings/{{ h.id }}/valuation" class="row-form">
               <label class="field"><span>Data</span><input type="date" name="date" value="{{ today }}" required></label>
@@ -196,6 +209,8 @@
               <button type="submit" class="secondary">Resgatar</button></form></details>
           {% endif %}</td>
       </tr>
+      {% set series = profit_by_holding.get(h.id) %}{% if series and series.rows %}
+      <tr class="sub-row"><td colspan="7"><details data-holding-history><summary>Histórico de {{ h.name }}</summary>{% set editable = true %}{% include "_holding_history.html" %}</details></td></tr>{% endif %}
     {% endfor %}
     </tbody>
   </table>

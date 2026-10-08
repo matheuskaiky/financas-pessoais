@@ -1,10 +1,5 @@
-{# Merge toolbar (docked, shown with two or more picked entries) and its confirmation dialog.
-   Behaviour: static/app.js (data-merge-*). #}
-<div class="merge-bar" id="merge-bar" role="region" aria-label="Mesclar lançamentos" hidden>
-  <span class="merge-count"><strong data-merge-count>0</strong> selecionados</span>
-  <button type="button" data-merge-open>Mesclar em um só lançamento</button>
-  <button type="button" class="secondary" data-merge-clear>Limpar</button>
-</div>
+{# The merge confirmation dialog ("Mesclar lançamentos"). It opens from the Selection Mode dock
+   (static/selection-mode.js); the old always-visible checkbox and merge bar are gone. #}
 <dialog class="merge-dialog" id="merge-dialog" aria-labelledby="merge-title">
   <form method="post" action="/entries/merge" hx-post="/entries/merge" hx-target="#merge-error" hx-swap="innerHTML">
     <h2 id="merge-title">Mesclar lançamentos</h2>

@@ -1,0 +1,18 @@
+{# "Forma de pagamento" of an entry on a checking account. Only the options of the entry's side exist in the DOM:
+   an expense is paid with PIX | Débito | Boleto | Outro, an income arrives by PIX | TED | Outro (an income form never
+   carries Débito or Boleto, not even hidden). The quick form swaps the whole field when Despesa/Receita is toggled
+   (GET /entries/method-field, static/app.js).
+   Needs: method_current ("" = none yet: PIX is pre-selected), method_hidden (true when the account is a card or the
+   entry a transfer: the radios are then disabled and not sent), method_kind (the entry kind: "income" or anything else). #}
+{% set side = 'income' if method_kind == 'income' else 'expense' %}
+{% set offered = ['pix', 'ted', 'outro'] if side == 'income' else ['pix', 'debito', 'boleto', 'outro'] %}
+{# a stored value this side does not offer: debito/boleto on an income falls back to PIX; any other (ted on an expense, dinheiro...) keeps its own option #}
+{% set current = method_current or 'pix' %}
+{% if side == 'income' and current in ['debito', 'boleto'] %}{% set current = 'pix' %}{% endif %}
+<fieldset class="field method-field" data-method-field data-side="{{ side }}"{% if method_hidden %} hidden disabled{% endif %}>
+  <legend>Forma de pagamento</legend>
+  <div class="segmented" role="radiogroup" aria-label="Forma de pagamento">
+    {% for code in offered %}<label><input type="radio" name="payment_method" value="{{ code }}" {{ 'checked' if current == code }}><span>{{ method_labels.get(code, code) }}</span></label>{% endfor %}
+    {% if current not in offered %}<label><input type="radio" name="payment_method" value="{{ current }}" checked><span>{{ method_labels.get(current, current) }}</span></label>{% endif %}
+  </div>
+</fieldset>

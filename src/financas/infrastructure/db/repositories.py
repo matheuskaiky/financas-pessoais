@@ -80,6 +80,7 @@ def _transaction(r: TransactionRow) -> Transaction:
         r.holding_id,
         r.is_refunded,
         r.merchant,
+        r.payment_method,
     )
 
 
@@ -506,6 +507,10 @@ class SqlAnchors:
             existing.balance_cents = anchor.balance_cents
             existing.note = anchor.note
             existing.gross_balance_cents = anchor.gross_balance_cents
+        self._s.flush()
+
+    def delete(self, anchor_id: str) -> None:
+        self._s.execute(sa.delete(BalanceAnchorRow).where(BalanceAnchorRow.id == anchor_id))
         self._s.flush()
 
     def list_for_account(self, account_id: str) -> list[BalanceAnchor]:

@@ -1,12 +1,18 @@
 {# One entry of a statement (also what "Cancelar" swaps back in). Needs: t, plans, category_by_id,
    category_colors, locked (paid statement), origin_qs (from=cards&card=..&month=..&ano=..). #}
-{% from "_macros.html" import dot, merge_pick, split_toggle, split_detail %}
-{% set items = (splits or {}).get(t.id) %}{% set pickable = t.kind.value == 'expense' and not t.plan_id and not t.is_refunded and not t.transfer_id and not locked %}
-      <div class="row card-entry{{ ' is-refunded' if t.is_refunded }}" id="entry-{{ t.id }}">
-        <div class="c-desc">{% if pickable %}{{ merge_pick(t) }}{% endif %}<span class="c-title">{{ t.description or kind_labels[t.kind] }}{% if t.transfer_id %} <span class="tag">pagamento</span>{% endif %}{% if t.is_refunded %} <span class="badge badge--subtle">Estornada</span>{% endif %}</span>{% if t.merchant and t.merchant|lower != (t.description or '')|lower %}<small class="c-merchant">{{ t.merchant }}</small>{% endif %}
-          {% if items %}{{ split_toggle(t, items) }}{% endif %}{% if (t.transfer_id and t.statement_id) or (not t.transfer_id and not locked) %}<button type="button" class="icon-btn mini row-edit" title="Editar" hx-get="/entries/{{ t.id }}/edit?{{ origin_qs }}" hx-target="closest .row" hx-swap="outerHTML" aria-label="{{ 'Editar pagamento' if t.transfer_id else ('Editar parcela' if t.plan_id else 'Editar lançamento') }} {{ t.description or kind_labels[t.kind] }}"><svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>{% endif %}</div>
+{% from "_macros.html" import dot, split_toggle, split_detail %}
+{% from "_selection.html" import sel_attrs, sel_slot %}
+{% set items = (splits or {}).get(t.id) %}{% set feed = show_card_tag and card_tags and card_tags[t.account_id] %}
+{% set edit_button %}{% if (t.transfer_id and t.statement_id) or (not t.transfer_id and not locked) %}<button type="button" class="icon-btn mini row-edit" title="Editar" hx-get="/entries/{{ t.id }}/edit?{{ origin_qs }}" hx-target="closest .row" hx-swap="outerHTML" aria-label="{{ 'Editar pagamento' if t.transfer_id else ('Editar parcela' if t.plan_id else 'Editar lançamento') }} {{ t.description or kind_labels[t.kind] }}"><svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>{% endif %}{% endset %}{% set sel = none if t.transfer_id else (selections or {}).get(t.id) %}
+      <div class="row card-entry{{ ' card-entry--feed' if feed }}{{ ' is-refunded' if t.is_refunded }}" id="entry-{{ t.id }}"{% if sel %} {{ sel_attrs(sel, t) }}{% endif %}>
+        {% if sel %}{{ sel_slot(sel, t, accounts|selectattr('id', 'equalto', t.account_id)|map(attribute='nickname')|first) }}{% endif %}
+        {% if feed %}{% set tg = card_tags[t.account_id] %}<span class="c-date tnum">{{ t.posted_on.strftime('%d/%m') }}</span>
+        <span class="c-card" title="{{ tg.name }}" style="--card-color: {{ tg.color }}"><span class="c-card__dot" aria-hidden="true"></span><span class="c-card__t">{{ tg.name }}</span></span>{% endif %}
+        <div class="c-desc"><span class="c-title">{{ t.description or kind_labels[t.kind] }}{% if t.transfer_id %} <span class="tag">pagamento</span>{% endif %}{% if feed and t.plan_id %} <span class="tag" data-installment>{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}</span>{% endif %}{% if t.is_refunded %} <span class="badge badge--subtle">Estornada</span>{% endif %}</span>{% if t.merchant and t.merchant|lower != (t.description or '')|lower %}<small class="c-merchant">{{ t.merchant }}</small>{% endif %}
+          {% if items %}{{ split_toggle(t, items) }}{% endif %}{{ edit_button if not feed }}</div>
         <span class="c-cat with-dot soft">{% if t.category_id %}{{ dot(category_colors[t.category_id]) }}{{ category_by_id[t.category_id].name }}{% else %}Por item{% endif %}</span>
-        <span class="c-inst soft">{% if t.plan_id %}{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}{% else %}—{% endif %}</span>
+        {% if not feed %}<span class="c-inst soft">{% if t.plan_id %}{{ t.installment_number }}/{{ plans[t.plan_id].installment_total }}{% else %}—{% endif %}</span>{% endif %}
         <span class="c-amt {{ 'neg' if t.amount_cents < 0 else 'pos' }}">{{ t.amount_cents|money(sign="always", private="cards") }}</span>
+        {% if feed %}<span class="c-act">{{ edit_button }}</span>{% endif %}
       {% if items %}{{ split_detail(t, items, category_by_id, category_colors, "cards") }}{% endif %}
       </div>

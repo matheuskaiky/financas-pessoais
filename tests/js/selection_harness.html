@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Selection Mode (selection-mode.js)</title>
+</head>
+<body>
+<div data-sel-scope data-selecting="false" id="scope">
+  <div class="sel-toolbar"><button type="button" class="sel-toggle" id="toggle" aria-pressed="false" aria-controls="list">Selecionar</button></div>
+  <section id="list">
+    <div class="row entry" id="r1" data-sel-row data-sel-id="entry:e1" data-sel-key="acct-a" data-merge-desc="Feira" data-merge-date="2026-10-02"><span class="sel-slot"><input type="checkbox" class="sel-check" aria-label="Selecionar Feira, A"></span><span class="c-title">Feira</span><button type="button" class="link" id="inner">Editar</button></div>
+    <div class="row entry" id="r2" data-sel-row data-sel-id="entry:e2" data-sel-key="acct-a" data-merge-desc="Sabão" data-merge-date="2026-10-05"><span class="sel-slot"><input type="checkbox" class="sel-check" aria-label="Selecionar Sabão, A"></span><span class="c-title">Sabão</span></div>
+    <div class="row entry" id="r3" data-sel-row data-sel-id="entry:e3" data-sel-key="acct-b" data-merge-desc="Pão" data-merge-date="2026-10-03"><span class="sel-slot"><input type="checkbox" class="sel-check" aria-label="Selecionar Pão, B"></span><span class="c-title">Pão</span></div>
+    <div class="row entry" id="r4" data-sel-row data-sel-id="plan:p1" data-sel-key="acct-a" data-merge-desc="Monitor" data-merge-date="2026-10-01" data-sel-merge="no" data-sel-merge-reason="Compra parcelada em 3 faturas não pode ser mesclada"><span class="sel-slot"><input type="checkbox" class="sel-check" aria-label="Selecionar Monitor, A"></span><span class="c-title">Monitor</span></div>
+    <div class="row entry" id="r5" data-sel-row data-sel-id="entry:e5" data-sel-key="acct-a" data-merge-desc="Antigo" data-merge-date="2026-09-01" data-sel-lock="month" data-sel-reason="Apenas compras do mês atual podem ser mescladas. Lançamentos de meses anteriores já estão consolidados."><span class="sel-slot"><input type="checkbox" class="sel-check" aria-disabled="true" aria-label="Selecionar Antigo, A"></span><span class="c-title">Antigo</span></div>
+  </section>
+  <div class="sel-dock" data-open="false" role="group" aria-label="Ações de seleção"><div class="sel-stack">
+    <div class="sel-msg callout info" id="sel-msg" data-show="false"><span class="sel-msg__t"></span></div>
+    <div class="sel-bar"><span class="sel-count"><span class="sel-count__n">0</span> <span class="sel-count__l">selecionados</span></span><button type="button" class="sel-cancel">Cancelar</button><button type="button" class="sel-delete" aria-disabled="true"><span>Apagar (<span class="sel-delete__n">0</span>)</span></button><button type="button" class="sel-merge" aria-disabled="true"><span>Mesclar</span></button></div>
+  </div></div>
+  <p class="sel-vh sel-live" role="status" aria-live="polite" aria-atomic="true"></p>
+  <div id="sel-dialog-slot"></div>
+</div>
+<dialog id="merge-dialog">
+  <form id="mf">
+    <div data-merge-ids></div>
+    <input name="description"><input name="date"><input type="checkbox" name="ack">
+    <div id="merge-error"><p>old</p></div>
+    <button type="button" data-merge-cancel>Cancelar</button>
+  </form>
+</dialog>
+<script type="application/json" id="sel-config">{
+  "seconds": 5, "max": 4,
+  "need_delete": "Selecione ao menos 1 lançamento para apagar",
+  "need_merge": "Selecione ao menos 2 lançamentos da mesma conta e fatura",
+  "pick_more": "Escolha mais um lançamento da mesma conta e fatura",
+  "mismatch": "Selecione itens da mesma conta e fatura para mesclar",
+  "cap": "Selecione até 4 lançamentos por vez.",
+  "mode_on": "Modo de seleção ativado. 0 selecionados.", "mode_off": "Modo de seleção desativado.",
+  "selected_one": "selecionado", "selected_many": "selecionados",
+  "deleted_one": "1 lançamento apagado.", "deleted_many": "{n} lançamentos apagados.",
+  "delete_error": "Não foi possível apagar os lançamentos. Nada foi alterado.",
+  "merge_outside": "Apenas compras do mês atual podem ser mescladas. Lançamentos de meses anteriores já estão consolidados."
+}</script>
+<pre id="out">running</pre>
+<script>
+const fail = (m) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + m + "\nDONE 1"; };
+window.addEventListener("error", (e) => fail(e.message + " @" + e.filename + ":" + e.lineno));
+window.addEventListener("unhandledrejection", (e) => fail("rejection " + e.reason));
+// what the server would answer, and what the page asks of htmx
+const calls = { fetch: [], ajax: [] };
+let postAnswer = "ok";
+const DIALOG = '<dialog id="sel-delete-dialog" class="dialog dialog--destructive" role="alertdialog"><h2 id="del-t">Apagar 2 lançamentos?</h2><div class="callout error" id="del-err" role="alert" hidden></div><div class="dialog-actions"><button type="button" id="del-no" autofocus>Cancelar</button><button type="button" id="del-yes">Apagar 2 lançamentos</button></div></dialog>';
+window.fetch = (url, options) => {
+  calls.fetch.push({ url: String(url), method: (options && options.method) || "GET", body: options && options.body });
+  if (String(url).startsWith("/entries/batch-delete/confirm")) return Promise.resolve(new Response(DIALOG, { status: 200 }));
+  if (postAnswer === "ok") return Promise.resolve(new Response("", { status: 200, headers: { "HX-Trigger": "{}" } }));
+  return Promise.resolve(new Response(JSON.stringify({ code: "delete_outside_current_month", message: "Só lançamentos do mês atual podem ser apagados em lote.", ids: ["entry:e2"] }), { status: 422 }));
+};
+window.htmx = { ajax: (method, url, opts) => { calls.ajax.push(method + " " + url + " " + opts.target); return Promise.resolve(); } };
+</script>
+<script src="../../src/financas/interfaces/web/static/selection-mode.js"></script>
+<script>
+(async () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const q = (s) => document.querySelector(s);
+const msg = () => q(".sel-msg__t").textContent;
+const shown = () => q(".sel-msg").getAttribute("data-show");
+const state = (id) => $(id).getAttribute("data-sel-state");
+const checked = (id) => $(id).querySelector(".sel-check").checked;
+const disabled = (sel) => q(sel).getAttribute("aria-disabled");
+const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+const live = () => q(".sel-live").textContent;
+
+// default
+check("scope starts off", $("scope").getAttribute("data-selecting"), "false");
+check("dock starts closed", q(".sel-dock").getAttribute("data-open"), "false");
+// entering the mode
+click($("toggle"));
+check("mode on", $("scope").getAttribute("data-selecting"), "true");
+check("toggle pressed", $("toggle").getAttribute("aria-pressed"), "true");
+check("dock open", q(".sel-dock").getAttribute("data-open"), "true");
+check("0 selected", q(".sel-count").textContent, "0 selecionados");
+check("delete disabled at 0", disabled(".sel-delete"), "true");
+check("merge disabled at 0", disabled(".sel-merge"), "true");
+check("merge description is filled while disabled", msg(), "Selecione ao menos 2 lançamentos da mesma conta e fatura");
+check("no bubble at 0", shown(), "false");
+await wait(300);
+check("announced once", live(), "Modo de seleção ativado. 0 selecionados.");
+// one row
+click($("r1").querySelector(".c-title"));
+check("row 1 checked", checked("r1"), true);
+check("row 1 selected state", state("r1"), "selected");
+check("1 selecionado (singular)", q(".sel-count").textContent, "1 selecionado");
+check("Apagar (1)", q(".sel-delete").textContent.replace(/\s+/g, ""), "Apagar(1)");
+check("delete enabled at 1", disabled(".sel-delete"), "false");
+check("merge still disabled", disabled(".sel-merge"), "true");
+check("hint to pick one more", msg(), "Escolha mais um lançamento da mesma conta e fatura");
+check("hint is info", q(".sel-msg").classList.contains("info"), true);
+// an inner control keeps its own behaviour
+click($("inner"));
+check("inner button does not toggle", checked("r1"), true);
+// two compatible rows
+click($("r2"));
+check("2 selecionados", q(".sel-count").textContent, "2 selecionados");
+check("merge enabled at 2", disabled(".sel-merge"), "false");
+check("no bubble when compatible", shown(), "false");
+// another account
+click($("r3"));
+check("mismatch row is a conflict", state("r3"), "conflict");
+check("merge disabled on mismatch", disabled(".sel-merge"), "true");
+check("mismatch message", msg(), "Selecione itens da mesma conta e fatura para mesclar");
+check("mismatch is a warning", q(".sel-msg").classList.contains("warn"), true);
+check("delete ignores the mismatch", disabled(".sel-delete"), "false");
+click($("r3"));
+check("unchecked again", checked("r3"), false);
+check("merge enabled again", disabled(".sel-merge"), "false");
+// a plan: selectable, never mergeable
+click($("r4"));
+check("plan row is checked", checked("r4"), true);
+check("plan row blocks the merge", state("r4"), "conflict");
+check("plan reason", msg(), "Compra parcelada em 3 faturas não pode ser mesclada");
+check("merge disabled with a plan", disabled(".sel-merge"), "true");
+check("delete enabled with a plan", disabled(".sel-delete"), "false");
+// the cap (4 in this page)
+click($("r3"));
+check("4 checked", q(".sel-count").textContent, "4 selecionados");
+click($("r5"));  // locked: never checked, even under the cap
+check("cap only counts checked rows", checked("r5"), false);
+click($("r3"));  // 3 left
+// a locked row explains itself and checks nothing
+click($("r5"));
+check("locked row stays unchecked", checked("r5"), false);
+check("lock message in the bubble", msg(), $("r5").getAttribute("data-sel-reason"));
+check("lock bubble shown", shown(), "true");
+await wait(200);
+check("lock announced", live(), $("r5").getAttribute("data-sel-reason"));
+const firstAnnouncement = live();
+click($("r5"));
+await wait(300);
+check("same lock again does not stack", live(), firstAnnouncement);
+await wait(5200);
+check("bubble leaves after 5 s", msg() === $("r5").getAttribute("data-sel-reason"), false);
+// the locked row's own checkbox (keyboard): same answer
+const lockedBox = $("r5").querySelector(".sel-check");
+lockedBox.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+check("locked checkbox does not check", lockedBox.checked, false);
+// delete with nothing selected
+click($("r1")); click($("r2")); click($("r4"));
+check("emptied", q(".sel-count").textContent, "0 selecionados");
+click(q(".sel-delete"));
+check("delete at 0 shows its reason", msg(), "Selecione ao menos 1 lançamento para apagar");
+check("delete at 0 reason is info", q(".sel-msg").classList.contains("info"), true);
+check("nothing was requested", calls.fetch.length, 0);
+// the cap
+click($("r1")); click($("r2")); click($("r3")); click($("r4"));
+check("four checked", q(".sel-count").textContent, "4 selecionados");
+// (the cap is 4: a fifth cannot exist here without a fifth selectable row, so add one)
+const extra = $("r3").cloneNode(true);
+extra.id = "r6"; extra.setAttribute("data-sel-id", "entry:e6");
+extra.querySelector(".sel-check").checked = false;  // a clone keeps the state of what it copies
+$("list").appendChild(extra);
+click(extra);
+check("fifth is refused", extra.querySelector(".sel-check").checked, false);
+check("cap message", msg(), "Selecione até 4 lançamentos por vez.");
+extra.remove();
+click($("r3")); click($("r4"));  // r1, r2 left
+// merge dialog
+click(q(".sel-merge"));
+check("merge dialog opens", $("merge-dialog").open, true);
+check("ids without the type prefix", Array.from(document.querySelectorAll('#mf input[name="ids"]')).map((i) => i.value).join(","), "e1,e2");
+check("description of the first", $("mf").elements["description"].value, "Feira");
+check("date of the latest", $("mf").elements["date"].value, "2026-10-05");
+check("old error cleared", $("merge-error").children.length, 0);
+// the server refuses (the month rolled over): lock what it names
+$("mf").dispatchEvent(new CustomEvent("htmx:responseError", { bubbles: true, detail: { elt: $("mf"), xhr: { status: 422, responseText: JSON.stringify({ code: "merge_outside_current_month", message: "Apenas compras do mês atual podem ser mescladas.", ids: ["e2"] }) } } }));
+check("merge dialog closed", $("merge-dialog").open, false);
+check("offending row unchecked", checked("r2"), false);
+check("offending row locked", $("r2").getAttribute("data-sel-lock"), "month");
+check("its checkbox is aria-disabled", $("r2").querySelector(".sel-check").getAttribute("aria-disabled"), "true");
+check("the server's message is shown", msg(), "Apenas compras do mês atual podem ser mescladas.");
+// batch delete: confirm, error, success
+click($("r1"));  // r1 was still checked: uncheck, then check again to be sure of the state
+click($("r1"));
+check("r1 checked for the delete", checked("r1"), true);
+click($("r3"));
+click(q(".sel-delete"));
+await wait(100);
+check("confirm fetched with typed ids", calls.fetch[0].url, "/entries/batch-delete/confirm?ids=entry%3Ae1&ids=entry%3Ae3");
+const dialog = $("sel-delete-dialog");
+check("dialog is in the slot", !!dialog && dialog.parentElement.id === "sel-dialog-slot", true);
+check("dialog is modal and open", dialog.open, true);
+check("focus on Cancelar", document.activeElement && document.activeElement.id, "del-no");
+postAnswer = "fail";
+click($("del-yes"));
+await wait(100);
+check("error body shown", $("del-err").hidden, false);
+check("error text from the server", $("del-err").textContent, "Só lançamentos do mês atual podem ser apagados em lote.");
+check("dialog stays open on error", dialog.open, true);
+check("buttons usable again", $("del-yes").hasAttribute("aria-busy") || $("del-yes").getAttribute("aria-disabled") === "true", false);
+check("focus back on the danger button", document.activeElement && document.activeElement.id, "del-yes");
+check("the post carried the ids", calls.fetch[1].method + " " + calls.fetch[1].body, "POST ids=entry%3Ae1&ids=entry%3Ae3");
+postAnswer = "ok";
+click($("del-yes"));
+await wait(200);
+check("dialog removed after success", !!$("sel-delete-dialog"), false);
+check("mode left after the delete", $("scope").getAttribute("data-selecting"), "false");
+check("page refreshed through htmx", calls.ajax.join("|"), "GET " + location.pathname + location.search + " main");
+await wait(300);
+check("result announced", live(), "2 lançamentos apagados.");
+check("focus on Selecionar", document.activeElement && document.activeElement.id, "toggle");
+// Escape leaves the mode and returns focus to the trigger
+click($("toggle"));
+click($("r1"));
+(document.activeElement || document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+check("Esc leaves the mode", $("scope").getAttribute("data-selecting"), "false");
+check("Esc clears the checks", checked("r1"), false);
+check("focus on the trigger after Esc", document.activeElement && document.activeElement.id, "toggle");
+// Cancelar
+click($("toggle")); click($("r1"));
+click(q(".sel-cancel"));
+check("Cancelar leaves the mode", $("scope").getAttribute("data-selecting"), "false");
+check("Cancelar unchecks", checked("r1"), false);
+check("aria-pressed false again", $("toggle").getAttribute("aria-pressed"), "false");
+// a swap replaces a row: the check comes back from the remembered ids
+click($("toggle")); click($("r1"));
+const fresh = $("r1").cloneNode(true);
+fresh.querySelector(".sel-check").checked = false;
+fresh.removeAttribute("data-sel-state");
+$("r1").replaceWith(fresh);
+document.body.dispatchEvent(new Event("htmx:afterSettle", { bubbles: true }));
+check("selection survives a row swap", checked("r1"), true);
+check("and its state", state("r1"), "selected");
+
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+})();
+</script>
+</body>
+</html>

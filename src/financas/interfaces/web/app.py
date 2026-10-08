@@ -2,13 +2,14 @@
 
 import datetime as dt
 import json
+import re
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import FormData
@@ -22,9 +23,11 @@ from financas.application.queries.cards import (
     ListCards,
     StatementView,
 )
+from financas.application.queries.entries import filter_by_method, parse_method_filter
 from financas.application.queries.investments import (
     GetFixedIncomeOverview,
     GetInvestmentPeriodTotals,
+    GetInvestmentProfit,
     GetNetWorth,
     GetYearEndPosition,
     ListHoldings,
@@ -39,7 +42,18 @@ from financas.application.queries.planning import (
     GetRecurring,
 )
 from financas.application.queries.review import CountPendingReview
+from financas.application.queries.selection import ListRowSelections
+from financas.application.queries.suggestions import MAX_LIMIT as MAX_SUGGESTIONS
+from financas.application.queries.suggestions import ListSuggestions
 from financas.application.queries.summary import GetSummary, Period
+from financas.application.queries.transfer_links import ListTransferLinks
+from financas.application.queries.unified_cards import (
+    ListUnifiedTimeline,
+    consolidate_plans,
+    consolidate_schedule,
+    parse_card_ids,
+    summarize,
+)
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.budget import SetCategoryBudgets
 from financas.application.use_cases.cards import (
@@ -54,6 +68,8 @@ from financas.application.use_cases.cards import (
     RegisterCardPurchase,
     SetCardSettings,
     SetStatementDates,
+    UpdateCardDetails,
+    UpdateCardDetailsCommand,
 )
 from financas.application.use_cases.catalog import (
     AppearanceTarget,
@@ -69,6 +85,9 @@ from financas.application.use_cases.catalog import (
     SetInvestmentSettings,
 )
 from financas.application.use_cases.holdings import (
+    DeleteHoldingSnapshot,
+    RecordHoldingSnapshot,
+    RecordHoldingSnapshotCommand,
     RecordHoldingValuation,
     RecordHoldingValuationCommand,
     RedeemHolding,
@@ -94,15 +113,18 @@ from financas.application.use_cases.transactions import (
 from financas.container import Container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
+    Account,
     AccountKind,
     AssetClass,
     Category,
     CategoryGroup,
     CategoryKind,
+    HoldingStatus,
     Indexer,
     InstrumentType,
     InvestmentTracking,
     Liquidity,
+    PaymentMethod,
     RateMode,
     StatementStatus,
     Transaction,
@@ -126,10 +148,17 @@ from financas.interfaces.formatting import (
     parse_date,
     parse_percent_bps,
 )
+from financas.interfaces.messages import payment_methods as method_messages
+from financas.interfaces.messages import selection as selection_messages
+from financas.interfaces.messages.unified_cards import (
+    unified_chips,
+    unified_live_text,
+    unified_url,
+)
 from financas.interfaces.web import fp_charts, fp_money, nav
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import MODULES, WebContext
-from financas.interfaces.web.shared import Lookups
+from financas.interfaces.web.shared import Lookups, transfer_title
 from financas.interfaces.web.shared import enum_of as _enum
 from financas.interfaces.web.shared import int_of as _int
 from financas.interfaces.web.shared import opt_int as _opt_int
@@ -144,9 +173,16 @@ _CSP = (
 _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.REFUND)
 
 
-def _color(color: str | None, use_color: str | None) -> str | None:
-    """A color input always sends a value, so a checkbox says whether to use it."""
-    return color if use_color else None
+PAYMENT_CODES = frozenset(m.value for m in PaymentMethod)
+
+
+def _color(color: str | None) -> str | None:
+    """The hex text of the color picker: empty means "no color of its own" (it inherits or uses the
+    default); six hex digits without the ``#`` are accepted (no JavaScript, or typed by hand)."""
+    text = (color or "").strip()
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", text):
+        text = "#" + text
+    return text or None
 
 
 async def _upload(file: UploadFile | None) -> bytes | None:
@@ -232,6 +268,13 @@ def create_app(c: Container) -> FastAPI:
         rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
         limit_labels=messages.LIMIT_ALERT_LABELS,
+        method_labels=method_messages.PAYMENT_METHOD_LABELS,
+        method_chips=method_messages.FILTER_CHIPS,
+        method_form_options=method_messages.FORM_OPTIONS,
+        method_default=method_messages.DEFAULT_FORM_METHOD,
+        sel_lock_reason=selection_messages.row_reason,
+        sel_merge_reason=selection_messages.row_merge_reason,
+        sel_config=selection_messages.client_config(),
         nav_groups=nav.groups,
         nav_count=lambda key: CountPendingReview(c.uow).execute() if key == "review" else 0,
         nav_current=nav.resolve,
@@ -348,6 +391,60 @@ def create_app(c: Container) -> FastAPI:
         suffix = f"?{urlencode(params)}" if params else ""
         return RedirectResponse(path + suffix, status_code=303)
 
+    def return_filters(text: str) -> dict[str, str]:
+        """The month and filters the entries list was showing (a form's hidden ``return_query``).
+
+        Only known keys with non-empty, valid values survive: it is echoed into a redirect."""
+        wanted = {"month", "account", "kind", "category", "q", "method"}
+        kept: dict[str, str] = {}
+        for key, value in parse_qsl(text.lstrip("?")[:2_000]):
+            value = value.strip()[:200]
+            if key not in wanted or not value:
+                continue
+            if key == "month":
+                try:
+                    value = str(YearMonth.parse(value))
+                except DomainError:
+                    continue
+            if key == "method":
+                value = parse_method_filter(value)
+            if value:
+                kept[key] = value
+        return kept
+
+    def check_transfer_holding(
+        from_id: str | None, to_id: str | None, holding_id: str | None
+    ) -> str | None:
+        """The note of a contribution or redemption, as the transfer form sends it.
+
+        On an account tracked by holdings the money must say which note it goes into or comes
+        from (``HOLDING_REQUIRED``); a note on any other account is refused. The rest of the rules
+        (the note sits on one side of the transfer) are the use case's.
+        """
+        with c.uow as work:
+            sides = [work.accounts.get(i) for i in (from_id, to_id) if i]
+            held = work.holdings.get(holding_id) if holding_id else None
+        by_holdings = [
+            x
+            for x in sides
+            if x is not None
+            and x.kind is AccountKind.INVESTMENT
+            and x.tracking is InvestmentTracking.HOLDINGS
+        ]
+        if holding_id and held is None:
+            raise DomainError("NOT_FOUND", entity="holding")
+        if held is not None and held.status is HoldingStatus.REDEEMED:
+            raise DomainError("HOLDING_REDEEMED")
+        if by_holdings and not holding_id:
+            raise DomainError("HOLDING_REQUIRED")
+        if holding_id and not by_holdings:
+            raise DomainError("ACCOUNT_NOT_HOLDINGS_LEVEL")
+        return holding_id
+
+    def accounts_now() -> list[Account]:
+        with c.uow as work:
+            return work.accounts.list_all()
+
     def lookups() -> Lookups:
         with c.uow as work:
             institutions = {
@@ -448,6 +545,8 @@ def create_app(c: Container) -> FastAPI:
         filters: dict[str, str],
         form: dict[str, str] | None = None,
         limit: int = PAGE_SIZE,
+        items: list[dict[str, str]] | None = None,
+        focus: str = "",
     ) -> dict[str, object]:
         try:
             ym = YearMonth.parse(month) if month else YearMonth.from_date(today())
@@ -497,7 +596,19 @@ def create_app(c: Container) -> FastAPI:
                 or wanted in normalize_search(t.merchant or "")
             )
         ]
+        rows = filter_by_method(
+            rows,
+            filters.get("method", ""),
+            {a.id for a in data["accounts"] if a.kind is AccountKind.CREDIT_CARD},  # type: ignore[attr-defined]
+        )
         summary = GetSummary(c.uow).execute(period)  # card entries count in the statement month
+        if focus:  # a row just created: make sure its page of the list is the one shown
+            at = next((i for i, t in enumerate(rows) if t.id == focus), None)
+            if at is not None and at >= limit:
+                limit = (at // PAGE_SIZE + 1) * PAGE_SIZE
+        shown = rows[:limit]
+        selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
+        transfer_links = ListTransferLinks(c.uow).execute(shown)
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -510,6 +621,9 @@ def create_app(c: Container) -> FastAPI:
             for a in accounts  # type: ignore[attr-defined]
             if a.is_active and a.kind is not AccountKind.CREDIT_CARD
         ]
+        with c.uow as work:
+            every_holding = work.holdings.list_all()
+            transfer_holdings = [h for h in every_holding if h.status is HoldingStatus.ACTIVE]
         last_used = next(
             (t.account_id for t in recent if t.kind is not TransactionKind.TRANSFER), None
         )
@@ -522,7 +636,9 @@ def create_app(c: Container) -> FastAPI:
         kind = form.get("kind", "expense")
         return {
             **data,
-            "rows": rows[:limit],
+            "rows": shown,
+            "selections": selections,
+            "transfer_links": transfer_links,
             "splits": splits,
             "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
@@ -530,12 +646,18 @@ def create_app(c: Container) -> FastAPI:
             "next_limit": limit + PAGE_SIZE,
             "summary": summary,
             "month_value": str(ym),
+            # what the quick form sends back, so a new entry returns to the same month and filters
+            "return_query": urlencode(
+                {"month": str(ym), **{k: v for k, v in filters.items() if v}}
+            ),
             "month_label": format_month_long(ym),
             "prev_month": str(ym.add_months(-1)),
             "next_month": str(ym.add_months(1)),
             "filters": filters,
             "entry_accounts": entry_accounts,
             "transfer_accounts": transfer_accounts,
+            "transfer_holdings": transfer_holdings,
+            "holding_names": {h.id: h.name for h in every_holding},
             "category_by_id": categories,
             "form": {
                 "kind": kind,
@@ -549,9 +671,20 @@ def create_app(c: Container) -> FastAPI:
                 "recurring": form.get("recurring", ""),
                 "notes": form.get("notes", ""),
                 "merchant": form.get("merchant", ""),
+                "payment_method": form.get("payment_method", ""),
             },
             "merchants": ListMerchants(c.uow).execute(),
             "category_options": category_options("expense" if kind == "transfer" else kind),
+            # the habits of the last 180 days: the description field reads them without a request
+            "suggestions": {
+                flow: suggestion_payload(flow, "", MAX_SUGGESTIONS)
+                for flow in ("expense", "income")
+            },
+            # the items of a split expense: always expense categories (the entry itself has none)
+            "expense_categories": [
+                x for x in category_options("expense") if x.slug != "uncategorized"
+            ],
+            "form_items": items or [],
             "entry_kinds": _ENTRY_KINDS,
         }
 
@@ -573,8 +706,16 @@ def create_app(c: Container) -> FastAPI:
         category: str = "",
         q: str = "",
         limit: str = "",
+        method: str = "",
+        focus: str = "",
     ):
-        filters = {"account": account, "kind": kind, "category": category, "q": q}
+        filters = {
+            "account": account,
+            "kind": kind,
+            "category": category,
+            "q": q,
+            "method": parse_method_filter(method),
+        }
         # ⌘K "registrar por frase": ?fill=1&f_kind=..&f_amount=.. pre-fills the quick form (a draft:
         # nothing is saved until the user submits the form, and the kind is still the user's choice)
         prefill = (
@@ -585,7 +726,55 @@ def create_app(c: Container) -> FastAPI:
         return render(
             request,
             "entries.html",
-            entries_context(month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE),
+            entries_context(
+                month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE, focus=focus[:64]
+            ),
+        )
+
+    def suggestion_payload(flow: str, q: str = "", limit: int = 8) -> list[dict[str, object]]:
+        """What the entry form may autofill for one flow: the description, where it went and how it
+        was paid, plus the habitual amount (cents, and the text the amount field takes). The names
+        are what the dropdown shows next to the description (the ids are what it fills in)."""
+        data = lookups()
+        category_names = {x.id: x.name for x in data["categories"]}
+        account_names = {a.id: a.nickname for a in data["accounts"]}
+        return [
+            {
+                "description": s.description,
+                "flow": s.flow,
+                "category_id": s.category_id,
+                "category_name": category_names.get(s.category_id or ""),
+                "account_id": s.account_id,
+                "account_name": account_names.get(s.account_id),
+                "payment_method": s.payment_method.value if s.payment_method else None,
+                "payment_label": method_messages.PAYMENT_METHOD_LABELS[s.payment_method]
+                if s.payment_method
+                else None,
+                "habitual_amount_cents": s.habitual_amount_cents,
+                "habitual_amount": format_decimal_comma(s.habitual_amount_cents)
+                if s.habitual_amount_cents is not None
+                else None,
+            }
+            for s in ListSuggestions(c.uow, c.clock).execute(flow, q, limit)
+        ]
+
+    @app.get("/entries/suggestions")
+    def entry_suggestions(flow: str = "expense", q: str = "", limit: str = ""):
+        wanted = flow if flow in ("expense", "income") else "expense"
+        return JSONResponse(suggestion_payload(wanted, q[:100], _opt_int(limit) or 8))
+
+    @app.get("/entries/method-field", response_class=HTMLResponse)
+    def method_field(request: Request, kind: str = "expense", current: str = ""):
+        """The payment-method field for one side (the quick form swaps it when Despesa/Receita is
+        toggled): an income's carries PIX | TED | Outro and never Débito or Boleto."""
+        return templates.TemplateResponse(
+            request,
+            "snippets/payment-method-field.html",
+            {
+                "method_current": current if current in PAYMENT_CODES else "",
+                "method_kind": "income" if kind == "income" else "expense",
+                "method_hidden": False,  # app.js hides it again for a card or a transfer
+            },
         )
 
     @app.get("/entries/category-field", response_class=HTMLResponse)
@@ -625,43 +814,92 @@ def create_app(c: Container) -> FastAPI:
         account_id: Annotated[str, Form()] = "",
         from_account: Annotated[str, Form()] = "",
         to_account: Annotated[str, Form()] = "",
+        holding_id: Annotated[str, Form()] = "",
         category_id: Annotated[str, Form()] = "",
         recurring: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
         merchant: Annotated[str, Form()] = "",
+        payment_method: Annotated[str, Form()] = "",
+        return_query: Annotated[str, Form()] = "",
+        splits_present: Annotated[str, Form()] = "",
+        item_description: Annotated[list[str] | None, Form()] = None,
+        item_category: Annotated[list[str] | None, Form()] = None,
+        item_amount: Annotated[list[str] | None, Form()] = None,
     ):
         form = {k: v for k, v in locals().items() if isinstance(v, str)}
+        typed = [
+            {"description": d, "category_id": k, "amount": a}
+            for d, k, a in zip(
+                item_description or [], item_category or [], item_amount or [], strict=False
+            )
+            if d.strip() or a.strip()
+        ]
+        kept = return_filters(return_query)  # the month and filters the list was showing
         try:
             if kind != TransactionKind.TRANSFER.value and not account_id:
                 raise DomainError("ACCOUNT_REQUIRED")
             if kind == TransactionKind.TRANSFER.value:
-                RegisterTransfer(c.uow).execute(
+                holding = check_transfer_holding(
+                    from_account or None, to_account or None, holding_id or None
+                )
+                legs = RegisterTransfer(c.uow).execute(
                     RegisterTransferCommand(
                         from_account or None,
                         to_account or None,
                         parse_date(date, today()),
                         parse_brl(amount),
-                        description,
+                        transfer_title(
+                            description, from_account or None, to_account or None, accounts_now()
+                        ),
                         notes or None,
+                        holding_id=holding,
                     )
                 )
-                return back("/entries", "transfer")
-            RegisterTransaction(c.uow).execute(
+                kept["month"] = str(YearMonth.from_date(legs[0].posted_on))
+                moved = back("/entries", "transfer", **kept, focus=legs[0].id)
+                moved.headers["location"] += f"#entry-{legs[0].id}"
+                return moved
+            created = RegisterTransaction(c.uow).execute(
                 RegisterTransactionCommand(
                     account_id=account_id,
                     posted_on=parse_date(date, today()),
                     kind=_enum(TransactionKind, kind),
                     amount_cents=parse_brl(amount),
                     description=description,
-                    category_id=category_id or None,
+                    category_id=None if typed else (category_id or None),  # items carry them
                     is_recurring=bool(recurring),
                     notes=notes or None,
                     merchant=merchant or None,
+                    payment_method=_enum(PaymentMethod, payment_method) if payment_method else None,
+                    splits=tuple(
+                        SplitItem(t["description"], t["category_id"], abs(parse_brl(t["amount"])))
+                        for t in typed
+                    )
+                    if splits_present
+                    else (),
                 )
             )
         except DomainError as error:
-            return render(request, "entries.html", entries_context(None, {}, form), error=error)
-        return back("/entries", "entry")
+            return render(
+                request,
+                "entries.html",
+                entries_context(
+                    kept.get("month"),
+                    {
+                        name: kept.get(name, "")
+                        for name in ("account", "kind", "category", "q", "method")
+                    },
+                    form,
+                    items=typed if splits_present else None,
+                ),
+                error=error,
+            )
+        # go to the month of the new entry (not the one the list was showing) and to its row:
+        # the fragment is read by app.js, which scrolls to it and pulses it
+        kept["month"] = str(YearMonth.from_date(created.posted_on))
+        landing = back("/entries", "entry", **kept, focus=created.id)
+        landing.headers["location"] += f"#entry-{created.id}"
+        return landing
 
     @app.post("/transfers")
     def add_transfer(
@@ -679,7 +917,9 @@ def create_app(c: Container) -> FastAPI:
                     to_account or None,
                     parse_date(date, today()),
                     parse_brl(amount),
-                    description,
+                    transfer_title(
+                        description, from_account or None, to_account or None, accounts_now()
+                    ),
                 )
             )
         except DomainError as error:
@@ -723,11 +963,10 @@ def create_app(c: Container) -> FastAPI:
         name: Annotated[str, Form()],
         group: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)  # reject a bad image before anything is created
@@ -751,13 +990,12 @@ def create_app(c: Container) -> FastAPI:
         institution_id: Annotated[str, Form()],
         kind: Annotated[str, Form()] = "checking",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         opening_balance: Annotated[str, Form()] = "",
         opening_date: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)
@@ -787,7 +1025,6 @@ def create_app(c: Container) -> FastAPI:
         target: AppearanceTarget,
         entity_id: str,
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         remove_image: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
@@ -797,7 +1034,7 @@ def create_app(c: Container) -> FastAPI:
                 SetAppearanceCommand(
                     target,
                     entity_id,
-                    color=_color(color, use_color),
+                    color=_color(color),
                     image=await _upload(image),
                     remove_image=bool(remove_image),
                 )
@@ -863,12 +1100,19 @@ def create_app(c: Container) -> FastAPI:
         return views[-1]
 
     def cards_context(
-        card_id: str | None, month: str | None, ano: str | None = None
+        card_id: str | None,
+        month: str | None,
+        ano: str | None = None,
+        *,
+        unified: bool = False,
     ) -> dict[str, object]:
         overview = ListCards(c.uow, c.clock).execute()
         data = lookups()
-        chosen = next((v for v in overview.cards if v.account.id == card_id), None) or (
-            overview.cards[0] if overview.cards else None
+        chosen = (
+            None
+            if unified  # the consolidated view has no single card (and no selected face)
+            else next((v for v in overview.cards if v.account.id == card_id), None)
+            or (overview.cards[0] if overview.cards else None)
         )
         # Year filter: the statements of one year at a time. ``?ano=`` (lenient) wins, then the
         # year of ``?month=``, then the year of the statement the default rule picks.
@@ -897,10 +1141,20 @@ def create_app(c: Container) -> FastAPI:
         with c.uow as work:
             plans = {p.id: p for p in work.plans.list_all()}
             splits = work.transactions.splits_for(split_ids(detail.entries)) if detail else {}
+        selections = (
+            ListRowSelections(c.uow, c.clock).execute(
+                [t for t in detail.entries if not t.transfer_id],
+                {p.plan.id: p for p in ListPlanPurchases(c.uow).execute()},
+                splits,
+            )
+            if detail
+            else {}
+        )
         return {
             **data,
             "plans": plans,
             "splits": splits,
+            "selections": selections,
             "overview": overview,
             "chosen": chosen,
             "years": years,
@@ -924,13 +1178,79 @@ def create_app(c: Container) -> FastAPI:
             "institution_choices": list(data["institutions"].values()),
         }
 
+    def unified_cards(request: Request, picked: str, older: bool, after: str) -> Response:
+        """``/cards?card=all[&cards=id,id]``: the hero, the card chips and one timeline."""
+        overview = ListCards(c.uow, c.clock).execute()
+        if not overview.cards:
+            return RedirectResponse("/cards", status_code=303)
+        if len(overview.cards) == 1:  # one card: nothing to consolidate
+            return RedirectResponse(f"/cards?card={overview.cards[0].account.id}", status_code=303)
+        order = [v.account.id for v in overview.cards]
+        ids = parse_card_ids(picked, order)
+        views = [v for v in overview.cards if v.account.id in ids]
+        page = ListUnifiedTimeline(c.uow, c.clock).execute(views, older=older, after=after)
+        context = cards_context(None, None, unified=True)
+        with c.uow as work:
+            splits = work.transactions.splits_for(split_ids(page.entries))
+            plans = {p.id: p for p in work.plans.list_all()}
+        scope = set(ids)
+        context.update(
+            {
+                "plans": plans,
+                "splits": splits,
+                "unified": True,
+                "installments": consolidate_plans(
+                    ListActiveInstallments(c.uow, c.clock).execute(), scope
+                ),
+                "schedule": consolidate_schedule(
+                    InstallmentSchedule(c.uow, c.clock).execute(), scope
+                ),
+                "schedule_label": "cartões selecionados",
+                "summary": summarize(views, len(overview.cards)),
+                "chips": unified_chips(overview.cards, ids),
+                "live_text": unified_live_text(
+                    [v.account.nickname for v in views], len(views) == len(overview.cards)
+                ),
+                "page": page,
+                "older": older,
+                "card_tags": {
+                    cid: {"name": a.nickname, "color": context["account_looks"][cid].color}  # type: ignore[index]
+                    for cid, a in page.cards.items()
+                },
+                "selections": ListRowSelections(c.uow, c.clock).execute(
+                    [t for t in page.entries if not t.transfer_id],
+                    {p.plan.id: p for p in ListPlanPurchases(c.uow).execute()},
+                    splits,
+                ),
+                "picked_query": "" if len(views) == len(overview.cards) else ",".join(ids),
+                "more_base": unified_url(
+                    order, ids if len(views) != len(overview.cards) else order
+                ),
+                "after": after,
+                "month_labels": {
+                    f"{y:04d}-{m:02d}": format_month_long(YearMonth(y, m)).capitalize()
+                    for y, m in {(t.posted_on.year, t.posted_on.month) for t in page.entries}
+                },
+            }
+        )
+        history_restore = request.headers.get("hx-history-restore-request") == "true"
+        if request.headers.get("hx-request") == "true" and not history_restore:
+            template = "_cards_older.html" if older else "_cards_unified.html"
+            return templates.TemplateResponse(request, template, context)
+        return render(request, "cards.html", context)
+
     @app.get("/cards", response_class=HTMLResponse)
     def cards(
         request: Request,
         card: str | None = None,
         month: str | None = None,
         ano: str | None = None,
+        picked: Annotated[str, Query(alias="cards")] = "",
+        older: str = "",
+        after: str = "",
     ):
+        if card == "all":
+            return unified_cards(request, picked, bool(older), after)
         return render(request, "cards.html", cards_context(card, month, ano))
 
     @app.post("/cards")
@@ -942,11 +1262,10 @@ def create_app(c: Container) -> FastAPI:
         due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)
@@ -992,6 +1311,58 @@ def create_app(c: Container) -> FastAPI:
         except DomainError as error:
             return render(request, "cards.html", cards_context(card_id, None), error=error)
         return back("/cards", "card_settings", card=card_id)
+
+    def card_details_fragment(
+        request: Request,
+        card_id: str,
+        error: DomainError | None = None,
+        typed: dict[str, str] | None = None,
+    ) -> HTMLResponse:
+        with c.uow as work:
+            card = work.accounts.get(card_id)
+        if card is None or card.kind is not AccountKind.CREDIT_CARD:
+            raise DomainError("NOT_FOUND", entity="account")
+        looks = lookups()["account_looks"]
+        return templates.TemplateResponse(
+            request,
+            "_card_details.html",
+            {
+                "card": card,
+                "look_color": looks[card.id].color,
+                "typed": typed or {},
+                "error": messages.render_error(error) if error else None,
+            },
+        )
+
+    @app.get("/cards/{card_id}/details", response_class=HTMLResponse)
+    def card_details_form(request: Request, card_id: str):
+        return card_details_fragment(request, card_id)
+
+    @app.get("/cards/{card_id}/details/close", response_class=HTMLResponse)
+    def card_details_close(card_id: str):
+        return HTMLResponse("")  # "Cancelar": the slot goes back to empty
+
+    @app.post("/cards/{card_id}/details")
+    def card_details(
+        request: Request,
+        card_id: str,
+        nickname: Annotated[str, Form()],
+        color: Annotated[str, Form()] = "",
+    ):
+        try:
+            UpdateCardDetails(c.uow).execute(
+                UpdateCardDetailsCommand(card_id, nickname, _color(color))
+            )
+        except DomainError as error:
+            if error.code == "NOT_FOUND":
+                raise
+            return card_details_fragment(
+                request, card_id, error, {"nickname": nickname, "color": color}
+            )
+        target = "/cards?" + urlencode({"card": card_id, "ok": "card_details"})
+        if request.headers.get("hx-request"):
+            return Response(status_code=200, headers={"HX-Redirect": target})
+        return RedirectResponse(target, status_code=303)
 
     def statement_redirect(statement_id: str, ok: str) -> RedirectResponse:
         with c.uow as work:
@@ -1236,11 +1607,14 @@ def create_app(c: Container) -> FastAPI:
         chosen = year if year and 1900 <= year <= 9999 else today().year
         data = lookups()
         overview = ListInvestments(c.uow, c.clock, c.settings.valuation_stale_days).execute()
+        profit = GetInvestmentProfit(c.uow, c.clock).execute()
         this_month = Period.month(YearMonth.from_date(today()))
         accounts = data["accounts"]
         return {
             **data,
             "overview": overview,
+            "profit": profit,
+            "profit_by_holding": {x.holding.id: x for x in profit.series if x.holding},
             "year": chosen,
             "years": sorted({today().year - 5 + n for n in range(7)} | {chosen}),
             "year_totals": GetInvestmentPeriodTotals(c.uow).execute(Period.year(chosen)),
@@ -1313,7 +1687,7 @@ def create_app(c: Container) -> FastAPI:
         request: Request,
         account_id: str,
         date: Annotated[str, Form()],
-        net: Annotated[str, Form()],
+        net: Annotated[str, Form()] = "",
         gross: Annotated[str, Form()] = "",
         note: Annotated[str, Form()] = "",
     ):
@@ -1322,7 +1696,8 @@ def create_app(c: Container) -> FastAPI:
                 RecordBalanceCommand(
                     account_id,
                     parse_date(date, today()),
-                    parse_brl(net),
+                    # "Atualizar saldo" sends only the gross position: it is also the figure we hold
+                    parse_brl(net if net.strip() else gross),
                     note or None,
                     gross_balance_cents=parse_brl(gross) if gross.strip() else None,
                 )
@@ -1424,6 +1799,39 @@ def create_app(c: Container) -> FastAPI:
         if result.difference_cents is not None:
             return back("/investments", "valuation_yield", diff=result.difference_cents)
         return back("/investments", "valuation")
+
+    @app.post("/investments/holdings/{holding_id}/snapshots")
+    def holding_snapshot(
+        request: Request,
+        holding_id: str,
+        as_of_date: Annotated[str, Form()],
+        gross: Annotated[str, Form()] = "",
+        gross_value_cents: Annotated[str, Form()] = "",
+        note: Annotated[str, Form()] = "",
+    ):
+        """One dated position of a note; the same day again replaces it in place."""
+        try:
+            RecordHoldingSnapshot(c.uow).execute(
+                RecordHoldingSnapshotCommand(
+                    holding_id,
+                    parse_date(as_of_date, today()),
+                    _int(gross_value_cents, "INVALID_NUMBER")
+                    if gross_value_cents.strip()
+                    else parse_brl(gross),
+                    note or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "valuation")
+
+    @app.post("/investments/holdings/{holding_id}/snapshots/{anchor_id}/delete")
+    def holding_snapshot_delete(request: Request, holding_id: str, anchor_id: str):
+        try:
+            DeleteHoldingSnapshot(c.uow).execute(holding_id, anchor_id)
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "snapshot_deleted")
 
     @app.post("/investments/holdings/{holding_id}/flags")
     def holding_flags(
@@ -1606,7 +2014,6 @@ def create_app(c: Container) -> FastAPI:
         kind: Annotated[str, Form()],
         budget: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
     ):
         try:
             CreateCategory(c.uow).execute(
@@ -1615,7 +2022,7 @@ def create_app(c: Container) -> FastAPI:
                     group=_enum(CategoryGroup, group),
                     kind=_enum(CategoryKind, kind),
                     monthly_budget_cents=parse_brl(budget) if budget.strip() else None,
-                    color=_color(color, use_color),
+                    color=_color(color),
                 )
             )
         except DomainError as error:

@@ -50,10 +50,12 @@ from financas.domain.services.holdings import (
 from financas.domain.services.investments import (
     Allocation,
     PeriodYield,
+    SnapshotPoint,
     allocate,
     current_value,
     is_stale,
     period_yield,
+    profit_timeline,
     valuation_age_days,
 )
 
@@ -625,3 +627,135 @@ class GetFixedIncomeOverview:
             return 0
         window = spent[first:]
         return sum(window) // len(window)
+
+
+# --- profit over time (snapshots) --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TimelineRow:
+    """One snapshot of a series: the ``SnapshotPoint`` figures and the anchor to edit or delete."""
+
+    anchor_id: str
+    point: SnapshotPoint
+    note: str | None
+
+
+@dataclass(frozen=True)
+class ProfitSeries:
+    """The snapshots of one account (account-level tracking) or one holding, with the profit."""
+
+    label: str
+    account: Account
+    holding: InvestmentHolding | None
+    rows: tuple[TimelineRow, ...]  # oldest first
+    current_value_cents: int | None  # last snapshot + net flows after it; none without a snapshot
+    cost_cents: int | None  # net contributions (or the cost basis of a holding) up to today
+    profit_cents: int | None
+    return_rate: float | None
+
+
+@dataclass(frozen=True)
+class InvestmentProfit:
+    series: tuple[ProfitSeries, ...]
+    value_cents: int  # of the series that have a snapshot
+    cost_cents: int
+    profit_cents: int
+    return_rate: float | None
+    pending: int  # series with no snapshot yet, left out of the totals
+
+
+def snapshot_value(anchor: BalanceAnchor) -> int:
+    """The figure a profit is measured on: the gross position when informed, else the net one."""
+    return (
+        anchor.gross_balance_cents
+        if anchor.gross_balance_cents is not None
+        else (anchor.balance_cents)
+    )
+
+
+def _series(
+    label: str,
+    account: Account,
+    holding: InvestmentHolding | None,
+    anchors: list[BalanceAnchor],
+    flows: list[tuple[dt.date, int]],
+    today: dt.date,
+) -> ProfitSeries:
+    ordered = sorted(anchors, key=lambda a: a.on_date)
+    points = profit_timeline(
+        [AnchorPoint(a.on_date, snapshot_value(a)) for a in ordered],
+        flows,
+        base_cents=holding.principal_cents if holding else 0,
+        base_date=holding.applied_on if holding else None,
+    )
+    rows = tuple(TimelineRow(a.id, p, a.note) for a, p in zip(ordered, points, strict=True))
+    known = [p for p in points if p.on_date <= today]
+    if not known:
+        return ProfitSeries(label, account, holding, rows, None, None, None, None)
+    last = known[-1]
+    after = sum(
+        c
+        for d, c in flows
+        if last.on_date < d <= today and (holding is None or d > holding.applied_on)
+    )
+    value = last.balance_cents + after
+    cost = last.net_contributions_cents + after
+    profit = value - cost
+    return ProfitSeries(
+        label, account, holding, rows, value, cost, profit, profit / cost if cost > 0 else None
+    )
+
+
+class GetInvestmentProfit:
+    """Profit since the beginning for every investment account and holding that has snapshots.
+
+    ``profit = value - net contributions`` (CLAUDE.md 9.6); contributions are the flows registered
+    here, so a position that existed before the first entry shows as profit until its contribution
+    is registered.
+    """
+
+    def __init__(self, uow: UnitOfWork, clock: Clock) -> None:
+        self._uow = uow
+        self._clock = clock
+
+    def execute(self) -> InvestmentProfit:
+        today = self._clock.today()
+        out: list[ProfitSeries] = []
+        with self._uow as uow:
+            for account in investment_accounts(uow):
+                if account.tracking is InvestmentTracking.HOLDINGS:
+                    for holding in uow.holdings.list_for_account(account.id):
+                        out.append(
+                            _series(
+                                holding.name,
+                                account,
+                                holding,
+                                uow.anchors.list_for_holding(holding.id),
+                                uow.transactions.movements_for_holding(holding.id),
+                                today,
+                            )
+                        )
+                else:
+                    out.append(
+                        _series(
+                            account.nickname,
+                            account,
+                            None,
+                            uow.anchors.list_for_account(account.id),
+                            uow.transactions.movements(account.id),
+                            today,
+                        )
+                    )
+        measured = [s for s in out if s.current_value_cents is not None]
+        value = sum(s.current_value_cents or 0 for s in measured)
+        cost = sum(s.cost_cents or 0 for s in measured)
+        profit = value - cost
+        return InvestmentProfit(
+            tuple(out),
+            value,
+            cost,
+            profit,
+            profit / cost if cost > 0 else None,
+            len(out) - len(measured),
+        )

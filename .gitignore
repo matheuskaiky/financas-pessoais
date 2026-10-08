@@ -20,6 +20,7 @@ data/*
 
 # Python / tooling
 .venv/
+.venv-win/
 __pycache__/
 *.py[cod]
 .pytest_cache/

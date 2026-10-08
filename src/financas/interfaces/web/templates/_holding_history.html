@@ -1,0 +1,31 @@
+{# Snapshot timeline of one series (a holding, or an account tracked as a whole), oldest first.
+   Needs: series (ProfitSeries), today; `editable` adds the edit and delete actions (holdings). #}
+{% from "_ui.html" import delta_chip %}
+{% if not series.rows %}<p class="soft">Nenhum saldo registrado ainda.</p>
+{% else %}
+<div class="table-scroll">
+<table class="rtable snapshot-table" data-snapshot-table>
+  <thead><tr><th>Data</th><th class="num">Saldo bruto</th><th class="num">Rendimento no período</th><th class="num">Lucro total</th><th class="num">Rentabilidade acumulada</th>{% if editable %}<th>Ações</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for r in series.rows %}{% set p = r.point %}
+    <tr data-snapshot="{{ r.anchor_id }}">
+      <td data-label="Data">{{ p.on_date|date }}{% if r.note %}<br><small class="soft">{{ r.note }}</small>{% endif %}</td>
+      <td class="num" data-label="Saldo bruto"><strong>{{ p.balance_cents|money(private="investments") }}</strong></td>
+      <td class="num" data-label="Rendimento no período">{% if p.period_profit_cents is none %}<span class="soft">início</span>{% else %}{{ delta_chip((p.period_profit_cents|money(sign="always")|string) ~ ((' (' ~ (p.change_rate|percent) ~ ')') if p.change_rate is not none else ''), 'pos' if p.period_profit_cents >= 0 else 'neg', 'up' if p.period_profit_cents >= 0 else 'down', private="investments") }}{% endif %}</td>
+      <td class="num {{ 'pos' if p.profit_cents > 0 else ('neg' if p.profit_cents < 0 else '') }}" data-label="Lucro total">{{ p.profit_cents|money(sign="always", private="investments") }}</td>
+      <td class="num" data-label="Rentabilidade acumulada">{% if p.return_rate is none %}—{% else %}{{ delta_chip(p.return_rate|percent, 'pos' if p.profit_cents >= 0 else 'neg', 'up' if p.profit_cents >= 0 else 'down') }}{% endif %}</td>
+      {% if editable %}<td data-label="Ações">
+        <details><summary>Editar</summary>
+          <form method="post" action="/investments/holdings/{{ series.holding.id }}/snapshots" class="row-form">
+            <input type="hidden" name="as_of_date" value="{{ p.on_date.isoformat() }}">
+            <label class="field"><span>Novo saldo bruto</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="gross" inputmode="decimal" required></span></label>
+            <button type="submit" class="secondary">Salvar</button></form></details>
+        <form method="post" action="/investments/holdings/{{ series.holding.id }}/snapshots/{{ r.anchor_id }}/delete" class="inline-form" data-confirm="Este registro de saldo será removido do histórico." data-confirm-title="Apagar registro" data-confirm-ok="Apagar" data-confirm-danger>
+          <button type="submit" class="link danger" aria-label="Apagar o registro de {{ p.on_date|date }}">Apagar</button></form></td>{% endif %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<small class="soft">Lucro total = saldo − custo (aportes líquidos). Rendimento no período = variação do saldo − aportes e resgates do período.</small>
+{% endif %}

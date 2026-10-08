@@ -46,6 +46,23 @@ CSV_ERROR_MESSAGES: dict[str, str] = {
     ),
     "PAYMENT_NOTES_NOT_SUPPORTED": "Pagamento de fatura não guarda observações; deixe em branco.",
     "DUPLICATE_BALANCE": "Já há um saldo desta conta nesta data na linha {first_line}.",
+    "SPLIT_GROUP_SUM_MISMATCH": (
+        "A soma dos subitens ({sum_text}) não confere com o total da compra ({total_text})."
+    ),
+    "SPLIT_GROUP_NOT_CONSECUTIVE": (
+        "Este id_agrupamento já apareceu na linha {first_line}; as linhas de uma mesma compra "
+        "precisam ficar juntas, uma logo abaixo da outra."
+    ),
+    "SPLIT_ITEM_MISMATCH": (
+        "Em uma linha de subitem esta coluna deve ficar em branco ou repetir a da compra."
+    ),
+    "NOT_ALLOWED_FOR_SPLIT_ITEM": (
+        "Uma linha de subitem só usa descrição, categoria e valor; deixe esta coluna em branco."
+    ),
+    "SPLIT_REQUIRES_TOTAL_AMOUNT": (
+        "Compra com subitens parcelada precisa informar o total da compra (tipo de valor “total”)."
+    ),
+    "REFUNDED_NOT_FOR_INSTALLMENTS": "Uma compra parcelada não pode ser marcada como estornada.",
     "FEED_PLAN_MISMATCH": "O resultado da compra parcelada (linha {line}) difere do plano.",
 }
 
@@ -69,6 +86,14 @@ FEED_OVERRIDES: dict[str, str] = {
         "A fatura já está paga: ela é histórico e não recebe novos lançamentos."
     ),
     "STATEMENT_ONLY_FOR_CARDS": "A coluna fatura só vale para cartão de crédito.",
+    "SPLIT_NEEDS_TWO_ITEMS": (
+        "Uma compra com subitens precisa de pelo menos duas linhas de item, logo abaixo dela, "
+        "com o mesmo id_agrupamento."
+    ),
+    "PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS": (
+        "A linha da compra não tem categoria própria: deixe em branco (as categorias ficam nos "
+        "subitens)."
+    ),
 }
 
 WARNING_MESSAGES: dict[str, str] = {
@@ -143,6 +168,7 @@ REPORT = {
     "issue_file": "  arquivo: [{code}] {message}",
     "warning_line": "  linha {line}: {message}",
     "warning_plain": "  {message}",
+    "extras": "Compras com subitens: {itemized} · compras estornadas: {refunded}",
     "no_rows": "O arquivo não tem linhas de dados (só o cabeçalho).",
     "already": (
         "Este mesmo arquivo (SHA-256 {sha}) já foi aplicado em {when}. "

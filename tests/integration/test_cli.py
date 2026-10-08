@@ -568,3 +568,32 @@ def test_merchants_backfill_dry_run_then_apply_shows_counts_only(tmp_path: Path)
         ("Sem pista", None),
     ]
     assert "0 mudaram." in run("merchants", "backfill")  # nothing left to do
+
+
+def test_reconcile_transfers_dry_run_changes_nothing_and_apply_links_the_pair() -> None:
+    run("init")
+    run("institution", "add", "Banco do Brasil")
+    run("account", "add", "Inter", "-i", "banco")
+    run("account", "add", "Nubank", "-i", "banco")
+    run("add", "500,00", "PIX para Nubank", "-d", "06/07/2026", "-a", "inter")
+    run(
+        "add",
+        "500,00",
+        "PIX recebido",
+        "-k",
+        "income",
+        "-c",
+        "salary",
+        "-d",
+        "06/07/2026",
+        "-a",
+        "nubank",
+    )
+    dry = run("reconcile-transfers")
+    assert "1 par(es) encontrado(s)" in dry and "Simulação: nada foi alterado" in dry
+    assert "Nubank" in dry and "95%" in dry
+    assert "1 par(es)" in run("reconcile-transfers", "--dry-run")  # still there: nothing was linked
+    applied = run("reconcile-transfers", "--apply")
+    assert "Backup criado" in applied and "1 transferência(s) ligada(s)" in applied
+    assert "0 par(es) encontrado(s)" in run("reconcile-transfers")
+    assert "transferência" in run("list", "-m", "2026-07").lower()

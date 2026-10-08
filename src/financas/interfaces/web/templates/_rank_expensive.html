@@ -1,0 +1,51 @@
+{# "Compras Mais Caras": the largest single expenses of the month. Swapped as a whole by the Top 5 / Top 10
+   control (the fragment route renders this very file, and the page includes it). Needs: rank_rows, rank_top,
+   rank_month, rank_accounts, rank_categories, category_colors, account_looks, rank_live. #}
+{% from "_macros.html" import dot %}
+{% set live_unit = rank_rows|length %}
+<section class="panel rank-panel" id="rank-expensive" aria-labelledby="h-rank">
+  <header class="rank-head">
+    <div>
+      <h2 id="h-rank">Compras Mais Caras</h2>
+      <p class="rank-sub">Maiores despesas do período</p>
+    </div>
+    <div class="segmented two" role="radiogroup" aria-label="Quantidade" hx-get="/analises/maiores-despesas" hx-trigger="change" hx-target="#rank-expensive" hx-swap="outerHTML" hx-sync="#rank-expensive:replace" hx-indicator="#rank-expensive" hx-include="#rank-month, #rank-expensive [name='top']:checked">
+      <label><input type="radio" name="top" value="5" {{ 'checked' if rank_top == 5 }}><span>Top 5</span></label>
+      <label><input type="radio" name="top" value="10" {{ 'checked' if rank_top == 10 }}><span>Top 10</span></label>
+      <input type="hidden" id="rank-month" name="month" value="{{ rank_month }}">
+    </div>
+  </header>
+  <div hidden hx-swap-oob="innerHTML:#rank-live">{{ rank_live }}</div>
+  {% if rank_rows %}
+  {% macro where(r) %}{% set a = rank_accounts[r.account_id] %}{% if a.kind.value == 'credit_card' %}<span class="tag tag--card" title="{{ a.nickname }}" style="--card-color: {{ account_looks[a.id].color }}"><span class="tag--card__dot" aria-hidden="true"></span>{{ a.nickname|truncate(12, True, '…') }}</span>{% else %}{{ a.nickname }}{% endif %}{% endmacro %}
+  {% macro what(r) %}{% if r.category_id %}{{ dot(category_colors[r.category_id]) }}{{ rank_categories[r.category_id].name }}{% else %}Por item{% endif %}{% endmacro %}
+  <div class="rank-skeleton" aria-hidden="true">{% for _ in range(rank_top) %}<div class="sk rank-skeleton__row"></div>{% endfor %}</div>
+  <table class="rank-table">
+    <caption class="sr-only">As {{ rank_rows|length }} maiores despesas do período, da maior para a menor</caption>
+    <thead><tr><th scope="col" class="rk"><abbr title="Posição">#</abbr></th><th scope="col">Descrição</th><th scope="col">Data</th><th scope="col">Conta / Cartão</th><th scope="col">Categoria</th><th scope="col" class="num">Valor</th></tr></thead>
+    <tbody>
+    {% for r in rank_rows %}
+      <tr>
+        <td class="rk">{{ loop.index }}</td>
+        <td class="rank-desc"><a href="/entries?month={{ r.posted_on.isoformat()[:7] }}#entry-{{ r.anchor_id }}" title="{{ r.description }}">{{ r.description }}</a>{% if r.installments %} <span class="badge badge--subtle">{{ r.installments }}x</span>{% endif %}{% if r.merchant %}<small class="soft">{{ r.merchant }}</small>{% endif %}</td>
+        <td>{{ r.posted_on|date }}</td>
+        <td>{{ where(r) }}</td>
+        <td class="with-dot">{{ what(r) }}</td>
+        <td class="num neg">{{ (-r.amount_cents)|money(sign="always", private="transactions") }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <ol class="rank-list">
+    {% for r in rank_rows %}
+    <li><a href="/entries?month={{ r.posted_on.isoformat()[:7] }}#entry-{{ r.anchor_id }}">
+      <span class="rl-top"><span class="rk">{{ loop.index }}</span><span class="rl-t">{{ r.description }}{% if r.installments %} <span class="badge badge--subtle">{{ r.installments }}x</span>{% endif %}</span><span class="num neg">{{ (-r.amount_cents)|money(sign="always", private="transactions") }}</span></span>
+      <span class="rl-sub soft">{{ r.posted_on.strftime('%d/%m') }} · {{ rank_accounts[r.account_id].nickname }} · {% if r.category_id %}{{ rank_categories[r.category_id].name }}{% else %}Por item{% endif %}</span>
+    </a></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="empty">Nenhuma despesa no período.</p>
+  {% endif %}
+  <div class="banner error rank-error" role="alert" hidden><span>Não foi possível carregar o ranking.</span><button type="button" class="secondary" data-rank-retry>Tentar novamente</button></div>
+</section>

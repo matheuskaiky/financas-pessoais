@@ -21,6 +21,7 @@ from financas.application.queries.charts import (
     breakdown_of,
     pending_items,
 )
+from financas.application.queries.expensive import GetMostExpensive, parse_top
 from financas.application.queries.investments import GetNetWorth, ListInvestments
 from financas.application.queries.merchants import GetTopMerchants
 from financas.application.queries.planning import GetRecurring
@@ -35,6 +36,7 @@ from financas.interfaces.formatting import (
     format_month_long,
     format_percent,
 )
+from financas.interfaces.messages.ranking import rank_live_text
 from financas.interfaces.web import nav
 from financas.interfaces.web.routes import WebContext
 from financas.interfaces.web.shared import Lookups
@@ -435,12 +437,36 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         }
         return ctx.render(request, "dashboard.html", context)
 
+    def rank_context(chosen: YearMonth, top: int, data: Any) -> dict[str, Any]:
+        """The "Compras Mais Caras" panel: its rows and what a row shows about them."""
+        period = Period.month(chosen)
+        rows = GetMostExpensive(c.uow).execute(period.start, period.end, top)
+        return {
+            "rank_rows": rows,
+            "rank_top": top,
+            "rank_month": str(chosen),
+            "rank_accounts": {a.id: a for a in data["accounts"]},
+            "rank_categories": {x.id: x for x in data["categories"]},
+            "rank_live": rank_live_text(top),
+            "category_colors": data["category_colors"],
+            "account_looks": data["account_looks"],
+        }
+
+    @app.get("/analises/maiores-despesas", response_class=HTMLResponse)
+    def most_expensive(
+        request: Request, month: str = "", year: str = "", top: str = ""
+    ) -> HTMLResponse:
+        chosen = parse_month(month, year, current_month())
+        context = rank_context(chosen, parse_top(top), ctx.lookups())
+        return ctx.templates.TemplateResponse(request, "_rank_expensive.html", context)
+
     @app.get("/analises", response_class=HTMLResponse)
-    def analyses(request: Request, month: str = "", year: str = "") -> HTMLResponse:
+    def analyses(request: Request, month: str = "", year: str = "", top: str = "") -> HTMLResponse:
         chosen = parse_month(month, year, current_month())
         summary = GetSummary(c.uow).execute(Period.month(chosen))
         data = ctx.lookups()
         context: dict[str, Any] = {
+            **rank_context(chosen, parse_top(top), data),
             "title": format_month_long(chosen),
             "month_name": _MONTH_NAMES[chosen.month - 1],
             "month_key": str(chosen),

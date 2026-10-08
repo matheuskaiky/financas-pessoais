@@ -18,6 +18,7 @@ from financas.application.csvfeed.model import (
     FeedKind,
 )
 from financas.domain.errors import DomainError
+from financas.domain.models import PaymentMethod
 from financas.domain.money import YearMonth
 from financas.domain.services.text import normalize_search
 
@@ -30,6 +31,8 @@ HEADER_ALIASES: dict[str, FeedColumn] = {
     "tipo": FeedColumn.KIND,
     "account": FeedColumn.ACCOUNT,
     "conta": FeedColumn.ACCOUNT,
+    "cartao": FeedColumn.ACCOUNT,
+    "card": FeedColumn.ACCOUNT,
     "to_account": FeedColumn.TO_ACCOUNT,
     "conta_destino": FeedColumn.TO_ACCOUNT,
     "amount": FeedColumn.AMOUNT,
@@ -52,6 +55,21 @@ HEADER_ALIASES: dict[str, FeedColumn] = {
     "tipo_valor": FeedColumn.AMOUNT_TYPE,
     "gross_amount": FeedColumn.GROSS_AMOUNT,
     "valor_bruto": FeedColumn.GROSS_AMOUNT,
+    "payment_method": FeedColumn.PAYMENT_METHOD,
+    "metodo_pagamento": FeedColumn.PAYMENT_METHOD,
+    "metodo": FeedColumn.PAYMENT_METHOD,
+    "forma_pagamento": FeedColumn.PAYMENT_METHOD,
+    "forma_de_pagamento": FeedColumn.PAYMENT_METHOD,
+    "merchant": FeedColumn.MERCHANT,
+    "estabelecimento": FeedColumn.MERCHANT,
+    "refunded": FeedColumn.REFUNDED,
+    "estornado": FeedColumn.REFUNDED,
+    "estornada": FeedColumn.REFUNDED,
+    "group": FeedColumn.GROUP,
+    "grupo": FeedColumn.GROUP,
+    "split_id": FeedColumn.GROUP,
+    "id_agrupamento": FeedColumn.GROUP,
+    "agrupamento": FeedColumn.GROUP,
 }
 
 KIND_ALIASES: dict[str, FeedKind] = {
@@ -65,6 +83,26 @@ KIND_ALIASES: dict[str, FeedKind] = {
     "transferencia": FeedKind.TRANSFER,
     "balance": FeedKind.BALANCE,
     "saldo": FeedKind.BALANCE,
+}
+
+PAYMENT_METHOD_ALIASES: dict[str, PaymentMethod] = {
+    "pix": PaymentMethod.PIX,
+    "debito": PaymentMethod.DEBIT,
+    "debit": PaymentMethod.DEBIT,
+    "boleto": PaymentMethod.BOLETO,
+    "transferencia": PaymentMethod.TRANSFER,
+    "ted": PaymentMethod.TED,
+    "doc": PaymentMethod.TRANSFER,
+    "transfer": PaymentMethod.TRANSFER,
+    "dinheiro": PaymentMethod.CASH,
+    "cash": PaymentMethod.CASH,
+    "outro": PaymentMethod.OTHER,
+    "other": PaymentMethod.OTHER,
+    "cartao_credito": PaymentMethod.CREDIT_CARD,
+    "cartao de credito": PaymentMethod.CREDIT_CARD,
+    "cartao": PaymentMethod.CREDIT_CARD,
+    "credito": PaymentMethod.CREDIT_CARD,
+    "credit_card": PaymentMethod.CREDIT_CARD,
 }
 
 AMOUNT_TYPE_ALIASES: dict[str, AmountType] = {
@@ -91,6 +129,13 @@ def parse_kind(text: str) -> FeedKind:
     if kind is None:
         raise DomainError("INVALID_CHOICE")
     return kind
+
+
+def parse_payment_method(text: str) -> PaymentMethod:
+    method = PAYMENT_METHOD_ALIASES.get(normalize_search(text).replace("-", "_"))
+    if method is None:
+        raise DomainError("INVALID_PAYMENT_METHOD")
+    return method
 
 
 def parse_amount_type(text: str) -> AmountType:

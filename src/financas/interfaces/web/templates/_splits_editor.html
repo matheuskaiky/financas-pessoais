@@ -4,7 +4,8 @@
    split_purchase (true on the card purchase form: the items are the totals of the whole
    purchase, read from its amount, mode and installments fields) or split_plan (an installment's
    edit form: a PlanItems with the plan-wide totals, and split_target_cents the installment's
-   own amount). Behaviour: static/app.js (data-split-*). The parent entry's category select
+   own amount). ``split_bank`` (true for an entry on a checking account: PIX, débito, boleto...)
+   swaps the help text: there is no statement or limit to mention. Behaviour: static/app.js (data-split-*). The parent entry's category select
    (name="category_id" in the same form) is locked while the editor is on. #}
 <fieldset class="split-editor" data-split-editor{% if split_purchase %} data-split-purchase{% endif %}{% if split_plan %} data-plan-total="{{ split_plan.covered_total_cents }}" data-plan-count="{{ split_plan.covered_count }}" data-target-amount="{{ split_target_cents }}"{% endif %}>
       <input type="hidden" name="splits_present" value="1">
@@ -23,7 +24,8 @@
         <button type="button" class="secondary" data-split-add>+ Adicionar item</button>
         <p class="split-remaining" data-split-remaining role="status" aria-live="polite"></p>
         <p class="hint" data-split-note aria-live="polite"></p>
-        <p class="hint">Os itens precisam somar o valor do lançamento. A fatura, o saldo e o limite continuam vendo o lançamento inteiro; os gastos por categoria seguem os itens.</p>
+        {% if split_bank %}<p class="hint">Os itens precisam somar o valor do lançamento. O saldo da conta continua vendo o lançamento inteiro; os gastos por categoria seguem os itens.</p>
+        {% else %}<p class="hint">Os itens precisam somar o valor do lançamento. A fatura, o saldo e o limite continuam vendo o lançamento inteiro; os gastos por categoria seguem os itens.</p>{% endif %}
       </div>
       <template data-split-template>
         <div class="split-row">

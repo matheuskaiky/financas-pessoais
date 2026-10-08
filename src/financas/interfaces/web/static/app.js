@@ -162,6 +162,33 @@ document.body.addEventListener("htmx:confirm", function (event) {
     to.addEventListener("change", function () { exclude(to, from); });
     exclude(from, to);
     exclude(to, from);
+    // "Destino do aporte" / "Origem do resgate": the note of an investment account, when there is one
+    const holdingField = document.querySelector("[data-transfer-holding]");
+    if (holdingField) {
+      const picker = holdingField.querySelector("select");
+      const label = holdingField.querySelector("[data-transfer-holding-label]");
+      const syncHolding = function () {
+        const chosen = function (select) { return select.selectedOptions[0]; };
+        const investing = function (select) { const o = chosen(select); return o && o.dataset.accountKind === "investment" ? o : null; };
+        const target = investing(to) || investing(from);
+        const accountId = target ? target.value : "";
+        const byHoldings = Boolean(target) && target.dataset.tracking === "holdings";
+        let any = false;
+        Array.from(picker.options).forEach(function (option) {
+          if (option.dataset.free !== undefined) { option.hidden = byHoldings; option.disabled = byHoldings; return; }
+          const show = option.dataset.account === accountId;
+          option.hidden = !show; option.disabled = !show; any = any || show;
+          if (!show && option.selected) picker.value = "";
+        });
+        if (byHoldings && picker.value === "") { const first = Array.from(picker.options).find(function (o) { return !o.disabled && o.value; }); if (first) picker.value = first.value; }
+        holdingField.hidden = !target || (!any && !byHoldings);
+        picker.disabled = holdingField.hidden;  // a hidden field sends nothing
+        label.textContent = investing(to) ? "Destino do aporte" : "Origem do resgate";
+      };
+      from.addEventListener("change", syncHolding);
+      to.addEventListener("change", syncHolding);
+      syncHolding();
+    }
   }
 })();
 
@@ -196,9 +223,9 @@ document.body.addEventListener("fp:notice", function (event) {
   banner.scrollIntoView({ block: "nearest" });
 });
 
-// Itemized expenses: the breakdown toggle on a row, the items editor of the edit form ("Restam R$ …")
-// and the merge toolbar ("Mesclar em um só lançamento"). Everything is delegated from the document, so
-// it keeps working for rows and forms HTMX swaps in.
+// Itemized expenses: the breakdown toggle on a row and the items editor of the edit form ("Restam R$ …").
+// Everything is delegated from the document, so it keeps working for rows and forms HTMX swaps in.
+// (Merging and batch deletion: selection-mode.js.)
 (function () {
   "use strict";
   // The cents of a masked amount ("R$ 1.250,00", "-R$ 25,52" -> 125000, 2552): the sign never
@@ -339,9 +366,6 @@ document.body.addEventListener("fp:notice", function (event) {
       target.closest(".split-row").remove();
       refreshEditor(editor);
     }
-    if (target.closest("[data-merge-open]")) openMerge();
-    else if (target.closest("[data-merge-clear]")) { clearPicks(); syncBar(); }
-    else if (target.closest("[data-merge-cancel]")) { var d = document.getElementById("merge-dialog"); if (d) d.close(); }
   });
 
   document.addEventListener("change", function (event) {
@@ -356,7 +380,6 @@ document.body.addEventListener("fp:notice", function (event) {
       }
       refreshEditor(editor);
     }
-    if (target.matches(".merge-pick")) syncBar();
   });
 
   // Money fields announce themselves once their text is masked (money-mask.js): read them then.
@@ -380,39 +403,9 @@ document.body.addEventListener("fp:notice", function (event) {
     }, 0);
   });
 
-  // merge toolbar
-  function picked() { return Array.prototype.slice.call(document.querySelectorAll(".merge-pick:checked")); }
-  function clearPicks() { picked().forEach(function (el) { el.checked = false; }); }
-  function syncBar() {
-    var bar = document.getElementById("merge-bar");
-    if (!bar) return;
-    var n = picked().length;
-    bar.hidden = n < 2;
-    var count = bar.querySelector("[data-merge-count]");
-    if (count) count.textContent = String(n);
-  }
-  function openMerge() {
-    var dialog = document.getElementById("merge-dialog");
-    var chosen = picked();
-    if (!dialog || chosen.length < 2 || typeof dialog.showModal !== "function") return;
-    var ids = dialog.querySelector("[data-merge-ids]");
-    ids.replaceChildren();
-    chosen.forEach(function (el) {
-      var input = document.createElement("input");
-      input.type = "hidden"; input.name = "ids"; input.value = el.getAttribute("data-merge-id");
-      ids.appendChild(input);
-    });
-    var form = dialog.querySelector("form");
-    form.elements["description"].value = chosen[0].getAttribute("data-merge-desc") || "";
-    form.elements["date"].value = chosen.map(function (el) { return el.getAttribute("data-merge-date") || ""; }).sort().pop();
-    form.elements["ack"].checked = false;
-    dialog.querySelector("#merge-error").replaceChildren();
-    dialog.showModal();
-  }
-
-  document.addEventListener("htmx:afterSettle", function (event) { refreshAll(event.target); syncBar(); });
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { refreshAll(); syncBar(); });
-  else { refreshAll(); syncBar(); }
+  document.addEventListener("htmx:afterSettle", function (event) { refreshAll(event.target); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { refreshAll(); });
+  else { refreshAll(); }
 })();
 
 // Payment date of a statement (the "Pagar fatura" and "Editar pagamento" forms): between the previous
@@ -475,4 +468,116 @@ document.body.addEventListener("fp:notice", function (event) {
     else if (event.key === "ArrowRight" && !typing && form) { event.preventDefault(); form.requestSubmit(); }
     else if (event.key === "Enter" && onPage && form) { event.preventDefault(); form.requestSubmit(); }
   });
+})();
+
+// "Forma de pagamento" of the quick entry form: only for an entry on a checking account (a card
+// purchase is always "cartão de crédito", a transfer has none). A hidden fieldset is also disabled,
+// so its radios are not sent.
+(function () {
+  "use strict";
+  function sync(form) {
+    var field = form.querySelector("[data-method-field]");
+    if (!field) return;
+    var kind = form.querySelector('input[name="kind"]:checked');
+    var account = form.querySelector("select[data-entry-account]");
+    var chosen = account && account.selectedOptions[0];
+    var accountKind = chosen && chosen.getAttribute("data-account-kind");
+    var show = !(kind && kind.value === "transfer") && accountKind !== "credit_card";
+    field.hidden = !show;
+    field.disabled = !show;
+  }
+  // The options follow the direction of the money: expense PIX | Débito | Boleto | Outro, income
+  // PIX | TED | Outro. An income form never carries Débito or Boleto: toggling to Receita detaches
+  // them at once (and falls back to PIX if one was checked), then the server sends the income
+  // field (TED included); the same for the way back.
+  function switchSide(form) {
+    var field = form.querySelector("[data-method-field]");
+    var kind = form.querySelector('input[name="kind"]:checked');
+    if (!field || !kind) return;
+    var side = kind.value === "income" ? "income" : "expense";
+    if (field.getAttribute("data-side") === side) return;
+    var checked = field.querySelector("input:checked");
+    var keep = checked ? checked.value : "";
+    if (side === "income") {
+      field.querySelectorAll('input[value="debito"], input[value="boleto"]').forEach(function (input) {
+        if (input.checked) keep = "pix";
+        var label = input.closest("label");
+        if (label) label.remove();
+      });
+    }
+    field.setAttribute("data-side", side);
+    if (!keep || !field.querySelector('input[value="' + keep + '"]')) keep = "pix";
+    var pix = field.querySelector('input[value="' + keep + '"]');
+    if (pix) pix.checked = true;
+    if (window.htmx) {
+      window.htmx.ajax("GET", "/entries/method-field?kind=" + encodeURIComponent(kind.value) +
+        "&current=" + encodeURIComponent(keep), { target: field, swap: "outerHTML" });
+    }
+  }
+  // The items editor is for expenses only: switching to another kind turns it off, drops its rows
+  // and gives the parent's category back, so no orphan items are sent.
+  function syncSplits(form) {
+    var wrap = form.querySelector("[data-split-field]");
+    if (!wrap) return;
+    var kind = form.querySelector('input[name="kind"]:checked');
+    var expense = !kind || kind.value === "expense";
+    if (!expense) {
+      var toggle = wrap.querySelector("[data-split-toggle-items]");
+      if (toggle && toggle.checked) {
+        toggle.checked = false;
+        wrap.querySelectorAll("[data-split-rows] .split-row").forEach(function (row) { row.remove(); });
+        toggle.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    wrap.hidden = !expense;
+    wrap.disabled = !expense;
+  }
+  function syncAll(root) {
+    var forms = (root instanceof Element || root instanceof Document ? root : document)
+      .querySelectorAll("form");
+    var host = root instanceof Element ? root.closest("form") : null;  // a swapped-in field
+    (host ? [host] : Array.from(forms)).forEach(function (form) {
+      if (form.querySelector("[data-method-field]")) sync(form);
+      syncSplits(form);
+    });
+  }
+  document.addEventListener("change", function (event) {
+    var target = event.target instanceof Element ? event.target : null;
+    var form = target && target.closest("form");
+    if (form && target.matches('input[name="kind"], select[data-entry-account]')) {
+      if (target.matches('input[name="kind"]')) switchSide(form);
+      sync(form);
+      syncSplits(form);
+    }
+  });
+  document.addEventListener("htmx:afterSettle", function (event) { syncAll(event.target); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { syncAll(document); });
+  else syncAll(document);
+})();
+
+// A row just created: the server redirects to /entries?month=…&focus=<id>#entry-<id>. Scroll it to the
+// middle of the screen and pulse it for ~2 s (CSS @keyframes highlight-fade). Runs on load and after an
+// HTMX swap, once per address (a later filter swap must not pull the page back to the row).
+(function () {
+  "use strict";
+  var done = "";
+  function reveal() {
+    var hash = window.location.hash;
+    if (!/^#entry-[\w-]+$/.test(hash)) return;
+    var key = window.location.pathname + window.location.search + hash;
+    if (done === key) return;
+    var row = document.getElementById(hash.slice(1));
+    if (!row) return;
+    done = key;
+    var calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "center" });
+    row.classList.remove("row-highlight");
+    void row.offsetWidth;  // restart the animation if the class was already there
+    row.classList.add("row-highlight");
+    window.setTimeout(function () { row.classList.remove("row-highlight"); }, 2200);
+  }
+  document.addEventListener("htmx:afterSettle", reveal);
+  window.addEventListener("hashchange", function () { done = ""; reveal(); });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", reveal);
+  else reveal();
 })();

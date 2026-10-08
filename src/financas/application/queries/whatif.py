@@ -8,7 +8,7 @@
   included) and the stored dates of its statements.
 """
 
-from financas.application.queries.cards import card_accounts, statement_views
+from financas.application.queries.cards import card_accounts, card_committed, statement_views
 from financas.application.whatif.simulate import (
     CardFacts,
     WhatIfFacts,
@@ -53,12 +53,9 @@ class GetWhatIfFacts:
                         registered[month] = registered.get(month, 0) + view.outstanding_cents
                 if not account.is_active:
                     continue
-                committed = -sum(
-                    t.amount_cents for t in uow.transactions.list_by_account(account.id)
-                )
                 facts = card_facts(
                     account,
-                    max(committed, 0),
+                    card_committed(uow, account.id, views),
                     [
                         (v.statement.month, v.statement.closing_date, v.statement.due_date)
                         for v in views
