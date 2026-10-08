@@ -14,6 +14,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EDGE = Path("/mnt/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe")
+_WINDOWS_EDGE = (  # Edge ships with Windows: native runs find it without WSL
+    Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
+    Path("C:/Program Files/Microsoft/Edge/Application/msedge.exe"),
+)
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -26,7 +30,10 @@ def browser_command() -> list[str] | None:
         found = shutil.which(name)
         if found:
             return [found, "--no-sandbox"]
-    return [str(EDGE)] if EDGE.exists() else None
+    for edge in (EDGE, *_WINDOWS_EDGE):
+        if edge.exists():
+            return [str(edge)]
+    return None
 
 
 def run_harness(page: str, *flags: str) -> str:

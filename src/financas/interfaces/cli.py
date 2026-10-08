@@ -168,6 +168,7 @@ app.add_typer(import_app, name="import")
 # reject it); colors are applied with styles instead
 console = Console(markup=False)
 err_console = Console(stderr=True, markup=False)
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")  # `serve` never listens beyond this computer
 
 Color = Annotated[str | None, typer.Option("--color", help="Cor no formato #RRGGBB.")]
 Image = Annotated[
@@ -719,17 +720,29 @@ def backup() -> None:
 
 
 @app.command("serve")
-def serve(port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000) -> None:
+def serve(
+    port: Annotated[int, typer.Option("--port", help="Porta.")] = 8000,
+    host: Annotated[
+        str | None,
+        typer.Option("--host", help="Endereço local (padrão: FINANCAS_HOST, 127.0.0.1)."),
+    ] = None,
+) -> None:
     """Inicia o painel web em http://127.0.0.1:8000."""
     import uvicorn
 
     from financas.interfaces.web.app import create_app
 
     c = container()
+    wanted = host or c.settings.host
+    if wanted not in _LOOPBACK_HOSTS:  # rule: never exposed beyond this computer without approval
+        err_console.print(
+            "Endereço recusado: o painel só escuta neste computador (127.0.0.1).", style="red"
+        )
+        raise typer.Exit(2)
     c.migrate()
     c.seed()
     # no access log: URLs can carry search text (descriptions never go to logs, rule 4)
-    uvicorn.run(create_app(c), host=c.settings.host, port=port, access_log=False)
+    uvicorn.run(create_app(c), host=wanted, port=port, access_log=False)
 
 
 @app.command("demo")
@@ -2004,8 +2017,17 @@ def _demo_requested(argv: list[str]) -> bool:
     return "--demo" in argv or bool(argv[:1] and argv[0] in {"demo", "seed-demo"})
 
 
+def _force_utf8_streams() -> None:
+    """Accents and the minus sign must print on a Windows console or pipe (cp1252 by default)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
     """Entry point of the ``financas`` command: unexpected failures go to the failure log."""
+    _force_utf8_streams()
     try:
         app()
     except Exception as error:

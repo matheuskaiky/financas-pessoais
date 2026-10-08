@@ -36,7 +36,7 @@ uv run financas serve         # abra http://127.0.0.1:8000
 uv run financas backup        # cópia consistente em data/backups/
 ```
 
-No Windows, rode tudo dentro do WSL (detalhes no [guia de uso](docs/GUIA_DE_USO.md)).
+No Windows, rode direto com `uv sync` e `run_windows.bat` (painel em http://127.0.0.1:8000), ou dentro do WSL (detalhes no [guia de uso](docs/GUIA_DE_USO.md)).
 
 ## O que o sistema faz
 

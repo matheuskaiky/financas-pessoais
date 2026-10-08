@@ -16,9 +16,25 @@ uv run financas account add "Conta corrente" -i "Banco do Brasil"
 uv run financas serve         # http://127.0.0.1:8000
 ```
 
+### Windows (nativo, sem WSL)
+
+Funciona direto no PowerShell ou no `cmd.exe`, sem WSL:
+
+```powershell
+winget install --id astral-sh.uv     # uma vez só (instala o uv)
+uv sync                              # dependências (cria .venv)
+.\run_windows.bat                    # sincroniza e inicia o painel em http://127.0.0.1:8000
+```
+
+- `run_windows.bat` usa um ambiente próprio, `.venv-win`, para não brigar com o `.venv` Linux do WSL (se você usa os dois no mesmo repositório). Ele roda `uv run financas serve --host 127.0.0.1 --port 8000`; pare com `Ctrl+C`.
+- Os outros comandos funcionam igual: `uv run financas backup`, `uv run pytest -q`. Se usar o `.venv-win`, defina antes `$env:UV_PROJECT_ENVIRONMENT = ".venv-win"` (PowerShell) ou `set UV_PROJECT_ENVIRONMENT=.venv-win` (cmd).
+- O painel só escuta neste computador (`--host` aceita apenas `127.0.0.1`, `localhost` ou `::1`).
+- **Não deixe a pasta `data/` dentro de uma pasta sincronizada na nuvem** (OneDrive, Google Drive): o arquivo do banco corrompe. No disco local do Windows (NTFS) o SQLite usa o modo WAL normalmente.
+- Use o `git` do Windows **ou** o do WSL no mesmo repositório, não os dois misturados (o `.gitattributes` mantém LF nos arquivos, exceto `.bat`).
+
 ### Windows + WSL
 
-Se você usa Windows, rode tudo **dentro do WSL** (Ubuntu):
+Se você prefere o WSL, rode tudo **dentro do WSL** (Ubuntu):
 
 - O repositório fica no disco do Windows (`/mnt/c/Users/<seu-usuario>/Code/financas-pessoais`). Isso funciona, mas o SQLite nesse disco é mais lento e menos confiável: não rode dois processos escrevendo no banco ao mesmo tempo e **não deixe a pasta `data/` dentro de uma pasta sincronizada na nuvem** (OneDrive, Google Drive), que corrompe o arquivo.
 - Use o `git`, o `uv` e o `python` do WSL, não os do Windows. O `.venv` é um ambiente Linux.
