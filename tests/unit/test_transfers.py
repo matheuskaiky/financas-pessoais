@@ -240,7 +240,7 @@ def test_the_note_of_an_investment_leg_can_be_reassigned_and_is_tagged_on_that_l
     assert moved_out.holding_id is None and moved_in.holding_id == second.id
 
 
-def test_a_holdings_level_account_needs_its_note_and_a_free_balance_account_refuses_one(
+def test_clearing_the_note_sends_the_money_to_free_cash_and_a_stray_note_is_refused(
     uow: MemoryUnitOfWork,
     checking: Account,
     savings: Account,
@@ -248,14 +248,16 @@ def test_a_holdings_level_account_needs_its_note_and_a_free_balance_account_refu
     institution: Institution,
 ) -> None:
     held = note(uow, broker, institution, "CDB A")
-    out, _ = RegisterTransfer(uow).execute(
+    out, inc = RegisterTransfer(uow).execute(
         RegisterTransferCommand(checking.id, broker.id, D(2026, 3, 1), 50_000, holding_id=held.id)
     )
-    with pytest.raises(DomainError) as exc:  # clearing the note of a holdings-level account
-        update(uow, out.id, from_account_id=checking.id, to_account_id=broker.id, holding_id=None)
-    assert exc.value.code == "HOLDING_REQUIRED"
+    update(uow, out.id, from_account_id=checking.id, to_account_id=broker.id, holding_id=None)
+    cleared = uow.transactions.get(inc.id)
+    assert cleared and cleared.holding_id is None  # now free cash on the account
     with pytest.raises(DomainError) as exc:  # a note whose account is not on either side
-        update(uow, out.id, from_account_id=checking.id, to_account_id=savings.id)
+        update(
+            uow, out.id, from_account_id=checking.id, to_account_id=savings.id, holding_id=held.id
+        )
     assert exc.value.code == "HOLDING_NOT_IN_ACCOUNT"
     kept = uow.transactions.get(out.id)
     assert kept and kept.amount_cents == -50_000

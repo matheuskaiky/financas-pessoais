@@ -704,3 +704,26 @@ button.icon-btn.mini:is(.row-edit, .card-rename):hover, button.icon-btn.mini:is(
 /* "↔ Para: / De:" on a transfer row: a link to the other leg */
 .tag--transfer { text-decoration: none; color: var(--accent, #0F5C45); border: 1px solid var(--line); }
 .tag--transfer:hover, .tag--transfer:focus-visible { background: var(--fill-1, rgba(15, 92, 69, .10)); }
+
+/* Capital view of an account tracked by notes: KPIs and two CSS-only tabs (radio inputs) */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 8px 0; }
+.kpi { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--solid-1); }
+.kpi dt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-secondary); }
+.kpi dd { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.capital-account { margin-top: 18px; }
+.tabs > input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+.tab-labels { display: flex; gap: 6px; margin: 12px 0 8px; border-bottom: 1px solid var(--line); }
+.tab-labels label { padding: 10px 14px; min-height: 44px; display: inline-flex; align-items: center; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-secondary); }
+.tabs > input:nth-of-type(1):checked ~ .tab-labels label:nth-child(1),
+.tabs > input:nth-of-type(2):checked ~ .tab-labels label:nth-child(2) { color: var(--text-primary); border-bottom-color: var(--accent, #0F5C45); font-weight: 600; }
+.tabs > input:focus-visible ~ .tab-labels { outline: 2px solid var(--accent, #0F5C45); outline-offset: 2px; }
+.tab-panel { display: none; }
+.tabs > input:nth-of-type(1):checked ~ .tab-panel[data-panel="notes"],
+.tabs > input:nth-of-type(2):checked ~ .tab-panel[data-panel="moves"] { display: block; }
+
+/* "Gastos do dia · Saldo do dia" in the day header of /entries */
+.day-group__totals { display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 2px 14px; }
+.day-group__net { font-weight: 600; letter-spacing: 0; text-transform: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.day-net--pos { color: var(--pos-fg, #0F5C45); }
+.day-net--neg { color: var(--neg-fg, #8F2A39); }
+.day-net--zero { color: var(--text-secondary); }

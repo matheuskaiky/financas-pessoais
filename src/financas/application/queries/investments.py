@@ -49,9 +49,12 @@ from financas.domain.services.holdings import (
 )
 from financas.domain.services.investments import (
     Allocation,
+    CapitalPosition,
+    HoldingCapital,
     PeriodYield,
     SnapshotPoint,
     allocate,
+    capital_position,
     current_value,
     is_stale,
     period_yield,
@@ -72,6 +75,7 @@ class InvestmentAccountView:
     simple_return: float | None
     share: float | None  # of the total invested
     holdings: tuple["HoldingView", ...] = ()  # holdings-level accounts only
+    free_cash_cents: int = 0  # holdings-level accounts: arrived, not in any note
 
 
 @dataclass(frozen=True)
@@ -157,8 +161,28 @@ class ListHoldings:
             )
 
 
-def _holdings_account_view(account: Account, views: list[HoldingView]) -> InvestmentAccountView:
-    """A holdings-level account is the sum of its holdings (never both levels, 9.6)."""
+def account_free_cash(uow: Work, account_id: str, day: dt.date) -> int:
+    """Money that reached an account tracked by notes and no note holds (never negative here).
+
+    net inflow up to ``day`` minus the cost basis of every note (redeemed ones included); a
+    negative result means notes with no recorded funding, which is reported by the capital view
+    and never subtracted from the totals.
+    """
+    net = sum(c for d, c in uow.transactions.movements(account_id) if d <= day)
+    committed = 0
+    for h in uow.holdings.list_for_account(account_id):
+        if h.applied_on > day:
+            continue
+        committed += h.principal_cents + sum(
+            c for d, c in uow.transactions.movements_for_holding(h.id) if h.applied_on < d <= day
+        )
+    return max(0, net - committed)
+
+
+def _holdings_account_view(
+    account: Account, views: list[HoldingView], free_cash: int = 0
+) -> InvestmentAccountView:
+    """A holdings-level account is the sum of its holdings plus its free cash (9.6)."""
     active = [v for v in views if v.holding.status is HoldingStatus.ACTIVE]
     valued = [v for v in active if v.current_value_cents is not None]
     if valued:
@@ -167,6 +191,10 @@ def _holdings_account_view(account: Account, views: list[HoldingView]) -> Invest
         value = 0  # everything was redeemed
     else:
         value = None
+    if value is not None:
+        value += free_cash
+    elif not views and free_cash > 0:
+        value = free_cash  # money that arrived and has no note yet
     spans = [v for v in views if v.yield_cents is not None]
     yield_total = sum(v.yield_cents or 0 for v in spans) if spans else None
     # simple return: only holdings with a positive base (a redeemed one has none left)
@@ -190,6 +218,7 @@ def _holdings_account_view(account: Account, views: list[HoldingView]) -> Invest
         based_yield / base if base > 0 else None,
         None,
         tuple(views),
+        free_cash,
     )
 
 
@@ -215,7 +244,11 @@ class ListInvestments:
             for account in investment_accounts(uow):
                 if account.tracking is InvestmentTracking.HOLDINGS:
                     mine = [v for v in holding_rows if v.holding.account_id == account.id]
-                    rows.append(_holdings_account_view(account, mine))
+                    rows.append(
+                        _holdings_account_view(
+                            account, mine, account_free_cash(uow, account.id, today)
+                        )
+                    )
                     continue
                 anchors = uow.anchors.list_for_account(account.id)
                 flows = uow.transactions.movements(account.id)
@@ -247,6 +280,8 @@ class ListInvestments:
                     for v in r.holdings
                     if v.holding.status is HoldingStatus.ACTIVE
                 )
+                if r.free_cash_cents:
+                    items.append((account_class, r.free_cash_cents))
             else:
                 items.append((account_class, r.current_value_cents))
         allocation = allocate(items)
@@ -448,6 +483,7 @@ def net_worth_at(uow: Work, day: dt.date, *, historical: bool = False) -> NetWor
                 and not (historical and v.holding.applied_on > day)
             ]
             investments += sum(v.current_value_cents or 0 for v in views)
+            investments += account_free_cash(uow, account.id, day)
             for v in views:
                 if v.current_value_cents is None and not (
                     historical and uow.anchors.list_for_holding(v.holding.id)
@@ -758,4 +794,115 @@ class GetInvestmentProfit:
             profit,
             profit / cost if cost > 0 else None,
             len(out) - len(measured),
+        )
+
+
+# --- capital: what arrived, what sits free, what is applied -------------------------------------
+
+
+@dataclass(frozen=True)
+class CapitalMovement:
+    """A transfer leg into (contribution) or out of (redemption) an investment account."""
+
+    leg_id: str
+    posted_on: dt.date
+    account_id: str
+    other_account_id: str | None  # ``None``: the other side is not tracked here
+    amount_cents: int  # signed on the investment account: > 0 contribution, < 0 redemption
+    holding_id: str | None
+    description: str
+
+
+@dataclass(frozen=True)
+class AccountCapital:
+    account: Account
+    position: CapitalPosition | None  # accounts tracked by notes; ``None`` for a whole-account one
+    movements: tuple[CapitalMovement, ...]  # newest first
+    net_inflow_cents: int
+    active_holdings: int
+    valuations: int  # whole-account valuations stored (history when tracked by notes)
+
+
+class GetCapitalOverview:
+    """Per investment account: the capital that arrived and, for notes, where it sits."""
+
+    def __init__(self, uow: UnitOfWork, clock: Clock, stale_after_days: int) -> None:
+        self._uow = uow
+        self._clock = clock
+        self._stale = stale_after_days
+
+    def execute(self) -> list[AccountCapital]:
+        today = self._clock.today()
+        out: list[AccountCapital] = []
+        with self._uow as uow:
+            for account in investment_accounts(uow):
+                legs = [
+                    t
+                    for t in uow.transactions.list_by_account(account.id)
+                    if t.kind is TransactionKind.TRANSFER
+                ]
+                movements = tuple(
+                    sorted(
+                        (self._movement(uow, t) for t in legs),
+                        key=lambda m: (m.posted_on, m.leg_id),
+                        reverse=True,
+                    )
+                )
+                net = sum(m.amount_cents for m in movements)
+                position = None
+                active = 0
+                if account.tracking is InvestmentTracking.HOLDINGS:
+                    views = holding_views(
+                        uow, today, self._stale, account_id=account.id, include_redeemed=True
+                    )
+                    capitals: list[HoldingCapital] = []
+                    for v in views:
+                        h = v.holding
+                        later = sum(
+                            c
+                            for d, c in uow.transactions.movements_for_holding(h.id)
+                            if d > h.applied_on
+                        )
+                        is_active = h.status is HoldingStatus.ACTIVE
+                        active += is_active
+                        capitals.append(
+                            HoldingCapital(
+                                h.principal_cents + later,
+                                v.current_value_cents if is_active else None,
+                                is_active,
+                            )
+                        )
+                    position = capital_position([m.amount_cents for m in movements], capitals)
+                out.append(
+                    AccountCapital(
+                        account,
+                        position,
+                        movements,
+                        net,
+                        active,
+                        len(uow.anchors.list_for_account(account.id)),
+                    )
+                )
+        return out
+
+    @staticmethod
+    def _movement(uow: Work, leg: Transaction) -> CapitalMovement:
+        other = next(
+            (
+                x.account_id
+                for x in (
+                    uow.transactions.list_by_transfer(leg.transfer_id) if leg.transfer_id else []
+                )
+                if x.id != leg.id
+            ),
+            None,
+        )
+        return CapitalMovement(
+            leg.id,
+            leg.posted_on,
+            leg.account_id,
+            other,
+            leg.amount_cents,
+            leg.holding_id,
+            leg.description,
         )

@@ -129,14 +129,14 @@ def test_a_transfer_into_a_note_is_linked_from_the_quick_form(
         "from_account": checking,
         "to_account": savings,
     }
-    missing = client.post("/entries", data=base)  # a holdings-level account needs its note
-    assert missing.status_code == 400 and "aplicação" in missing.text.lower()
+    free = client.post("/entries", data=base)  # no note: the money waits as free cash
+    assert free.status_code == 303
     done = client.post("/entries", data={**base, "holding_id": holding.id})
     assert done.status_code == 303
     with container.uow as work:
         legs = work.transactions.list_by_account(savings)
         out = work.transactions.list_by_account(checking)
-    assert [leg.holding_id for leg in legs] == [holding.id]
+    assert sorted(str(leg.holding_id) for leg in legs) == sorted([holding.id, "None"])
     assert all(leg.kind.value == "transfer" for leg in [*legs, *out])  # not income or expense
     page = client.get("/entries").text
     assert "↔ Aporte: Caixinha / CDB Banco X 110% CDI" in page
@@ -178,3 +178,105 @@ def test_editing_the_transfer_keeps_or_changes_the_note(
     with container.uow as work:
         (after,) = work.transactions.list_by_account(savings)
     assert (after.amount_cents, after.holding_id) == (70_000, holding.id)
+
+
+def fund(client: TestClient, checking: str, savings: str, cents: str = "3.000,00", **extra: str):
+    return client.post(
+        "/entries",
+        data={
+            "kind": "transfer",
+            "date": TODAY.isoformat(),
+            "amount": cents,
+            "from_account": checking,
+            "to_account": savings,
+            **extra,
+        },
+    )
+
+
+def test_the_page_shows_free_cash_applied_balance_and_the_capital_movements(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer)  # R$ 10.000,00 of cost, no recorded funding yet
+    holding = holding_of(container)
+    assert "aplicados sem aporte registrado" in client.get("/investments").text
+    fund(client, checking, savings, "15.000,00", holding_id=holding.id)  # tagged: goes to the note
+    fund(client, checking, savings, "2.000,00", holding_id=holding.id)
+    client.post(
+        f"/investments/holdings/{holding.id}/snapshots",
+        data={"as_of_date": TODAY.isoformat(), "gross": "27.000,00"},
+    )
+    response = client.get("/investments")
+    page, text = response.text, visible(response)
+    assert "data-capital-kpis" in page and "Saldo em caixa (livre)" in text
+    assert "Saldo aplicado" in text and "Patrimônio total" in text and "Rentabilidade" in text
+    assert "Movimentações de Capital" in text and "data-capital-movements" in page
+    assert "Aporte" in text and "+R$ 15.000,00" in text and "+R$ 2.000,00" in text
+    assert "De: Conta Corrente" in text
+    # both tabs exist for the account: notes and capital movements
+    assert "Aplicações & Notas" in text.replace("&amp;", "&") or "Aplicações &amp; Notas" in page
+    assert 'data-panel="notes"' in page and 'data-panel="moves"' in page
+    # R$ 27.000 applied against R$ 17.000 funded: the note's own R$ 10.000 has no transfer yet
+    assert "Lucro:" in text and "aplicados sem aporte registrado" in text
+
+
+def test_free_cash_waits_for_allocation_and_the_quick_action_opens_the_form(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer, contribute="1", from_account_id=checking)
+    holding = holding_of(container)
+    client.post(
+        f"/investments/holdings/{holding.id}/snapshots",
+        data={"as_of_date": TODAY.isoformat(), "gross": "10.000,00"},
+    )
+    with container.uow as work:
+        before = work.transactions.list_by_account(savings)
+    assert [leg.holding_id for leg in before] == [holding.id]
+    # money that arrives without a note is free cash (a whole-account contribution)
+    done = client.post(
+        "/entries",
+        data={
+            "kind": "transfer",
+            "date": TODAY.isoformat(),
+            "amount": "3.000,00",
+            "from_account": checking,
+            "to_account": savings,
+        },
+    )
+    assert done.status_code == 303  # no note chosen: free cash, waiting for an allocation
+    waiting = visible(client.get("/investments"))
+    assert "R$ 3.000,00 esperando alocação" in waiting
+    page = client.get(f"/investments?alocar={savings}").text
+    assert re.search(r'<details id="nova-aplicacao" open>', page)
+    assert f'value="{savings}" selected' in page
+    assert f"/investments?alocar={savings}#nova-aplicacao" in page  # the card's quick action
+
+
+def test_changing_the_control_mode_explains_what_blocks_it_and_can_archive_the_notes(
+    client: TestClient, container: Container
+) -> None:
+    _, savings, issuer = make_broker(client, container)
+    new_holding(client, savings, issuer)
+    page = client.get("/investments").text
+    assert "Controle por Notas/Aplicações" in page and "Controle Global" in page
+    assert "data-tracking-note" in page and "possui 1 aplicação(ões) ativa(s)" in page
+    refused = client.post(
+        f"/investments/{savings}/settings",
+        data={"asset_class": "fixed_income", "tracking": "account"},
+    )
+    assert refused.status_code == 400
+    assert "possui 1 aplicação(ões) ativa(s)" in refused.text
+    assert "encerrar ou excluir as aplicações" in refused.text
+    assert "Não dá para trocar o controle" not in refused.text  # the old cryptic message
+    forced = client.post(
+        f"/investments/{savings}/settings",
+        data={"asset_class": "fixed_income", "tracking": "account", "force_cleanup": "1"},
+    )
+    assert forced.status_code == 303
+    with container.uow as work:
+        account = work.accounts.get(savings)
+        (held,) = work.holdings.list_all()
+    assert account and account.tracking is not None and account.tracking.value == "account"
+    assert held.status.value == "redeemed"  # archived, not deleted

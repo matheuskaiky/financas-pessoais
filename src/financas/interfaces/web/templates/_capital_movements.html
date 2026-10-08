@@ -1,0 +1,22 @@
+{# Transfers into (aporte) and out of (resgate) investment accounts, newest first.
+   Needs: movements (CapitalMovement), accounts, holding_names; `show_account` adds the account column. #}
+{% if not movements %}<p class="soft">Nenhum aporte ou resgate registrado ainda. Lance uma transferência da conta corrente para esta conta em Lançamentos.</p>
+{% else %}
+<div class="table-scroll">
+<table class="rtable" data-capital-movements>
+  <thead><tr><th>Data</th>{% if show_account %}<th>Conta de investimento</th>{% endif %}<th>Origem / Destino</th><th>Tipo</th><th class="num">Valor</th></tr></thead>
+  <tbody>
+  {% for m in movements %}
+    {% set other = (accounts|selectattr('id', 'equalto', m.other_account_id)|list|first) if m.other_account_id else none %}
+    <tr>
+      <td data-label="Data">{{ m.posted_on|date }}</td>
+      {% if show_account %}<td data-label="Conta de investimento">{{ (accounts|selectattr('id', 'equalto', m.account_id)|list|first).nickname }}</td>{% endif %}
+      <td data-label="Origem / Destino">{% if m.amount_cents > 0 %}De: {% else %}Para: {% endif %}{{ other.nickname if other else 'Conta não controlada' }}{% if m.holding_id and (holding_names or {}).get(m.holding_id) %} <small class="soft">· {{ holding_names[m.holding_id] }}</small>{% endif %}</td>
+      <td data-label="Tipo"><span class="pill {{ 'ok' if m.amount_cents > 0 else 'warn' }}">{{ 'Aporte' if m.amount_cents > 0 else 'Resgate' }}</span></td>
+      <td class="num {{ 'pos' if m.amount_cents > 0 else 'neg' }}" data-label="Valor">{{ m.amount_cents|money(sign="always", private="investments") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}

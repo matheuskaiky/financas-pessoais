@@ -12,7 +12,6 @@ from financas.application.queries.transfer_links import TRANSFER_ACCOUNT_KINDS
 from financas.application.use_cases._common import UNSET, Unset, found
 from financas.domain.errors import DomainError
 from financas.domain.models import (
-    AccountKind,
     HoldingStatus,
     InvestmentTracking,
     Transaction,
@@ -81,12 +80,6 @@ class UpdateTransfer:
                 if side is None:
                     continue
                 tracked = found(uow.accounts.get(side), "account")
-                if (
-                    tracked.kind is AccountKind.INVESTMENT
-                    and tracked.tracking is InvestmentTracking.HOLDINGS
-                    and holding_account_id != tracked.id
-                ):
-                    raise DomainError("HOLDING_REQUIRED")
                 if holding_account_id == tracked.id and (
                     tracked.tracking is not InvestmentTracking.HOLDINGS
                 ):

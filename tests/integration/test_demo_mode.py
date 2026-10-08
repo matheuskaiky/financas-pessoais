@@ -277,7 +277,10 @@ def test_demo_data_has_the_planned_shape(demo: Container) -> None:
     assert (cards[inter].due_day, cards[inter].closing_days_before_due) == (20, 6)
     assert {h.name for h in holdings} == {"Tesouro Selic 2029", "CDB Banco Inter 100% CDI"}
     assert len(plans) == 4  # three plain plans and the itemized one
-    assert min(t.posted_on for t in entries) >= dt.date(2026, 1, 1)
+    # the 2026 household; only the opening contributions of the notes (applied in 2025) are older
+    older = [t for t in entries if t.posted_on < dt.date(2026, 1, 1)]
+    assert {t.posted_on for t in older} == {h.applied_on for h in holdings}
+    assert all(t.kind is TransactionKind.TRANSFER for t in older)  # both legs of each contribution
     descriptions = {t.description for t in entries}
     for expected in ("Salário CLT", "Aluguel", "Condomínio", "iFood", "Uber", "Netflix", "Spotify"):
         assert expected in descriptions
@@ -754,6 +757,22 @@ def test_demo_holdings_have_a_snapshot_timeline_from_their_cost_basis(demo: Cont
         dates = [r.point.on_date for r in series.rows]
         assert dates == sorted(set(dates))  # one point per day, chronological
     assert profit.profit_cents == profit.value_cents - profit.cost_cents > 0
+
+
+def test_demo_investment_account_shows_free_cash_applied_value_and_capital_movements(
+    demo: Container,
+) -> None:
+    from financas.application.queries.investments import GetCapitalOverview
+
+    (cap,) = GetCapitalOverview(demo.uow, demo.clock, 35).execute()
+    position = cap.position
+    assert position is not None
+    assert position.free_cash_cents == 300_000  # R$ 3.000,00 waiting for a note
+    assert position.unfunded_cents == 0 and not position.partial  # every principal was funded
+    assert position.applied_value_cents > position.allocated_cost_cents > 0
+    assert position.total_cents == position.free_cash_cents + position.applied_value_cents
+    assert position.profit_cents == position.total_cents - position.net_inflow_cents > 0
+    assert len(cap.movements) >= 6 and any(m.holding_id is None for m in cap.movements)
 
 
 def test_demo_has_a_legacy_transfer_pair_for_the_reconciliation_scanner(demo: Container) -> None:

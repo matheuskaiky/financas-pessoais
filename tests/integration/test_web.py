@@ -3933,3 +3933,45 @@ def test_editing_a_payment_to_an_out_of_range_date_keeps_the_form_and_changes_no
     with container.uow as work:
         assert work.transactions.get(debit.id) == debit
         assert work.transactions.get(credit.id) == credit
+
+
+def test_day_header_shows_the_spending_and_the_net_balance_with_a_tone(
+    client: TestClient, container: Container
+) -> None:
+    checking, savings = setup_accounts(client, container)
+    today = dt.date.today()
+    yesterday = today - dt.timedelta(days=1)
+    add_expense(client, checking, description="Almoço", amount="1.200,00")
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "account_id": checking,
+            "date": today.isoformat(),
+            "amount": "3.000,00",
+            "description": "Salário",
+        },
+    )
+    add_expense(client, checking, description="Mercado", amount="40,00", date=yesterday.isoformat())
+    client.post(  # a transfer must not distort the day
+        "/transfers",
+        data={
+            "from_account": checking,
+            "to_account": savings,
+            "date": today.isoformat(),
+            "amount": "999",
+        },
+    )
+    response = client.get("/entries")
+    page, text = response.text, visible(response)
+    assert "Gastos do dia: " in text and "Saldo do dia: " in text
+    assert "Gastos do dia: R$ 1.200,00" in text and "Saldo do dia: +R$ 1.800,00" in text
+    assert "Saldo do dia: −R$ 40,00" in text or "Saldo do dia: -R$ 40,00" in text
+    assert 'data-day-net="pos"' in page and 'data-day-net="neg"' in page
+    assert "day-net--pos" in page and "day-net--neg" in page
+    # filtered to one account the transfer moves that account's balance
+    one = visible(client.get(f"/entries?account={checking}"))
+    assert "Saldo do dia: +R$ 801,00" in one  # 3.000 - 1.200 - 999
+    # a day with only income has no "Gastos do dia", and a flat day is neutral
+    only_income = client.get("/entries?kind=income")
+    assert "Gastos do dia" not in only_income.text and 'data-day-net="pos"' in only_income.text

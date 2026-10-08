@@ -143,7 +143,7 @@ def test_tracking_level_rules(uow: MemoryUnitOfWork, savings: Account, broker: A
     assert exc.value.code == "ACCOUNT_NOT_HOLDINGS_LEVEL"
 
 
-def test_switching_level_is_refused_while_the_current_level_has_data(
+def test_switching_level_is_explained_while_the_current_level_has_data(
     uow: MemoryUnitOfWork, savings: Account, inter: Institution, broker: Account
 ) -> None:
     RecordBalance(uow).execute(RecordBalanceCommand(savings.id, D(2026, 7, 1), 100_000))
@@ -151,13 +151,13 @@ def test_switching_level_is_refused_while_the_current_level_has_data(
         SetInvestmentSettings(uow).execute(
             savings.id, AssetClass.OTHER, False, tracking=InvestmentTracking.HOLDINGS
         )
-    assert exc.value.code == "TRACKING_IN_USE"
+    assert exc.value.code == "TRACKING_HAS_VALUATIONS" and exc.value.params["count"] == 1
     register(uow, broker, inter)
     with pytest.raises(DomainError) as exc:
         SetInvestmentSettings(uow).execute(
             broker.id, AssetClass.FIXED_INCOME, False, tracking=InvestmentTracking.ACCOUNT
         )
-    assert exc.value.code == "TRACKING_IN_USE"
+    assert exc.value.code == "TRACKING_HAS_HOLDINGS" and exc.value.params["count"] == 1
     empty = CreateAccount(uow).execute(
         CreateAccountCommand(AccountKind.INVESTMENT, inter.id, "Vazia")
     )

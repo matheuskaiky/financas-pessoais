@@ -174,3 +174,65 @@ def profit_timeline(
         )
         previous = snap
     return points
+
+
+@dataclass(frozen=True)
+class HoldingCapital:
+    """One note as the capital view sees it."""
+
+    committed_cents: int  # cost basis: principal + net flows tagged to it after it was applied
+    value_cents: int | None  # market value of an ACTIVE note; ``None`` without a valuation
+    active: bool
+
+
+@dataclass(frozen=True)
+class CapitalPosition:
+    """Where the money that reached an investment account sits (CLAUDE.md 9.6)."""
+
+    inflows_cents: int  # transfers received (contributions)
+    outflows_cents: int  # transfers sent (redemptions)
+    net_inflow_cents: int
+    allocated_cost_cents: int  # cost basis of the active notes
+    free_cash_cents: int  # net inflow not committed to any note
+    applied_value_cents: int  # market value of the active notes that have a valuation
+    total_cents: int  # free cash + applied value
+    profit_cents: int  # total - net inflow
+    return_rate: float | None
+    partial: bool  # an active note has no valuation yet: its value is missing from the total
+
+    @property
+    def unfunded_cents(self) -> int:
+        """Notes whose cost no recorded transfer paid for (the free cash would be negative)."""
+        return max(0, -self.free_cash_cents)
+
+
+def capital_position(flows: Iterable[int], holdings: Sequence[HoldingCapital]) -> CapitalPosition:
+    """Free cash, applied value and profit of an account tracked by notes.
+
+    ``free cash = net inflow - cost basis of every note`` (redeemed ones included: a note that
+    left with a withdrawal carries that withdrawal as a negative cost, so redeeming never moves
+    the free cash) and ``profit = total - net inflow``, which therefore counts the unrealized gain
+    of the active notes and the realized gain of the redeemed ones. Notes without a valuation
+    are left out of the applied value and the result is flagged ``partial``.
+    """
+    moves = list(flows)
+    inflows = sum(c for c in moves if c > 0)
+    outflows = -sum(c for c in moves if c < 0)
+    net = inflows - outflows
+    committed = sum(h.committed_cents for h in holdings)
+    free = net - committed
+    applied = sum(h.value_cents or 0 for h in holdings if h.active)
+    total = free + applied
+    profit = total - net
+    return CapitalPosition(
+        inflows,
+        outflows,
+        net,
+        sum(h.committed_cents for h in holdings if h.active),
+        free,
+        applied,
+        total,
+        profit,
+        profit / net if net > 0 else None,
+        any(h.active and h.value_cents is None for h in holdings),
+    )

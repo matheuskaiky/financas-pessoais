@@ -14,6 +14,7 @@ from financas.domain.models import (
     Category,
     CategoryGroup,
     CategoryKind,
+    HoldingStatus,
     Institution,
     InvestmentTracking,
 )
@@ -141,21 +142,36 @@ class SetInvestmentSettings:
         asset_class: AssetClass,
         is_emergency_fund: bool,
         tracking: InvestmentTracking | None = None,
+        force_cleanup: bool = False,
     ) -> Account:
-        """``tracking`` switches the level; refused while the level in use holds data (9.6)."""
+        """``tracking`` switches the level (9.6).
+
+        Going to whole-account control while notes are active is refused (``TRACKING_HAS_HOLDINGS``)
+        unless ``force_cleanup``: the notes are then archived (status redeemed, nothing deleted, no
+        movement created). Going to notes while whole-account valuations exist is refused
+        (``TRACKING_HAS_VALUATIONS``) unless ``force_cleanup``: they stay as history and stop
+        counting. Transfers never block a switch: they are capital flows at either level.
+        """
         with self._uow as uow:
             account = found(uow.accounts.get(account_id), "account")
             if account.kind is not AccountKind.INVESTMENT:
                 raise DomainError("INVESTMENT_REQUIRED")
             new_tracking = tracking or account.tracking
             if new_tracking is not account.tracking:
-                in_use = (
-                    uow.anchors.list_for_account(account.id)
-                    if account.tracking is InvestmentTracking.ACCOUNT
-                    else uow.holdings.list_for_account(account.id)
-                )
-                if in_use or uow.transactions.movements(account.id):
-                    raise DomainError("TRACKING_IN_USE")
+                if account.tracking is InvestmentTracking.HOLDINGS:
+                    active = [
+                        h
+                        for h in uow.holdings.list_for_account(account.id)
+                        if h.status is HoldingStatus.ACTIVE
+                    ]
+                    if active and not force_cleanup:
+                        raise DomainError("TRACKING_HAS_HOLDINGS", count=len(active))
+                    for holding in active:
+                        uow.holdings.update(replace(holding, status=HoldingStatus.REDEEMED))
+                else:
+                    valuations = uow.anchors.list_for_account(account.id)
+                    if valuations and not force_cleanup:
+                        raise DomainError("TRACKING_HAS_VALUATIONS", count=len(valuations))
             account = replace(
                 account,
                 asset_class=asset_class,

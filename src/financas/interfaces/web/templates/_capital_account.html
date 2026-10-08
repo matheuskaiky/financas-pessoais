@@ -1,0 +1,28 @@
+{# One account tracked by notes: where its money is (KPIs) and two tabs: notes, capital movements.
+   Needs: cap (AccountCapital), mine (the notes' views), plus what investments.html has. #}
+{% from "_ui.html" import delta_chip %}
+{% set pos = cap.position %}
+<div class="capital-account" data-capital-account="{{ a.id }}">
+  <h3>{{ a.nickname }} <small class="soft">· {{ institutions[a.institution_id].name }}</small></h3>
+  <dl class="kpi-row" data-capital-kpis>
+    <div class="kpi"><dt>Patrimônio total</dt><dd><strong>{{ pos.total_cents|money(private="investments") }}</strong>{% if pos.partial %}<small class="soft">parcial: há aplicação sem avaliação</small>{% endif %}</dd></div>
+    <div class="kpi"><dt>Saldo em caixa (livre)</dt><dd>
+      {% if pos.free_cash_cents > 0 %}<span class="pill warn" data-free-cash>{{ pos.free_cash_cents|money(private="investments") }} esperando alocação</span>
+      {% else %}<strong data-free-cash>{{ 0|money(private="investments") }}</strong><small class="soft">tudo aplicado</small>{% endif %}
+      <a class="btn secondary" href="/investments?alocar={{ a.id }}#nova-aplicacao">+ Alocar em nota / CDB</a></dd></div>
+    <div class="kpi"><dt>Saldo aplicado</dt><dd><strong>{{ pos.applied_value_cents|money(private="investments") }}</strong><small class="soft">custo {{ pos.allocated_cost_cents|money(private="investments") }}</small></dd></div>
+    <div class="kpi"><dt>Rentabilidade</dt><dd>
+      {{ delta_chip('Lucro: ' ~ (pos.profit_cents|money(sign="always")|string) ~ ((' (' ~ (pos.return_rate|percent) ~ ')') if pos.return_rate is not none else ''), 'pos' if pos.profit_cents >= 0 else 'neg', 'up' if pos.profit_cents >= 0 else 'down', private="investments") }}
+      <small class="soft">sobre o aporte líquido {{ pos.net_inflow_cents|money(private="investments") }}</small></dd></div>
+  </dl>
+  {% if pos.unfunded_cents %}<p class="callout warn" role="status" data-unfunded>Há {{ pos.unfunded_cents|money }} aplicados sem aporte registrado: lance a transferência que os pagou (ou marque “Registrar também o aporte” ao cadastrar a aplicação) para o saldo livre ficar correto.</p>{% endif %}
+  <small class="soft">Aportes {{ pos.inflows_cents|money(private="investments") }} − resgates {{ pos.outflows_cents|money(private="investments") }} = aporte líquido. Saldo livre = aporte líquido − custo das aplicações. Lucro = patrimônio − aporte líquido. O sistema não calcula imposto.</small>
+
+  <div class="tabs" data-tabs>
+    <input type="radio" name="tab-{{ a.id }}" id="tab-notes-{{ a.id }}" checked>
+    <input type="radio" name="tab-{{ a.id }}" id="tab-moves-{{ a.id }}">
+    <div class="tab-labels" role="tablist"><label for="tab-notes-{{ a.id }}" role="tab">Aplicações &amp; Notas</label><label for="tab-moves-{{ a.id }}" role="tab">Movimentações de Capital</label></div>
+    <div class="tab-panel" data-panel="notes" role="tabpanel">{{ notes_html|safe }}</div>
+    <div class="tab-panel" data-panel="moves" role="tabpanel">{% with movements = cap.movements, show_account = false %}{% include "_capital_movements.html" %}{% endwith %}</div>
+  </div>
+</div>

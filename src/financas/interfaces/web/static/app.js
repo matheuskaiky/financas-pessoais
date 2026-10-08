@@ -175,12 +175,11 @@ document.body.addEventListener("htmx:confirm", function (event) {
         const byHoldings = Boolean(target) && target.dataset.tracking === "holdings";
         let any = false;
         Array.from(picker.options).forEach(function (option) {
-          if (option.dataset.free !== undefined) { option.hidden = byHoldings; option.disabled = byHoldings; return; }
+          if (option.dataset.free !== undefined) return;  // "free cash" is always a choice
           const show = option.dataset.account === accountId;
           option.hidden = !show; option.disabled = !show; any = any || show;
           if (!show && option.selected) picker.value = "";
         });
-        if (byHoldings && picker.value === "") { const first = Array.from(picker.options).find(function (o) { return !o.disabled && o.value; }); if (first) picker.value = first.value; }
         holdingField.hidden = !target || (!any && !byHoldings);
         picker.disabled = holdingField.hidden;  // a hidden field sends nothing
         label.textContent = investing(to) ? "Destino do aporte" : "Origem do resgate";

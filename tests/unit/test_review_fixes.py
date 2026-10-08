@@ -358,19 +358,20 @@ def test_emergency_average_ignores_months_before_the_first_essential_spending(
 # --- switching the tracking level ---
 
 
-def test_switching_level_is_refused_when_the_account_already_has_movements(
+def test_transfers_never_block_a_switch_of_level(
     uow: MemoryUnitOfWork, savings: Account, checking: Account
 ) -> None:
+    """A contribution is a capital flow at either level: on a notes account it is free cash."""
     RegisterInvestmentFlow(uow).execute(
         RegisterInvestmentFlowCommand(
             savings.id, FlowDirection.CONTRIBUTION, D(2026, 7, 1), 100_000, checking.id
         )
     )
-    with pytest.raises(DomainError) as exc:
-        SetInvestmentSettings(uow).execute(
-            savings.id, AssetClass.OTHER, False, tracking=InvestmentTracking.HOLDINGS
-        )
-    assert code(exc) == "TRACKING_IN_USE"
+    switched = SetInvestmentSettings(uow).execute(
+        savings.id, AssetClass.OTHER, False, tracking=InvestmentTracking.HOLDINGS
+    )
+    assert switched.tracking is InvestmentTracking.HOLDINGS
+    assert len(uow.transactions.list_by_account(savings.id)) == 1  # the flow stays
 
 
 # --- atomicity: a failure after the first write rolls everything back ---

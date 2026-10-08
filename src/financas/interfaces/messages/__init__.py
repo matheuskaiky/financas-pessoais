@@ -123,6 +123,12 @@ TRACKING_LABELS: dict[InvestmentTracking, str] = {
     InvestmentTracking.HOLDINGS: "Por aplicação",
 }
 
+# what the switch itself says, so the choice is clear without reading the manual
+TRACKING_OPTION_LABELS: dict[InvestmentTracking, str] = {
+    InvestmentTracking.HOLDINGS: "Controle por Notas/Aplicações (CDBs, fundos e ativos)",
+    InvestmentTracking.ACCOUNT: "Controle Global (saldo único da conta, sem detalhar ativos)",
+}
+
 HOLDING_STATUS_LABELS: dict[HoldingStatus, str] = {
     HoldingStatus.ACTIVE: "Ativa",
     HoldingStatus.REDEEMED: "Resgatada",
@@ -345,8 +351,15 @@ ERROR_MESSAGES: dict[str, str] = {
         "O desconto precisa ser maior ou igual a zero e menor que o valor das parcelas."
     ),
     "DISCOUNT_RATE_OR_AMOUNT": "Informe a taxa de desconto ou o valor do desconto, não os dois.",
-    "TRACKING_IN_USE": (
-        "Não dá para trocar o controle enquanto houver avaliações ou aplicações no nível atual."
+    "TRACKING_HAS_HOLDINGS": (
+        "Esta conta possui {count} aplicação(ões) ativa(s). Para alternar para Controle Global, "
+        "é necessário encerrar ou excluir as aplicações existentes primeiro (ou marcar “Arquivar "
+        "as aplicações e trocar”, que as guarda no histórico, fora dos totais)."
+    ),
+    "TRACKING_HAS_VALUATIONS": (
+        "Esta conta possui {count} avaliação(ões) de saldo da conta inteira. Ao passar para "
+        "Controle por Notas elas ficam guardadas no histórico, mas deixam de contar: marque "
+        "“Trocar mesmo assim” para confirmar."
     ),
 }
 

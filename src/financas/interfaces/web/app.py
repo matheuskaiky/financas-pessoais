@@ -23,8 +23,9 @@ from financas.application.queries.cards import (
     ListCards,
     StatementView,
 )
-from financas.application.queries.entries import filter_by_method, parse_method_filter
+from financas.application.queries.entries import day_totals, filter_by_method, parse_method_filter
 from financas.application.queries.investments import (
+    GetCapitalOverview,
     GetFixedIncomeOverview,
     GetInvestmentPeriodTotals,
     GetInvestmentProfit,
@@ -264,6 +265,7 @@ def create_app(c: Container) -> FastAPI:
         liquidity_labels=messages.LIQUIDITY_LABELS,
         bucket_labels=messages.LIQUIDITY_BUCKET_LABELS,
         tracking_labels=messages.TRACKING_LABELS,
+        tracking_option_labels=messages.TRACKING_OPTION_LABELS,
         holding_status_labels=messages.HOLDING_STATUS_LABELS,
         rate=messages.format_rate,
         status_labels=messages.STATEMENT_STATUS_LABELS,
@@ -417,27 +419,25 @@ def create_app(c: Container) -> FastAPI:
     ) -> str | None:
         """The note of a contribution or redemption, as the transfer form sends it.
 
-        On an account tracked by holdings the money must say which note it goes into or comes
-        from (``HOLDING_REQUIRED``); a note on any other account is refused. The rest of the rules
-        (the note sits on one side of the transfer) are the use case's.
+        No note means the money goes to (or comes from) the account's free cash. A note must be
+        an active one on an account tracked by notes; the rest of the rules (it sits on one side
+        of the transfer) are the use case's.
         """
+        if not holding_id:
+            return None
         with c.uow as work:
             sides = [work.accounts.get(i) for i in (from_id, to_id) if i]
-            held = work.holdings.get(holding_id) if holding_id else None
-        by_holdings = [
-            x
-            for x in sides
-            if x is not None
+            held = work.holdings.get(holding_id)
+        if held is None:
+            raise DomainError("NOT_FOUND", entity="holding")
+        if held.status is HoldingStatus.REDEEMED:
+            raise DomainError("HOLDING_REDEEMED")
+        if not any(
+            x is not None
             and x.kind is AccountKind.INVESTMENT
             and x.tracking is InvestmentTracking.HOLDINGS
-        ]
-        if holding_id and held is None:
-            raise DomainError("NOT_FOUND", entity="holding")
-        if held is not None and held.status is HoldingStatus.REDEEMED:
-            raise DomainError("HOLDING_REDEEMED")
-        if by_holdings and not holding_id:
-            raise DomainError("HOLDING_REQUIRED")
-        if holding_id and not by_holdings:
+            for x in sides
+        ):
             raise DomainError("ACCOUNT_NOT_HOLDINGS_LEVEL")
         return holding_id
 
@@ -609,6 +609,8 @@ def create_app(c: Container) -> FastAPI:
         shown = rows[:limit]
         selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
         transfer_links = ListTransferLinks(c.uow).execute(shown)
+        # a list of ONE account is that account's cash flow: its transfers count in the day's net
+        day_summaries = day_totals(rows, include_transfers=bool(filters.get("account")))
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -639,6 +641,7 @@ def create_app(c: Container) -> FastAPI:
             "rows": shown,
             "selections": selections,
             "transfer_links": transfer_links,
+            "day_totals": day_summaries,
             "splits": splits,
             "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
@@ -1603,17 +1606,29 @@ def create_app(c: Container) -> FastAPI:
 
     # --- investments and net worth -------------------------------------------------------------
 
-    def investments_context(year: int | None) -> dict[str, object]:
+    def investments_context(year: int | None, allocate_account: str = "") -> dict[str, object]:
         chosen = year if year and 1900 <= year <= 9999 else today().year
         data = lookups()
         overview = ListInvestments(c.uow, c.clock, c.settings.valuation_stale_days).execute()
         profit = GetInvestmentProfit(c.uow, c.clock).execute()
+        capital = GetCapitalOverview(c.uow, c.clock, c.settings.valuation_stale_days).execute()
+        with c.uow as work:
+            work_holdings = work.holdings.list_all()
         this_month = Period.month(YearMonth.from_date(today()))
         accounts = data["accounts"]
         return {
             **data,
             "overview": overview,
             "profit": profit,
+            "capital": capital,
+            "capital_by_account": {x.account.id: x for x in capital},
+            "all_movements": sorted(
+                (m for x in capital for m in x.movements),
+                key=lambda m: (m.posted_on, m.leg_id),
+                reverse=True,
+            ),
+            "allocate_account": allocate_account,
+            "holding_names_all": {h.id: h.name for h in work_holdings},
             "profit_by_holding": {x.holding.id: x for x in profit.series if x.holding},
             "year": chosen,
             "years": sorted({today().year - 5 + n for n in range(7)} | {chosen}),
@@ -1644,8 +1659,8 @@ def create_app(c: Container) -> FastAPI:
         }
 
     @app.get("/investments", response_class=HTMLResponse)
-    def investments(request: Request, year: str = ""):
-        return render(request, "investments.html", investments_context(_opt_int(year)))
+    def investments(request: Request, year: str = "", alocar: str = ""):
+        return render(request, "investments.html", investments_context(_opt_int(year), alocar[:64]))
 
     @app.post("/investments/flow")
     def investment_flow(
@@ -1715,6 +1730,7 @@ def create_app(c: Container) -> FastAPI:
         asset_class: Annotated[str, Form()],
         emergency: Annotated[str, Form()] = "",
         tracking: Annotated[str, Form()] = "",
+        force_cleanup: Annotated[str, Form()] = "",
     ):
         try:
             SetInvestmentSettings(c.uow).execute(
@@ -1722,6 +1738,7 @@ def create_app(c: Container) -> FastAPI:
                 _enum(AssetClass, asset_class),
                 bool(emergency),
                 _enum(InvestmentTracking, tracking) if tracking else None,
+                force_cleanup=bool(force_cleanup),
             )
         except DomainError as error:
             return render(request, "investments.html", investments_context(None), error=error)

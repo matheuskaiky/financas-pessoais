@@ -41,6 +41,17 @@
 <div class="day-head day-group__header"><span class="day-group__title">{{ day|day_title }}</span>{% if total_cents is not none %}<span class="day-group__total">{{ total_label }}: {{ total_cents|money(private=private) }}</span>{% endif %}</div>
 {% endmacro %}
 
+{# The day header of /entries: the spending of the day and the day's net balance ("Saldo do dia").
+   totals is a DayTotals; the sign is always written and the tone never the only signal. #}
+{% macro day_net_header(day, totals, private="transactions") %}
+{% set tone = 'pos' if totals.net_cents > 0 else ('neg' if totals.net_cents < 0 else 'zero') %}
+<div class="day-head day-group__header"><span class="day-group__title">{{ day|day_title }}</span>
+  <span class="day-group__totals">
+    {% if totals.has_spending %}<span class="day-group__total" data-day-spent>Gastos do dia: {{ totals.expense_cents|money(private=private) }}</span>{% endif %}
+    <span class="day-group__net day-net--{{ tone }}" data-day-net="{{ tone }}">Saldo do dia: {% if totals.net_cents != 0 %}{{ totals.net_cents|money(sign="always", private=private) }}{% else %}{{ 0|money(private=private) }}{% endif %}</span>
+  </span></div>
+{% endmacro %}
+
 {% macro dot(color) %}<span class="dot" style="background: {{ color }}" aria-hidden="true"></span>{% endmacro %}
 
 {# Color picker (static/color-picker.js): swatch that opens the system dialog, HEX text (the field that is posted;

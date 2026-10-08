@@ -5,7 +5,11 @@ import datetime as dt
 import pytest
 
 from fakes import FixedClock, MemoryUnitOfWork
-from financas.application.queries.investments import GetInvestmentProfit, ListHoldings
+from financas.application.queries.investments import (
+    GetCapitalOverview,
+    GetInvestmentProfit,
+    ListHoldings,
+)
 from financas.application.use_cases.balances import RecordBalance, RecordBalanceCommand
 from financas.application.use_cases.catalog import (
     CreateAccount,
@@ -16,6 +20,8 @@ from financas.application.use_cases.holdings import (
     DeleteHoldingSnapshot,
     RecordHoldingSnapshot,
     RecordHoldingSnapshotCommand,
+    RedeemHolding,
+    RedeemHoldingCommand,
     RegisterHolding,
     RegisterHoldingCommand,
 )
@@ -35,7 +41,7 @@ from financas.domain.models import (
     TransactionKind,
 )
 from financas.domain.services.balances import AnchorPoint
-from financas.domain.services.investments import profit_timeline
+from financas.domain.services.investments import HoldingCapital, capital_position, profit_timeline
 
 D = dt.date
 TODAY = D(2026, 6, 30)
@@ -276,3 +282,139 @@ def test_a_note_must_sit_on_one_side_of_the_transfer(
         )
     assert exc.value.code == "HOLDING_NOT_IN_ACCOUNT"
     assert not uow.transactions.list_by_account(checking.id)  # nothing was written
+
+
+# --- capital: free cash, applied value and the control-level switch ---
+
+
+def test_capital_position_splits_free_cash_from_applied_value() -> None:
+    position = capital_position(
+        [200_000, -50_000],  # a contribution and a redemption
+        [HoldingCapital(100_000, 104_000, True)],
+    )
+    assert (position.inflows_cents, position.outflows_cents) == (200_000, 50_000)
+    assert position.net_inflow_cents == 150_000
+    assert position.free_cash_cents == 50_000  # 150_000 - 100_000 applied
+    assert position.applied_value_cents == 104_000
+    assert position.total_cents == 154_000 and position.profit_cents == 4_000
+    assert position.return_rate == pytest.approx(4_000 / 150_000)
+    assert not position.partial and position.unfunded_cents == 0
+
+
+def test_a_redeemed_note_keeps_its_realized_gain_and_never_moves_the_free_cash() -> None:
+    # 1_000 in, 1_050 out: the withdrawal is the negative cost of the note, the gain is the profit
+    position = capital_position([100_000, -105_000], [HoldingCapital(-5_000, None, False)])
+    assert position.free_cash_cents == 0 and position.applied_value_cents == 0
+    assert position.net_inflow_cents == -5_000 and position.profit_cents == 5_000
+
+
+def test_a_note_without_a_valuation_makes_the_position_partial() -> None:
+    position = capital_position([100_000], [HoldingCapital(100_000, None, True)])
+    assert position.partial and position.applied_value_cents == 0
+
+
+def test_an_allocation_without_a_recorded_transfer_is_reported_as_unfunded() -> None:
+    position = capital_position([], [HoldingCapital(100_000, 100_000, True)])
+    assert position.free_cash_cents == -100_000 and position.unfunded_cents == 100_000
+
+
+def capital_of(uow: MemoryUnitOfWork, account: Account):
+    rows = GetCapitalOverview(uow, FixedClock(TODAY), 35).execute()
+    return next(r for r in rows if r.account.id == account.id)
+
+
+def test_an_incoming_transfer_is_free_cash_until_it_is_allocated(
+    uow: MemoryUnitOfWork, checking: Account, broker: Account, cdb: InvestmentHolding
+) -> None:
+    # the fixture note was registered without a contribution: its cost is not funded yet
+    assert capital_of(uow, broker).position.unfunded_cents == 100_000  # type: ignore[union-attr]
+    RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, broker.id, D(2026, 2, 1), 300_000)
+    )
+    snap(uow, cdb, D(2026, 2, 28), 102_000)
+    cap = capital_of(uow, broker)
+    position = cap.position
+    assert position is not None
+    assert (position.net_inflow_cents, cap.net_inflow_cents) == (300_000, 300_000)
+    assert position.free_cash_cents == 200_000  # 300_000 - the 100_000 note
+    assert position.allocated_cost_cents == 100_000
+    assert position.total_cents == 302_000 and position.profit_cents == 2_000
+    assert [m.amount_cents for m in cap.movements] == [300_000]
+
+
+def test_allocating_a_transfer_to_a_note_keeps_the_total_and_lowers_the_free_cash(
+    uow: MemoryUnitOfWork, checking: Account, broker: Account, cdb: InvestmentHolding
+) -> None:
+    RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, broker.id, D(2026, 2, 1), 300_000)
+    )
+    snap(uow, cdb, D(2026, 2, 28), 100_000)
+    before = capital_of(uow, broker).position
+    assert before is not None
+    # 150_000 more goes straight into the note (a tagged transfer): cost and net inflow both rise
+    RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, broker.id, D(2026, 3, 1), 150_000, holding_id=cdb.id)
+    )
+    snap(uow, cdb, D(2026, 3, 31), 250_000)
+    after = capital_of(uow, broker).position
+    assert after is not None
+    assert after.allocated_cost_cents == 250_000 and after.applied_value_cents == 250_000
+    assert after.free_cash_cents == before.free_cash_cents  # new money went straight to the note
+    assert after.profit_cents == before.profit_cents == 0
+
+
+def test_redeeming_a_note_leaves_the_free_cash_alone_and_books_the_gain(
+    uow: MemoryUnitOfWork, checking: Account, broker: Account, cdb: InvestmentHolding
+) -> None:
+    RegisterTransfer(uow).execute(
+        RegisterTransferCommand(checking.id, broker.id, D(2026, 1, 15), 100_000, holding_id=cdb.id)
+    )  # funds the note's principal (dated on the day it was applied)
+    snap(uow, cdb, D(2026, 2, 28), 105_000)
+    free_before = capital_of(uow, broker).position.free_cash_cents  # type: ignore[union-attr]
+    RedeemHolding(uow).execute(RedeemHoldingCommand(cdb.id, D(2026, 3, 1), 105_000, checking.id))
+    position = capital_of(uow, broker).position
+    assert position is not None
+    assert position.free_cash_cents == free_before == 0
+    assert position.applied_value_cents == 0
+    assert position.profit_cents == 5_000  # the realized gain stays in the result
+
+
+def test_forcing_the_switch_to_global_archives_the_notes_without_deleting_them(
+    uow: MemoryUnitOfWork, broker: Account, cdb: InvestmentHolding
+) -> None:
+    from financas.domain.models import HoldingStatus
+
+    with pytest.raises(DomainError) as exc:
+        SetInvestmentSettings(uow).execute(
+            broker.id, AssetClass.FIXED_INCOME, False, tracking=InvestmentTracking.ACCOUNT
+        )
+    assert exc.value.code == "TRACKING_HAS_HOLDINGS"
+    switched = SetInvestmentSettings(uow).execute(
+        broker.id,
+        AssetClass.FIXED_INCOME,
+        False,
+        tracking=InvestmentTracking.ACCOUNT,
+        force_cleanup=True,
+    )
+    assert switched.tracking is InvestmentTracking.ACCOUNT
+    kept = uow.holdings.get(cdb.id)
+    assert kept and kept.status is HoldingStatus.REDEEMED  # archived, still there
+
+
+def test_forcing_the_switch_to_notes_keeps_the_account_valuations_as_history(
+    uow: MemoryUnitOfWork, savings: Account
+) -> None:
+    RecordBalance(uow).execute(RecordBalanceCommand(savings.id, D(2026, 1, 31), 100_000))
+    with pytest.raises(DomainError) as exc:
+        SetInvestmentSettings(uow).execute(
+            savings.id, AssetClass.OTHER, False, tracking=InvestmentTracking.HOLDINGS
+        )
+    assert exc.value.code == "TRACKING_HAS_VALUATIONS"
+    SetInvestmentSettings(uow).execute(
+        savings.id,
+        AssetClass.OTHER,
+        False,
+        tracking=InvestmentTracking.HOLDINGS,
+        force_cleanup=True,
+    )
+    assert len(uow.anchors.list_for_account(savings.id)) == 1  # nothing was deleted

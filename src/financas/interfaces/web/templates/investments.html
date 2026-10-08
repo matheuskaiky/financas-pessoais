@@ -74,7 +74,15 @@
               <label class="field"><span>Classe</span>
                 <select name="asset_class">{% for k in asset_classes %}<option value="{{ k.value }}" {{ 'selected' if v.account.asset_class == k }}>{{ asset_labels[k] }}</option>{% endfor %}</select></label>
               <label class="field"><span>Controle</span>
-                <select name="tracking">{% for t in trackings %}<option value="{{ t.value }}" {{ 'selected' if v.account.tracking == t }}>{{ tracking_labels[t] }}</option>{% endfor %}</select></label>
+                <select name="tracking">{% for t in trackings|reverse %}<option value="{{ t.value }}" {{ 'selected' if v.account.tracking == t }}>{{ tracking_option_labels[t] }}</option>{% endfor %}</select></label>
+              {% set stats = capital_by_account[v.account.id] %}
+              {% if v.account.tracking.value == 'holdings' and stats.active_holdings %}
+              <p class="callout warn" role="note" data-tracking-note>Esta conta possui {{ stats.active_holdings }} aplicação(ões) ativa(s). Para alternar para Controle Global, é necessário encerrar ou excluir as aplicações existentes primeiro.</p>
+              <label class="check"><input type="checkbox" name="force_cleanup" value="1"> Arquivar as aplicações e trocar (ficam no histórico, fora dos totais)</label>
+              {% elif v.account.tracking.value == 'account' and stats.valuations %}
+              <p class="callout info" role="note" data-tracking-note>Esta conta possui {{ stats.valuations }} avaliação(ões) de saldo da conta inteira. Ao passar para Controle por Notas elas ficam guardadas no histórico, mas deixam de contar.</p>
+              <label class="check"><input type="checkbox" name="force_cleanup" value="1"> Trocar mesmo assim</label>
+              {% endif %}
               <label class="check"><input type="checkbox" name="emergency" value="1" {{ 'checked' if v.account.is_emergency_fund }}> Reserva de emergência</label>
               <button type="submit" class="secondary">Salvar</button>
             </form></details></td>
@@ -158,14 +166,21 @@
   </div>
 </div>
 
+<section class="panel" id="capital" aria-labelledby="h-capital">
+  <h2 id="h-capital">Movimentações de Capital</h2>
+  <p class="soft">Aportes e resgates: transferências para e das suas contas de investimento. Não contam como receita nem despesa.</p>
+  {% with movements = all_movements, show_account = true, holding_names = holding_names_all %}{% include "_capital_movements.html" %}{% endwith %}
+</section>
+
 {% set holding_accounts = investment_accounts|selectattr('tracking.value', 'equalto', 'holdings')|list %}
 <section class="panel" id="holdings" aria-labelledby="h-hold">
   <h2 id="h-hold">Aplicações</h2>
   {% if holding_accounts %}
   <p class="soft" style="margin: -6px 0 0">Conta controlada por aplicação · valor líquido de resgate. O contrato é só para exibição: o sistema não calcula imposto nem projeta o valor no vencimento.</p>
   {% for a in holding_accounts %}
-  <h3>{{ a.nickname }} <small class="soft">· {{ institutions[a.institution_id].name }}</small></h3>
   {% set mine = holdings|selectattr('holding.account_id', 'equalto', a.id)|list %}
+  {% set cap = capital_by_account[a.id] %}
+  {% set notes_html %}
   {% if mine %}
   <div class="table-scroll">
   <table class="rtable">
@@ -216,13 +231,15 @@
   </table>
   </div>
   {% else %}<p class="empty">Nenhuma aplicação nesta conta ainda.</p>{% endif %}
+  {% endset %}
+  {% include "_capital_account.html" %}
   {% endfor %}
-  <details {{ 'open' if not holdings }}>
+  <details id="nova-aplicacao" {{ 'open' if (not holdings) or allocate_account }}>
     <summary>Nova aplicação</summary>
     <form method="post" action="/investments/holdings" class="grid-form">
       <label class="field wide"><span>Nome</span><input type="text" name="name" required maxlength="160" placeholder="CDB Banco X 110% CDI"></label>
       <label class="field"><span>Conta</span>
-        <select name="account_id">{% for a in holding_accounts %}<option value="{{ a.id }}">{{ a.nickname }}</option>{% endfor %}</select></label>
+        <select name="account_id">{% for a in holding_accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == allocate_account }}>{{ a.nickname }}</option>{% endfor %}</select></label>
       <label class="field"><span>Tipo</span>
         <select name="instrument_type">{% for t in instrument_types %}<option value="{{ t.value }}">{{ instrument_labels[t] }}</option>{% endfor %}</select></label>
       <label class="field"><span>Emissor</span>
@@ -241,11 +258,12 @@
       <label class="field"><span>FGC</span>
         <select name="fgc"><option value="">Sugestão do tipo</option><option value="yes">Coberta</option><option value="no">Não coberta</option></select></label>
       <label class="check"><input type="checkbox" name="emergency" value="1"> Reserva de emergência</label>
-      <label class="check"><input type="checkbox" name="contribute" value="1"> Registrar também o aporte do valor aplicado</label>
+      <label class="check"><input type="checkbox" name="contribute" value="1"> Registrar também o aporte (dinheiro novo vindo da conta corrente)</label>
       <label class="field"><span>Conta corrente que pagou</span>
         <select name="from_account_id"><option value="">Conta não controlada</option>{% for b in checking_accounts %}<option value="{{ b.id }}">{{ b.nickname }}</option>{% endfor %}</select></label>
       <button type="submit">Salvar aplicação</button>
     </form>
+    <p class="hint">Sem marcar o aporte, o valor sai do <strong>saldo livre</strong> da conta (dinheiro que já chegou por transferência). Marcado, o sistema também lança a transferência da conta corrente.</p>
     <p class="hint">O sistema sugere a cobertura do FGC pelo tipo, mas a decisão é sua. Confirme as regras do produto com a instituição.</p>
   </details>
   {% else %}

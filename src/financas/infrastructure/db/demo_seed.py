@@ -335,6 +335,8 @@ class _Builder:
                 rate_bps=10,
                 maturity_on=dt.date(2029, 3, 1),
                 is_emergency_fund=True,
+                contribute=True,  # the principal came from a transfer: nothing is unfunded
+                from_account_id=self.bb_checking,
             )
         )
         cdb = RegisterHolding(self.uow).execute(
@@ -350,6 +352,8 @@ class _Builder:
                 rate_mode=RateMode.PERCENT_OF_INDEX,
                 rate_bps=10_000,
                 maturity_on=dt.date(2027, 12, 10),
+                contribute=True,
+                from_account_id=self.bb_checking,
             )
         )
         self.selic, self.cdb = selic.id, cdb.id
@@ -807,6 +811,16 @@ class _Builder:
                 returned.description,
                 is_refunded=True,
                 acknowledge_closed=True,  # its statement may already be closed: this is the seed
+            )
+        )
+        # money that reached the investment account and waits for a note: the free cash
+        RegisterTransfer(self.uow).execute(
+            RegisterTransferCommand(
+                self.bb_checking,
+                self.invest,
+                back(5),
+                300_000,
+                "Aporte aguardando alocação (Renda fixa)",
             )
         )
         # a transfer typed as two separate one-sided legs (an old import): the command

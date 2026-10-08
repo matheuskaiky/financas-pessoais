@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import avatar, dot, day_group_header, merchant_input, merchant_datalist %}
+{% from "_macros.html" import avatar, dot, day_net_header, merchant_input, merchant_datalist %}
 {% from "_ui.html" import odometer, state_empty %}
 {% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Lançamentos{% endblock %}
@@ -69,9 +69,8 @@
       {% if rows %}
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
       {% for day, day_entries in rows|groupby('posted_on')|reverse %}
-      {% set spent = day_entries|selectattr('kind.value', 'in', ['expense', 'refund'])|rejectattr('is_refunded')|list %}
       <div class="day-group">
-        {{ day_group_header(day, (-(spent|sum(attribute='amount_cents')) if spent else none), 'Gastos do dia') }}
+        {{ day_net_header(day, day_totals[day]) }}
         {% for t in day_entries %}{% include "_entry_row.html" %}{% endfor %}
       </div>
       {% endfor %}
@@ -156,7 +155,7 @@
           </select></label>
         <label class="field" data-transfer-holding hidden><span data-transfer-holding-label>Destino do aporte</span>
           <select name="holding_id">
-            <option value="" data-free>Saldo livre da conta / corretora</option>
+            <option value="" data-free>Saldo livre da conta / corretora (alocar depois)</option>
             {% for h in transfer_holdings %}<option value="{{ h.id }}" data-account="{{ h.account_id }}" {{ 'selected' if form.holding_id == h.id }}>{{ h.name }}</option>{% endfor %}
           </select>
           <small class="hint"><a href="/investments#holdings">+ Nova nota de investimento</a></small></label>
