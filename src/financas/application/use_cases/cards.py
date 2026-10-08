@@ -13,7 +13,7 @@ from financas.application.use_cases._cards import (
     ensure_statement,
     require_card,
 )
-from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases._common import UNSET, Unset, entry_title, found, new_id
 from financas.application.use_cases.deletion import PlanDeletion, delete_plan_pending
 from financas.application.use_cases.transactions import SplitItem, checked_split_item
 from financas.domain.errors import DomainError
@@ -272,15 +272,17 @@ class RegisterCardPurchase:
         self._uow = uow
 
     def execute(self, cmd: CardPurchaseCommand) -> PurchaseResult:
-        description = clean_text(cmd.description)
-        if not description:
-            raise DomainError("EMPTY_DESCRIPTION")
-        description, merchant = settle_description(description, clean_merchant(cmd.merchant))
+        description = clean_text(cmd.description)  # blank: the category names the purchase (below)
+        merchant = clean_merchant(cmd.merchant)
+        if description:
+            description, merchant = settle_description(description, merchant)
         if cmd.splits and cmd.category_id:  # the items carry the categories: the purchase has none
             raise DomainError("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS")
         with self._uow as uow:
             card, preview = _build_preview(uow, cmd)
             category_id = None if cmd.splits else _default_category_id(uow, cmd.category_id)
+            chosen = uow.categories.get(category_id) if category_id else None
+            description = entry_title(description, chosen if cmd.category_id else None)
             items = [
                 (*checked_split_item(uow, TransactionKind.EXPENSE, item), abs(item.amount_cents))
                 for item in cmd.splits

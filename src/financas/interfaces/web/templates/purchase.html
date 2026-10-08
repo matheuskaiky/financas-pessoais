@@ -22,7 +22,7 @@
           {% for a in card_list %}<option value="{{ a.id }}" {{ 'selected' if form.account_id == a.id }}>{{ a.nickname }} · vence dia {{ a.due_day }} · fecha {{ a.closing_days_before_due }} dias antes</option>{% endfor %}
         </select></label>
       <label class="field"><span>Data da compra</span><input type="date" name="date" value="{{ form.date }}"></label>
-      <label class="field wide"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" required maxlength="300" autocomplete="off"></label>
+      <label class="field wide"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" maxlength="300" placeholder="Em branco: usa a categoria" autocomplete="off"></label>
       {{ merchant_input(form.merchant, wide=true) }}
       <label class="field"><span>Categoria</span>
         <select name="category_id" {{ 'disabled' if form_items }}>

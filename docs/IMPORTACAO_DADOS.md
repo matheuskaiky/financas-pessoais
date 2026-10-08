@@ -142,7 +142,7 @@ Column names are in English; the Portuguese aliases are accepted in the header.
 | `installment_number` | `parcela_atual` | Integer, the current installment (default 1). Only with `installments`. | never |
 | `amount_type` | `tipo_valor` | `total` (default) or `installment` (`parcela`). Only with `installments` of 2 or more. | never |
 | `gross_amount` | `valor_bruto` | Money. Only on a `balance` of an **investment** account. | never |
-| `payment_method` | `metodo_pagamento`, `metodo`, `forma_pagamento` | How it was paid: `pix`, `debito`, `boleto`, `transferencia` (`ted`, `doc`), `dinheiro`, `outro`, and `cartao_credito` (only on a card). Case and accents ignored. Blank: see section 7.10. Only `expense`, `income`, `refund`. | never |
+| `payment_method` | `metodo_pagamento`, `metodo`, `forma_pagamento` | How it was paid: `pix`, `debito`, `boleto`, `ted`, `transferencia` (`doc` and other transfers), `dinheiro`, `outro`, and `cartao_credito` (only on a card). An `income` takes no `debito` or `boleto`. Case and accents ignored. Blank: see section 7.10. Only `expense`, `income`, `refund`. | never |
 | `merchant` | `estabelecimento` | Free text, up to 120 characters: where the money went. A known alias (`mercadolivre`) becomes its canonical name. | never |
 | `refunded` | `estornado`, `estornada` | Boolean (5.3). An `expense` kept on record but counted nowhere. Never on installments. | never |
 | `group` | `id_agrupamento`, `agrupamento`, `grupo` | An id shared by **consecutive rows** = ONE itemized purchase: the first row is the purchase (date, account, total, no category), the next rows are its items (description, category, amount). The items must add up to the total, to the cent. Works on a card **and on a checking account** (PIX, debit, boleto...). | never |
@@ -397,7 +397,7 @@ it, in this order, and only for `expense`, `income` and `refund`:
 1. the account is a **card** → `cartao_credito` (always; a card entry cannot carry another method);
 2. the **description** points to one (accents and case ignored): `PIX…` → `pix`;
    `PAGTO ELETRON COBRANCA`, `boleto` → `boleto`; `COMPRA DEBITO`, `compra no débito` → `debito`;
-   `TED`, `DOC` → `transferencia`;
+   `TED` → `ted`, `DOC` → `transferencia`;
 3. otherwise → `pix` (the most common way on a bank account today).
 
 A typed value always wins over the wording. A method that does not fit the account (`pix` on a card,
@@ -516,7 +516,7 @@ the app (for example `ACCOUNT_INACTIVE`) are the same as in the app.
 | `SIGN_KIND_MISMATCH` | The sign contradicts the kind. | Section 5.2. |
 | `INVALID_BOOLEAN` | Not a yes/no value. | `sim`/`não`, `yes`/`no`, `1`/`0`, `x`, blank. |
 | `INVALID_CHOICE` | Unknown `kind` or `amount_type`. | Use the listed values. |
-| `INVALID_PAYMENT_METHOD` | Unknown `payment_method`, or one that does not fit the account (a bank method on a card, `cartao_credito` on a bank account). | Use `pix`, `debito`, `boleto`, `transferencia`, `dinheiro`, `outro` (bank) or leave blank. |
+| `INVALID_PAYMENT_METHOD` | Unknown `payment_method`, or one that does not fit the account (a bank method on a card, `cartao_credito` on a bank account, `debito` or `boleto` on an income). | Use `pix`, `debito`, `boleto`, `ted`, `transferencia`, `dinheiro`, `outro` (bank) or leave blank. |
 | `INVALID_YEAR_MONTH` | `statement` is not `YYYY-MM`. | `2026-09`, not `09/2026`. |
 | `INVALID_NUMBER` | `installments`/`installment_number` is not a plain integer. | Digits only. |
 | `INVALID_INSTALLMENT_COUNT` | `installments` outside 1 to 120. | Fix. |

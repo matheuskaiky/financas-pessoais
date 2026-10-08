@@ -54,5 +54,8 @@ def test_quick_form_shows_the_method_and_the_items_editor_by_kind_and_account() 
         "toggle turned off by the kind switch",
         "parent category unlocked again",
         "no orphan items are sent",
+        "income options",
+        "boleto falls back to pix on income",
+        "ted falls back to pix on expense",
     ):
         assert f"PASS {name}" in report, name

@@ -111,7 +111,7 @@
         <small>Aceita vírgula decimal</small></label>
 
       <label class="field"><span>Descrição</span>
-        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off"
+        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Opcional: em branco usa a categoria"
                hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
                hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
       </label>
@@ -140,7 +140,7 @@
       </div>
 
       {% set chosen_account = entry_accounts|selectattr('id', 'equalto', form.account_id)|first %}
-      {% with method_current = form.payment_method, method_hidden = (form.kind == 'transfer' or (chosen_account is defined and chosen_account.kind.value == 'credit_card')) %}{% include "snippets/payment-method-field.html" %}{% endwith %}
+      {% with method_current = form.payment_method, method_kind = form.kind, method_hidden = (form.kind == 'transfer' or (chosen_account is defined and chosen_account.kind.value == 'credit_card')) %}{% include "snippets/payment-method-field.html" %}{% endwith %}
 
       <div class="only-transfer stack-form">
         <label class="field"><span>De</span>

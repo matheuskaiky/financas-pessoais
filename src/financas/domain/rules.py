@@ -37,6 +37,10 @@ def validate_sign(kind: TransactionKind, amount_cents: int) -> None:
         raise DomainError("SIGN_KIND_MISMATCH", kind=kind.value)
 
 
+# money coming in is not paid with a debit card or a boleto
+EXPENSE_ONLY_METHODS = (PaymentMethod.DEBIT, PaymentMethod.BOLETO)
+
+
 def validate_payment_method(
     account_kind: AccountKind, kind: TransactionKind, method: PaymentMethod | None
 ) -> PaymentMethod | None:
@@ -52,6 +56,7 @@ def validate_payment_method(
         account_kind is not AccountKind.CHECKING
         or kind is TransactionKind.TRANSFER
         or method not in BANK_PAYMENT_METHODS
+        or (kind is TransactionKind.INCOME and method in EXPENSE_ONLY_METHODS)
     ):
         raise DomainError("INVALID_PAYMENT_METHOD")
     return method

@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 
 from financas.application.queries.cards import StatementView, is_locked, statement_view
 from financas.application.use_cases._cards import assignment_for, ensure_statement, require_card
-from financas.application.use_cases._common import UNSET, Unset, found, new_id
+from financas.application.use_cases._common import UNSET, Unset, entry_title, found, new_id
 from financas.application.use_cases.deletion import delete_entry
 from financas.application.use_cases.plan_dates import reschedule_plan
 from financas.domain.errors import DomainError
@@ -98,9 +98,7 @@ class RegisterTransaction:
         if cmd.kind is TransactionKind.TRANSFER:
             raise DomainError("USE_TRANSFER_FOR_TRANSFERS")
         magnitude = _magnitude(cmd.amount_cents)
-        description = clean_text(cmd.description)
-        if not description:
-            raise DomainError("EMPTY_DESCRIPTION")
+        description = clean_text(cmd.description)  # blank: the category names the entry (below)
         amount = -magnitude if cmd.kind is TransactionKind.EXPENSE else magnitude
         validate_sign(cmd.kind, amount)
         if cmd.splits and cmd.kind is not TransactionKind.EXPENSE:
@@ -110,7 +108,7 @@ class RegisterTransaction:
         if cmd.is_refunded and cmd.kind is not TransactionKind.EXPENSE:
             raise DomainError("REFUND_ONLY_FOR_EXPENSES")
         merchant = clean_merchant(cmd.merchant)
-        if cmd.kind is TransactionKind.EXPENSE:  # "Mouse Gamer - Kabum" -> merchant Kabum
+        if description and cmd.kind is TransactionKind.EXPENSE:  # "Mouse Gamer - Kabum" -> Kabum
             description, merchant = settle_description(description, merchant)
         with self._uow as uow:
             account = found(uow.accounts.get(cmd.account_id), "account")
@@ -131,6 +129,7 @@ class RegisterTransaction:
                 for item in cmd.splits
             ]
             category_id: str | None = None
+            category: Category | None = None
             if items:
                 validate_split_amounts(magnitude, [cents for _, _, cents in items])
             else:
@@ -142,6 +141,7 @@ class RegisterTransaction:
                     category = found(uow.categories.get(cmd.category_id), "category")
                 validate_category_kind(cmd.kind, category.kind)
                 category_id = category.id
+            description = entry_title(description, category if cmd.category_id else None)
             transaction = Transaction(
                 id=new_id(),
                 account_id=cmd.account_id,
@@ -446,9 +446,7 @@ class UpdateTransaction:
 
     def execute(self, cmd: UpdateTransactionCommand) -> Transaction:
         magnitude = _magnitude(cmd.amount_cents)
-        description = clean_text(cmd.description)
-        if not description:
-            raise DomainError("EMPTY_DESCRIPTION")
+        description = clean_text(cmd.description)  # blank: the category names the entry (below)
         with self._uow as uow:
             entry = found(uow.transactions.get(cmd.transaction_id), "transaction")
             if entry.kind is TransactionKind.TRANSFER:
@@ -476,6 +474,7 @@ class UpdateTransaction:
             existing_items = uow.transactions.splits_for([entry.id]).get(entry.id, [])
             itemized = bool(cmd.splits) if cmd.splits is not None else bool(existing_items)
             category_id: str | None
+            category: Category | None = None
             if itemized:
                 # the items carry the categories: the entry itself has none (CLAUDE.md 9.10)
                 if entry.kind is not TransactionKind.EXPENSE:
@@ -496,8 +495,11 @@ class UpdateTransaction:
                 entry.merchant if isinstance(cmd.merchant, Unset) else clean_merchant(cmd.merchant)
             )
             final_description = description
-            if entry.kind is TransactionKind.EXPENSE and not merchant:  # " - Merchant" suffix
-                final_description, merchant = settle_description(description, merchant)
+            if description and entry.kind is TransactionKind.EXPENSE and not merchant:
+                final_description, merchant = settle_description(
+                    description, merchant
+                )  # " - Merchant"
+            final_description = entry_title(final_description, None if itemized else category)
             method = validate_payment_method(
                 account.kind,
                 entry.kind,

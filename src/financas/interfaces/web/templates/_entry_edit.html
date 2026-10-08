@@ -49,7 +49,7 @@
         <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" value="{{ form.amount }}" required autocomplete="off"></span></label>
       {% if not state.is_installment %}<label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>{% endif %}
       {% if consolidated %}<label class="field"><span>Data da compra</span><input type="date" name="purchase_date" value="{{ form.purchase_date }}" required data-purchase-date><small class="hint" data-purchase-date-note>A alteração da data da compra reajustará os vencimentos das faturas pendentes.</small></label>{% endif %}
-      <label class="field grow"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" maxlength="300" required autocomplete="off"></label>
+      <label class="field grow"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Em branco: usa a categoria"></label>
       {{ merchant_input(form.merchant, wide=true) }}
       <label class="field"><span>Categoria</span>
         <select name="category_id" data-restore="{% for o in category_options if o.slug == 'uncategorized' %}{{ o.id }}{% endfor %}" {{ 'disabled' if form_items }}>
@@ -58,7 +58,7 @@
       {% if not state.is_installment %}<label class="field"><span>{{ 'Cartão' if state.statement else 'Conta' }}</span>
         <select name="account_id">{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.account_id }}>{{ a.nickname }}</option>{% endfor %}</select></label>{% endif %}
       <label class="field grow"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
-      {% if not state.statement and not state.is_installment %}{% with method_current = form.payment_method, method_hidden = false %}{% include "snippets/payment-method-field.html" %}{% endwith %}{% endif %}
+      {% if not state.statement and not state.is_installment %}{% with method_current = form.payment_method, method_kind = t.kind.value, method_hidden = false %}{% include "snippets/payment-method-field.html" %}{% endwith %}{% endif %}
     </div>
     {% if t.kind.value == 'expense' %}
     {% set split_items = form_items %}{% set split_categories = category_options %}

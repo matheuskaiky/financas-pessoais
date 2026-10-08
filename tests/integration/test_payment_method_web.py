@@ -1,5 +1,6 @@
 """Payment method over HTTP: the form field, the badge, the edit form and the filter chips."""
 
+import datetime as dt
 import re
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,8 @@ from test_web import HX, add_expense, buy_on_card, make_card
 
 from financas.container import Container
 from financas.domain.models import Transaction
+
+TODAY = dt.date.today()
 
 
 def by_description(container: Container, account: str) -> dict[str, Transaction]:
@@ -244,3 +247,124 @@ def test_a_chip_swap_replaces_the_filter_bar_too_so_limpar_filtros_is_never_stal
     region = page[page.index('id="entries-results"') :]
     assert 'class="filter-bar"' in region.split('class="method-chips"')[0]  # bar is inside
     assert "Limpar filtros" in region and 'name="method" value="pix"' in region
+
+
+# --- the options follow the direction of the money; the description is optional ---
+
+
+def visible_options(html: str) -> list[str]:
+    block = html[html.index("data-method-field") :]
+    block = block[: block.index("</fieldset>")]
+    found = re.findall(
+        r'<label data-kinds="[^"]*"( hidden)?><input type="radio" name="payment_method" '
+        r'value="(\w+)"([^>]*)><span>([^<]*)</span>',
+        block,
+    )
+    return [label for hidden, _, _, label in found if not hidden]
+
+
+def test_the_edit_form_offers_pix_ted_outro_for_an_income_and_the_four_for_an_expense(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = make_card(client, container)
+    add_expense(client, checking, description="Mercado", payment_method="boleto")
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "date": "2026-07-05",
+            "amount": "100,00",
+            "description": "Cliente",
+            "account_id": checking,
+            "payment_method": "ted",
+        },
+    )
+    by_name = by_description(container, checking)
+    assert str(by_name["Cliente"].payment_method) == "ted"
+    income = client.get(f"/entries/{by_name['Cliente'].id}/edit", headers=HX).text
+    assert visible_options(income) == ["PIX", "TED", "Outro"]
+    assert re.search(r'name="payment_method" value="ted"\s*checked', income)
+    expense = client.get(f"/entries/{by_name['Mercado'].id}/edit", headers=HX).text
+    assert visible_options(expense) == ["PIX", "Débito", "Boleto", "Outro"]
+    assert re.search(r'name="payment_method" value="boleto"\s*checked', expense)
+
+
+def test_the_quick_form_ships_both_option_sets_and_the_script_switches_them(
+    client: TestClient, container: Container
+) -> None:
+    make_card(client, container)
+    page = client.get("/entries").text
+    assert visible_options(page) == ["PIX", "Débito", "Boleto", "Outro"]  # "Despesa" is the default
+    block = page[page.index("data-method-field") :].split("</fieldset>")[0]
+    assert (
+        'data-kinds="income" hidden><input type="radio" name="payment_method" value="ted"' in block
+    )
+    assert 'data-kinds="expense income"' in block  # PIX and Outro serve both
+    prefilled = client.get("/entries?fill=1&f_kind=income&f_amount=10,00").text
+    assert visible_options(prefilled) == [
+        "PIX",
+        "TED",
+        "Outro",
+    ]  # an income draft starts on its side
+
+
+def test_an_income_by_debit_or_boleto_is_refused_with_a_message(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = make_card(client, container)
+    answer = client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "date": "2026-07-05",
+            "amount": "100,00",
+            "description": "X",
+            "account_id": checking,
+            "payment_method": "boleto",
+        },
+    )
+    assert "Forma de pagamento inválida" in answer.text
+    assert by_description(container, checking) == {}
+
+
+def test_an_entry_with_no_description_is_titled_by_its_category(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = make_card(client, container)
+    with container.uow as work:
+        salary = work.categories.get_by_slug("salary")
+        groceries = work.categories.get_by_slug("groceries")
+    assert salary and groceries
+    for kind, category, amount in (
+        ("income", salary.id, "5.000,00"),
+        ("expense", groceries.id, "80,00"),
+    ):
+        done = client.post(
+            "/entries",
+            data={
+                "kind": kind,
+                "date": f"{TODAY}",
+                "amount": amount,
+                "description": "",
+                "category_id": category,
+                "account_id": checking,
+            },
+        )
+        assert done.status_code == 303
+    bare = client.post(
+        "/entries",
+        data={"kind": "expense", "date": f"{TODAY}", "amount": "9,00", "account_id": checking},
+    )
+    assert bare.status_code == 303
+    titles = set(by_description(container, checking))
+    assert titles == {"Salário", "Supermercado", "Sem descrição"}
+    page = client.get("/entries").text.split('id="lista"')[1]
+    assert "Salário" in page and "Supermercado" in page and "Sem descrição" in page
+    assert 'name="description"' in client.get("/entries").text
+    assert " required" not in re.search(
+        r'<input[^>]*name="description"[^>]*>', page + client.get("/entries").text
+    ).group(0)  # type: ignore[union-attr]
+    edit = client.get(
+        f"/entries/{by_description(container, checking)['Supermercado'].id}/edit", headers=HX
+    ).text
+    assert " required" not in re.search(r'<input[^>]*name="description"[^>]*>', edit).group(0)  # type: ignore[union-attr]

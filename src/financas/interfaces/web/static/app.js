@@ -458,6 +458,19 @@ document.body.addEventListener("fp:notice", function (event) {
     var show = !(kind && kind.value === "transfer") && accountKind !== "credit_card";
     field.hidden = !show;
     field.disabled = !show;
+    // the options follow the direction of the money: expense PIX | Débito | Boleto | Outro, income
+    // PIX | TED | Outro; a choice that does not exist on this side falls back to PIX
+    var side = kind && kind.value === "income" ? "income" : "expense";
+    field.querySelectorAll("label[data-kinds]").forEach(function (label) {
+      var offered = label.getAttribute("data-kinds").split(" ").indexOf(side) > -1;
+      label.hidden = !offered;
+      label.querySelector("input").disabled = !offered;
+    });
+    var checked = field.querySelector("input:checked:not(:disabled)");
+    if (!checked) {
+      var pix = field.querySelector('input[value="pix"]');
+      if (pix) pix.checked = true;
+    }
   }
   // The items editor is for expenses only: switching to another kind turns it off, drops its rows
   // and gives the parent's category back, so no orphan items are sent.

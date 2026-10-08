@@ -232,7 +232,7 @@ def test_editing_the_purchase_date_and_the_installment_is_one_atomic_edit(
     with pytest.raises(DomainError):  # a refused edit changes nothing
         UpdateTransaction(uow, FixedClock(TODAY)).execute(
             UpdateTransactionCommand(
-                entries[0].id, entries[0].posted_on, 15_000, "   ", purchase_date=D(2026, 7, 1)
+                entries[0].id, entries[0].posted_on, 0, "Monitor novo", purchase_date=D(2026, 7, 1)
             )
         )
     assert fresh(uow, result.plan.id)[0].posted_on == D(2026, 7, 26)

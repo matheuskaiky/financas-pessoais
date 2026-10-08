@@ -830,3 +830,48 @@ def test_payment_method_migration_marks_card_entries_and_leaves_bank_entries_bla
         assert "payment_method" not in [r[1] for r in db.execute("pragma table_info(transactions)")]
         assert db.execute("select count(*) from transactions").fetchone() == (3,)
     command.upgrade(config, "head")
+
+
+def test_ted_migration_widens_the_check_and_downgrade_keeps_the_rows(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    url = f"sqlite:///{tmp_path / 'f.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "c0f6a8b3d5e7")  # the schema before ``ted``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute("insert into institutions (id, slug, name) values ('i', 'bb', 'BB')")
+    raw.execute(
+        "insert into accounts (id, kind, institution_id, nickname, is_active)"
+        " values ('a', 'checking', 'i', 'CC', 1)"
+    )
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'salary', 'Salário', 'income', 'income')"
+    )
+    raw.execute(
+        "insert into transactions (id, account_id, posted_on, kind, category_id, amount_cents,"
+        " description, description_search, is_recurring, payment_method)"
+        " values ('t1', 'a', '2026-07-01', 'income', 'c', 1000, 'x', 'x', 0, 'pix')"
+    )
+    raw.commit()
+    with pytest.raises(sqlite3.IntegrityError):  # before: no such method
+        raw.execute("update transactions set payment_method = 'ted' where id = 't1'")
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select id, payment_method from transactions").fetchall() == [
+            ("t1", "pix")
+        ]
+        db.execute("update transactions set payment_method = 'ted' where id = 't1'")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("update transactions set payment_method = 'cheque' where id = 't1'")
+
+    command.downgrade(config, "c0f6a8b3d5e7")
+    with sqlite3.connect(tmp_path / "f.db") as db:  # a TED becomes the generic transfer
+        assert db.execute("select payment_method from transactions").fetchall() == [
+            ("transferencia",)
+        ]
+    command.upgrade(config, "head")

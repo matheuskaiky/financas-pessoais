@@ -24,7 +24,8 @@ class PaymentMethod(StrEnum):
     PIX = "pix"
     DEBIT = "debito"
     BOLETO = "boleto"
-    TRANSFER = "transferencia"  # TED, DOC to a third party
+    TED = "ted"  # a TED: what an employer, a client or a person sends to the account
+    TRANSFER = "transferencia"  # DOC and other transfers to or from a third party
     CASH = "dinheiro"
     OTHER = "outro"
     CREDIT_CARD = "cartao_credito"
@@ -34,6 +35,7 @@ BANK_PAYMENT_METHODS = (
     PaymentMethod.PIX,
     PaymentMethod.DEBIT,
     PaymentMethod.BOLETO,
+    PaymentMethod.TED,
     PaymentMethod.TRANSFER,
     PaymentMethod.CASH,
     PaymentMethod.OTHER,

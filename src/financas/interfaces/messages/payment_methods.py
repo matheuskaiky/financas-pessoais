@@ -6,6 +6,7 @@ PAYMENT_METHOD_LABELS: dict[PaymentMethod, str] = {
     PaymentMethod.PIX: "PIX",
     PaymentMethod.DEBIT: "Débito",
     PaymentMethod.BOLETO: "Boleto",
+    PaymentMethod.TED: "TED",
     PaymentMethod.TRANSFER: "Transferência",
     PaymentMethod.CASH: "Dinheiro",
     PaymentMethod.OTHER: "Outro",

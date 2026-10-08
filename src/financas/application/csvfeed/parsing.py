@@ -91,7 +91,7 @@ PAYMENT_METHOD_ALIASES: dict[str, PaymentMethod] = {
     "debit": PaymentMethod.DEBIT,
     "boleto": PaymentMethod.BOLETO,
     "transferencia": PaymentMethod.TRANSFER,
-    "ted": PaymentMethod.TRANSFER,
+    "ted": PaymentMethod.TED,
     "doc": PaymentMethod.TRANSFER,
     "transfer": PaymentMethod.TRANSFER,
     "dinheiro": PaymentMethod.CASH,

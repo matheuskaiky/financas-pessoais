@@ -402,7 +402,7 @@ def test_a_typed_payment_method_is_stored_with_every_alias_of_the_column(
             "Feira": "pix",
             "Condomínio": "boleto",
             "Padaria Pão Quente": "debito",
-            "Taxa": "transferencia",
+            "Taxa": "ted",
         }, header
 
 

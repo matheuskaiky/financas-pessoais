@@ -186,9 +186,6 @@ def test_purchase_validation(uow: MemoryUnitOfWork, card: Account, checking: Acc
         )
     assert codes(exc) == "INSTALLMENT_OUT_OF_RANGE"
     with pytest.raises(DomainError) as exc:
-        buy(uow, card, purchased_on=D(2026, 7, 1), total_cents=1_000, description="  ")
-    assert codes(exc) == "EMPTY_DESCRIPTION"
-    with pytest.raises(DomainError) as exc:
         buy(uow, checking, purchased_on=D(2026, 7, 1), total_cents=1_000)
     assert codes(exc) == "CARD_REQUIRED"
     income = uow.categories.get_by_slug("salary")

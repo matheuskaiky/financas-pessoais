@@ -1,11 +1,17 @@
-{# "Forma de pagamento" of an entry on a checking account: PIX | Débito | Boleto | Outro.
-   Needs: method_current ("" = none yet: PIX is pre-selected), method_hidden (true when the account
-   is a card or the entry a transfer: the radios are then disabled and not sent). #}
+{# "Forma de pagamento" of an entry on a checking account. The options follow the direction of the money:
+   an expense is paid with PIX | Débito | Boleto | Outro, an income arrives by PIX | TED | Outro.
+   Needs: method_current ("" = none yet: PIX is pre-selected), method_hidden (true when the account is a card
+   or the entry a transfer: the radios are then disabled and not sent), method_kind (the entry kind: "income"
+   shows the income options, anything else the expense ones; the quick form switches them in static/app.js). #}
+{% set side = 'income' if method_kind == 'income' else 'expense' %}
 {% set current = method_current or method_default.value %}
+{% set options = [('pix', 'expense income'), ('debito', 'expense'), ('boleto', 'expense'), ('ted', 'income'), ('outro', 'expense income')] %}
+{% set known = options|map(attribute=0)|list %}
 <fieldset class="field method-field" data-method-field{% if method_hidden %} hidden disabled{% endif %}>
   <legend>Forma de pagamento</legend>
   <div class="segmented" role="radiogroup" aria-label="Forma de pagamento">
-    {% for m in method_form_options %}<label><input type="radio" name="payment_method" value="{{ m.value }}" {{ 'checked' if current == m.value }}><span>{{ method_labels[m] }}</span></label>{% endfor %}
-    {% if current not in method_form_options|map(attribute='value')|list %}<label><input type="radio" name="payment_method" value="{{ current }}" checked><span>{{ method_labels.get(current, current) }}</span></label>{% endif %}
+    {% for code, kinds in options %}{% set shown = side in kinds.split() %}
+    <label data-kinds="{{ kinds }}"{% if not shown %} hidden{% endif %}><input type="radio" name="payment_method" value="{{ code }}" {{ 'checked' if current == code and shown }}{{ ' disabled' if not shown }}><span>{{ method_labels.get(code, code) }}</span></label>{% endfor %}
+    {% if current not in known %}<label><input type="radio" name="payment_method" value="{{ current }}" checked><span>{{ method_labels.get(current, current) }}</span></label>{% endif %}
   </div>
 </fieldset>

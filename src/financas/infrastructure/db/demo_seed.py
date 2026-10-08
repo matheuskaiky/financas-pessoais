@@ -369,7 +369,7 @@ class _Builder:
             890_000,
             "Salário CLT",
             "salary",
-            PaymentMethod.TRANSFER,  # a TED from the employer
+            PaymentMethod.TED,  # a TED from the employer
         )
         if n == 3:
             self.earn(
@@ -378,7 +378,7 @@ class _Builder:
                 520_000,
                 "Participação nos lucros",
                 "other_income",
-                PaymentMethod.TRANSFER,
+                PaymentMethod.TED,
             )
         fixed = (  # (day, cents, description, category, merchant)
             (6, 235_000, "Aluguel", "home", "Imobiliária Central"),

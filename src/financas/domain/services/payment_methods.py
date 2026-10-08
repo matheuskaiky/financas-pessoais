@@ -24,7 +24,8 @@ _KEYWORDS: tuple[tuple[PaymentMethod, tuple[str, ...]], ...] = (
             "debito em conta",
         ),
     ),
-    (PaymentMethod.TRANSFER, ("ted ", " ted", "doc ", "transf ted", "transferencia ted")),
+    (PaymentMethod.TED, (" ted ", "transf ted", "transferencia ted")),
+    (PaymentMethod.TRANSFER, (" doc ", "doc ")),
     (PaymentMethod.PIX, ("pix",)),
 )
 

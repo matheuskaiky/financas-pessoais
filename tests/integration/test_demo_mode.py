@@ -806,7 +806,7 @@ def test_the_demo_shows_every_payment_method_and_the_filters_find_them(demo: Con
     debit = by_description["Padaria Pão Quente"]
     assert (debit.amount_cents, str(debit.payment_method)) == (-3_250, "debito")
     methods = {str(t.payment_method) for t in everything}
-    assert {"pix", "debito", "boleto", "transferencia", "cartao_credito"} <= methods
+    assert {"pix", "debito", "boleto", "ted", "transferencia", "cartao_credito"} <= methods
 
     client = TestClient(
         create_app(demo), base_url="http://localhost", follow_redirects=False, headers=HEADERS
