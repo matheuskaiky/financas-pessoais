@@ -284,3 +284,36 @@ def test_daily_flow_rules(uow: MemoryUnitOfWork, card: Account) -> None:
     with pytest.raises(DomainError) as exc:
         GetDailyFlow(uow).execute("nope", Period.month(YM(2026, 7)))
     assert exc.value.code == "NOT_FOUND"
+
+
+# --- neutral (pass-through) categories never consume a budget or count as a fixed cost ---
+
+
+def neutral_category(uow: MemoryUnitOfWork):
+    found = uow.categories.get_by_slug("third_party")  # seeded: "Reembolso / Terceiros"
+    assert found is not None and found.is_neutral
+    return found
+
+
+def test_a_neutral_expense_does_not_use_up_the_budget(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    third = neutral_category(uow)
+    spend(uow, checking, D(2026, 9, 5), 90_000, "third_party")  # far above its R$ 100 goal
+    spend(uow, checking, D(2026, 9, 6), 4_000, "home")
+    budget = GetBudget(uow, FixedClock(TODAY)).execute().budget
+    listed = {r.category_id: r for r in [*budget.with_goal, *budget.without_goal]}
+    assert third.id not in listed  # nothing was counted: no row, no alert, no overspending
+    assert listed[category(uow, "home")].months[2] == 4_000
+    assert budget.over_count == 0
+
+
+def test_a_recurring_neutral_expense_is_not_a_fixed_cost(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    neutral_category(uow)
+    for month in (7, 8, 9):
+        spend(uow, checking, D(2026, month, 5), 25_000, "third_party", "Conta de luz", True)
+        spend(uow, checking, D(2026, month, 6), 5_000, "telecom", "Internet", True)
+    items = GetRecurring(uow, FixedClock(TODAY)).execute().items
+    assert [i.label for i in items] == ["Internet"]

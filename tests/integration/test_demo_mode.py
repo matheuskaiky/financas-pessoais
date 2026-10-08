@@ -427,7 +427,9 @@ def test_every_entry_honors_the_domain_rules(demo: Container) -> None:
     for t in entries:
         validate_sign(t.kind, t.amount_cents)
         if t.category_id is not None:  # only an itemized expense has none: its items do
-            validate_category_kind(t.kind, categories[t.category_id].kind)
+            validate_category_kind(
+                t.kind, categories[t.category_id].kind, categories[t.category_id].is_neutral
+            )
         else:
             assert t.kind is TransactionKind.EXPENSE
         if t.statement_id is not None:  # statement x account
@@ -767,12 +769,49 @@ def test_demo_investment_account_shows_free_cash_applied_value_and_capital_movem
     (cap,) = GetCapitalOverview(demo.uow, demo.clock, 35).execute()
     position = cap.position
     assert position is not None
-    assert position.free_cash_cents == 300_000  # R$ 3.000,00 waiting for a note
+    assert position.free_cash_cents == 35_000  # R$ 350,00 waiting for a note
     assert position.unfunded_cents == 0 and not position.partial  # every principal was funded
     assert position.applied_value_cents > position.allocated_cost_cents > 0
     assert position.total_cents == position.free_cash_cents + position.applied_value_cents
     assert position.profit_cents == position.total_cents - position.net_inflow_cents > 0
     assert len(cap.movements) >= 6 and any(m.holding_id is None for m in cap.movements)
+
+
+def test_demo_has_a_pass_through_pair_that_changes_no_total_but_moves_the_bank(
+    demo: Container,
+) -> None:
+    from financas.application.queries.day_balances import GetDayBalances
+    from financas.application.queries.entries import day_totals
+    from financas.application.queries.summary import GetSummary, Period
+
+    with demo.uow as work:
+        third = work.categories.get_by_slug("third_party")
+        assert third and third.is_neutral and third.name == "Reembolso / Terceiros"
+        everything = work.transactions.list_between(dt.date.min, dt.date.max)
+    pair = [t for t in everything if t.category_id == third.id]
+    assert {t.description for t in pair} == {
+        "PIX recebido do Pai (conta de luz)",
+        "Pagamento de conta de luz do Pai",
+    }
+    assert sum(t.amount_cents for t in pair) == 0 and {t.amount_cents for t in pair} == {
+        25_000,
+        -25_000,
+    }
+    (day,) = {t.posted_on for t in pair}
+    same_day = [t for t in everything if t.posted_on == day]
+    assert len(same_day) == 2  # a day with nothing but the pass-through
+    assert day_totals(same_day, {third.id})[day].expense_cents == 0  # "Gastos do dia: R$ 0,00"
+    summary = GetSummary(demo.uow).execute(Period.month(YearMonth.from_date(day)))
+    assert summary.transit_out_cents >= 25_000 and summary.transit_in_cents >= 25_000
+    balances = GetDayBalances(demo.uow).execute([day], None)
+    assert balances[day].balance_cents is not None  # the ledger still runs through it
+
+
+def test_demo_accounts_and_cards_carry_their_own_colors(demo: Container) -> None:
+    with demo.uow as work:
+        colors = {a.nickname: a.color for a in work.accounts.list_all()}
+    assert all(colors.values()) and len(set(colors.values())) == len(colors)
+    assert colors["Nubank Conta"] == "#820AD1" and colors["Inter Black"] == "#FF7A00"
 
 
 def test_demo_has_a_legacy_transfer_pair_for_the_reconciliation_scanner(demo: Container) -> None:

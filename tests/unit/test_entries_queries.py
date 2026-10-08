@@ -6,12 +6,19 @@ import datetime as dt
 import pytest
 
 from financas.application.queries.entries import (
+    DayTotals,
     day_totals,
     filter_by_method,
     matches_method,
     parse_method_filter,
 )
-from financas.domain.models import AccountKind, PaymentMethod, Transaction, TransactionKind
+from financas.domain.models import (
+    AccountKind,
+    PaymentMethod,
+    Transaction,
+    TransactionKind,
+    TransactionSplit,
+)
 from financas.domain.services.payment_methods import default_payment_method, infer_payment_method
 
 PM = PaymentMethod
@@ -100,7 +107,7 @@ def _entry(kind: TransactionKind, cents: int, **kw: object) -> Transaction:
         account_id=str(kw.pop("account_id", "a1")),
         posted_on=dt.date.fromisoformat(str(kw.pop("day", _DAY))),
         kind=kind,
-        category_id="c",
+        category_id=kw.pop("category_id", "c"),  # type: ignore[arg-type]
         amount_cents=cents,
         description="x",
         description_search="x",
@@ -108,29 +115,21 @@ def _entry(kind: TransactionKind, cents: int, **kw: object) -> Transaction:
     )
 
 
-def test_a_day_with_only_expenses_is_negative() -> None:
+def test_a_day_with_only_expenses_has_no_income() -> None:
     totals = day_totals(
         [
             _entry(TransactionKind.EXPENSE, -12_000),
             _entry(TransactionKind.EXPENSE, -30_000, notes="b"),
         ]
     )
-    day = totals[_DAY]
-    assert (day.income_cents, day.expense_cents, day.net_cents) == (0, 42_000, -42_000)
-    assert day.has_spending
+    assert totals[_DAY] == DayTotals(0, 42_000)
 
 
-def test_income_and_expense_make_the_net_of_the_day() -> None:
+def test_income_and_spending_are_summed_apart() -> None:
     totals = day_totals(
         [_entry(TransactionKind.INCOME, 300_000), _entry(TransactionKind.EXPENSE, -120_000)]
     )
-    day = totals[_DAY]
-    assert (day.income_cents, day.expense_cents, day.net_cents) == (300_000, 120_000, 180_000)
-
-
-def test_a_day_with_only_income_has_no_spending() -> None:
-    day = day_totals([_entry(TransactionKind.INCOME, 5_000)])[_DAY]
-    assert (day.net_cents, day.has_spending) == (5_000, False)
+    assert totals[_DAY] == DayTotals(300_000, 120_000)
 
 
 def test_refunds_reduce_the_spending_and_refunded_purchases_count_nowhere() -> None:
@@ -141,20 +140,40 @@ def test_refunds_reduce_the_spending_and_refunded_purchases_count_nowhere() -> N
             _entry(TransactionKind.EXPENSE, -99_999, is_refunded=True),
         ]
     )[_DAY]
-    assert (day.expense_cents, day.net_cents) == (7_500, -7_500)
+    assert day.expense_cents == 7_500
 
 
-def test_transfers_stay_out_of_the_net_unless_the_list_is_one_account() -> None:
+def test_transfers_are_neither_income_nor_spending() -> None:
     legs = [
         _entry(TransactionKind.EXPENSE, -10_000),
         _entry(TransactionKind.TRANSFER, -50_000, notes="out"),
-        _entry(TransactionKind.TRANSFER, 20_000, notes="in", account_id="a1"),
+        _entry(TransactionKind.TRANSFER, 20_000, notes="in"),
     ]
-    mixed = day_totals(legs)[_DAY]
-    assert (mixed.income_cents, mixed.expense_cents, mixed.net_cents) == (0, 10_000, -10_000)
-    one_account = day_totals(legs, include_transfers=True)[_DAY]
-    assert one_account.net_cents == -10_000 - 50_000 + 20_000  # a transfer moves that account
-    assert (one_account.income_cents, one_account.expense_cents) == (0, 10_000)  # still not income
+    assert day_totals(legs)[_DAY] == DayTotals(0, 10_000)
+
+
+def test_a_neutral_category_is_left_out_of_the_days_spending_and_income() -> None:
+    entries = [
+        _entry(TransactionKind.EXPENSE, -50_000, category_id="third"),
+        _entry(TransactionKind.INCOME, 25_000, category_id="third", notes="pai"),
+        _entry(TransactionKind.EXPENSE, -1_000),
+    ]
+    assert day_totals(entries, {"third"})[_DAY] == DayTotals(0, 1_000)
+    assert day_totals(entries)[_DAY] == DayTotals(25_000, 51_000)  # without the flag it counts
+
+
+def test_a_day_with_only_neutral_money_spends_nothing() -> None:
+    entries = [_entry(TransactionKind.EXPENSE, -25_000, category_id="third")]
+    assert day_totals(entries, {"third"})[_DAY] == DayTotals(0, 0)
+
+
+def test_an_itemized_expense_leaves_out_only_its_neutral_items() -> None:
+    parent = _entry(TransactionKind.EXPENSE, -10_000, category_id=None)
+    items = [
+        TransactionSplit("s1", parent.id, "mercado", "food", 6_000),
+        TransactionSplit("s2", parent.id, "conta do pai", "third", 4_000),
+    ]
+    assert day_totals([parent], {"third"}, {parent.id: items})[_DAY].expense_cents == 6_000
 
 
 def test_every_day_is_summed_on_its_own_and_money_stays_an_int() -> None:
@@ -164,8 +183,8 @@ def test_every_day_is_summed_on_its_own_and_money_stays_an_int() -> None:
             _entry(TransactionKind.EXPENSE, -300, day="2026-07-10"),
         ]
     )
-    assert {d.isoformat(): t.net_cents for d, t in totals.items()} == {
-        "2026-07-09": 100,
-        "2026-07-10": -300,
+    assert {d.isoformat(): (t.income_cents, t.expense_cents) for d, t in totals.items()} == {
+        "2026-07-09": (100, 0),
+        "2026-07-10": (0, 300),
     }
-    assert all(isinstance(t.net_cents, int) for t in totals.values())
+    assert all(isinstance(t.expense_cents, int) for t in totals.values())

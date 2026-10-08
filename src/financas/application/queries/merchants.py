@@ -47,6 +47,10 @@ class MerchantsSummary:
     merchant_count: int  # distinct identified merchants in the period, before the limit
 
 
+def _is_neutral(categories: Mapping[str, Category], category_id: str) -> bool:
+    return category_id in categories and categories[category_id].is_neutral
+
+
 def _display_name(spellings: Counter[str]) -> str:
     """The most used spelling; ties go to the alphabetically first."""
     return sorted(spellings.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
@@ -64,6 +68,8 @@ def _row(
     per_category: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # id -> [entries, cents]
     for t in entries:
         for category_id, cents in allocations(t, splits):
+            if _is_neutral(categories, category_id):
+                continue  # pass-through money is nobody's category (9.14)
             per_category[category_id][0] += 1
             per_category[category_id][1] += -cents
     top = max(per_category.items(), key=lambda kv: (kv[1][0], kv[1][1], kv[0]), default=None)
@@ -88,7 +94,13 @@ def rank_merchants(
     period: Period,
     limit: int = DEFAULT_LIMIT,
 ) -> MerchantsSummary:
-    expenses = [t for t in transactions if t.kind is TransactionKind.EXPENSE and not t.is_refunded]
+    expenses = [
+        t
+        for t in transactions
+        if t.kind is TransactionKind.EXPENSE
+        and not t.is_refunded
+        and not (t.category_id is not None and _is_neutral(categories, t.category_id))
+    ]
     total_expenses = sum(-t.amount_cents for t in expenses)
     groups: dict[str, list[Transaction]] = defaultdict(list)
     spellings: dict[str, Counter[str]] = defaultdict(Counter)

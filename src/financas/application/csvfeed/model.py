@@ -151,6 +151,7 @@ class CategoryInfo:
     slug: str
     name: str
     kind: CategoryKind
+    is_neutral: bool = False
 
 
 @dataclass(frozen=True)

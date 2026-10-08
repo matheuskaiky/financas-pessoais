@@ -24,7 +24,7 @@ from financas.domain.models import (
     CategoryKind,
     Institution,
 )
-from financas.infrastructure.db.seed import INITIAL_CATEGORIES, seed_categories
+from financas.infrastructure.db.seed import INITIAL_CATEGORIES, NEUTRAL_CATEGORIES, seed_categories
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
@@ -34,7 +34,7 @@ def code(exc: pytest.ExceptionInfo[DomainError]) -> str:
 
 
 def test_seed_creates_every_initial_category_once(uow: MemoryUnitOfWork) -> None:
-    assert len(uow.categories.list_all()) == len(INITIAL_CATEGORIES)
+    assert len(uow.categories.list_all()) == len(INITIAL_CATEGORIES) + len(NEUTRAL_CATEGORIES)
     assert seed_categories(uow) == 0
     assert uow.categories.get_by_slug("groceries") is not None
     assert uow.categories.get_by_slug("food") is not None
@@ -300,3 +300,66 @@ def test_rename_unknown_category(uow: MemoryUnitOfWork) -> None:
     with pytest.raises(DomainError) as exc:
         RenameCategory(uow).execute("nope", "Algo")
     assert exc.value.code == "NOT_FOUND"
+
+
+# --- neutral (pass-through) categories ---
+
+
+def test_the_pass_through_category_is_seeded_neutral(uow: MemoryUnitOfWork) -> None:
+    third = uow.categories.get_by_slug("third_party")
+    assert third and third.is_neutral and third.name == "Reembolso / Terceiros"
+    assert not uow.categories.get_by_slug("food").is_neutral  # type: ignore[union-attr]
+
+
+def test_a_neutral_category_takes_both_expenses_and_incomes(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    from financas.application.use_cases.transactions import (
+        RegisterTransaction,
+        RegisterTransactionCommand,
+    )
+    from financas.domain.models import TransactionKind
+
+    third = uow.categories.get_by_slug("third_party")
+    assert third
+    for kind in (TransactionKind.EXPENSE, TransactionKind.INCOME):
+        entry = RegisterTransaction(uow).execute(
+            RegisterTransactionCommand(
+                checking.id, dt.date(2026, 7, 10), kind, 25_000, "luz do pai", category_id=third.id
+            )
+        )
+        assert entry.category_id == third.id
+    food = uow.categories.get_by_slug("food")
+    assert food
+    with pytest.raises(DomainError) as exc:  # an ordinary expense category still refuses income
+        RegisterTransaction(uow).execute(
+            RegisterTransactionCommand(
+                checking.id,
+                dt.date(2026, 7, 10),
+                TransactionKind.INCOME,
+                1_000,
+                "x",
+                category_id=food.id,
+            )
+        )
+    assert code(exc) == "CATEGORY_KIND_MISMATCH"
+
+
+def test_a_category_can_be_marked_and_unmarked_neutral(uow: MemoryUnitOfWork) -> None:
+    from financas.application.use_cases.catalog import SetCategoryNeutral
+
+    food = uow.categories.get_by_slug("food")
+    assert food and not food.is_neutral
+    marked = SetCategoryNeutral(uow).execute(food.id, True)
+    assert marked.is_neutral and uow.categories.get(food.id).is_neutral  # type: ignore[union-attr]
+    assert not SetCategoryNeutral(uow).execute(food.id, False).is_neutral
+
+
+def test_a_movement_category_cannot_be_neutral(uow: MemoryUnitOfWork) -> None:
+    from financas.application.use_cases.catalog import SetCategoryNeutral
+
+    transfer = uow.categories.get_by_slug("transfer")
+    assert transfer
+    with pytest.raises(DomainError) as exc:
+        SetCategoryNeutral(uow).execute(transfer.id, True)
+    assert code(exc) == "NEUTRAL_NEEDS_EXPENSE_OR_INCOME"

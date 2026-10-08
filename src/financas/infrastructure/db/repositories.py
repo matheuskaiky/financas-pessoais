@@ -58,7 +58,9 @@ def _account(r: AccountRow) -> Account:
 
 
 def _category(r: CategoryRow) -> Category:
-    return Category(r.id, r.slug, r.name, r.group, r.kind, r.monthly_budget_cents, r.color)
+    return Category(
+        r.id, r.slug, r.name, r.group, r.kind, r.monthly_budget_cents, r.color, r.is_neutral
+    )
 
 
 def _transaction(r: TransactionRow) -> Transaction:

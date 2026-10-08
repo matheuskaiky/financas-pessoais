@@ -126,11 +126,14 @@ class GetRecurring:
             itemized = uow.transactions.splits_for(
                 [t.id for t in transactions if t.category_id is None]
             )
+            neutral = {c.id for c in uow.categories.list_all() if c.is_neutral}
         amounts: dict[str, dict[YearMonth, int]] = {}
         latest: dict[str, tuple[dt.date, str, str]] = {}
         for t in sorted(transactions, key=lambda t: t.posted_on):
             if t.kind is not TransactionKind.EXPENSE or not t.is_recurring:
                 continue
+            if t.category_id in neutral:
+                continue  # a recurring pass-through is not a fixed cost of the user
             month = (
                 statement_months[t.statement_id]
                 if t.statement_id in statement_months

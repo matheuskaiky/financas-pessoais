@@ -62,9 +62,28 @@ def validate_payment_method(
     return method
 
 
-def validate_category_kind(kind: TransactionKind, category_kind: CategoryKind) -> None:
+def category_accepts(
+    kind: TransactionKind, category_kind: CategoryKind, is_neutral: bool = False
+) -> bool:
+    """Whether an entry of ``kind`` may use a category of ``category_kind`` (9.2).
+
+    The kinds must match, except for a **neutral** (pass-through) category of the expense or income
+    kind: a reimbursement is money out one day and money in the next, in the same category (9.14).
+    """
+    if _CATEGORY_FOR_KIND[kind] is category_kind:
+        return True
+    return (
+        is_neutral
+        and kind in (TransactionKind.EXPENSE, TransactionKind.INCOME)
+        and category_kind in (CategoryKind.EXPENSE, CategoryKind.INCOME)
+    )
+
+
+def validate_category_kind(
+    kind: TransactionKind, category_kind: CategoryKind, is_neutral: bool = False
+) -> None:
     """A transaction's kind must match its category's kind (the spreadsheet violated this)."""
-    if _CATEGORY_FOR_KIND[kind] is not category_kind:
+    if not category_accepts(kind, category_kind, is_neutral):
         raise DomainError(
             "CATEGORY_KIND_MISMATCH", kind=kind.value, category_kind=category_kind.value
         )

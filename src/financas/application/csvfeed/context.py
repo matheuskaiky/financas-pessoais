@@ -50,7 +50,8 @@ def load_context(uow: UnitOfWork, clock: Clock) -> FeedContext:
                 for a in accounts
             ),
             categories=tuple(
-                CategoryInfo(c.id, c.slug, c.name, c.kind) for c in work.categories.list_all()
+                CategoryInfo(c.id, c.slug, c.name, c.kind, c.is_neutral)
+                for c in work.categories.list_all()
             ),
             statements=tuple(statements),
             anchors=anchors,

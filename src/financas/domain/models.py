@@ -166,6 +166,9 @@ class Category:
     kind: CategoryKind
     monthly_budget_cents: int | None = None
     color: str | None = None
+    # pass-through money (a reimbursement, a bill paid for someone else): it moves the bank balance
+    # cent by cent but is left out of spending, income, budget and the day's spending (9.14)
+    is_neutral: bool = False
 
 
 @dataclass(frozen=True)

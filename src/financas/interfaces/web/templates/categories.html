@@ -6,7 +6,7 @@
 <section class="panel">
   <div class="table-scroll">
   <table class="rtable">
-    <thead><tr><th>Categoria</th><th>Grupo</th><th>Tipo</th><th class="num">Orçamento mensal</th><th>Cor</th></tr></thead>
+    <thead><tr><th>Categoria</th><th>Grupo</th><th>Tipo</th><th class="num">Orçamento mensal</th><th>Neutra</th><th>Cor</th></tr></thead>
     <tbody>
     {% for c in categories %}{% include "_category_row.html" %}{% endfor %}
     </tbody>
@@ -23,6 +23,8 @@
       <select name="kind">{% for k in kinds %}<option value="{{ k.value }}">{{ category_kind_labels[k] }}</option>{% endfor %}</select></label>
     <label class="field"><span>Orçamento mensal</span><span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input type="text" name="budget" inputmode="decimal" placeholder="0,00"></span></label>
     {{ color_fields() }}
+    <label class="check wide"><input type="checkbox" name="neutral" value="1"> Categoria neutra (não afeta gastos pessoais, orçamento nem receitas)</label>
+    <small class="hint wide">Ideal para reembolsos, contas pagas para terceiros ou adiantamentos. O saldo do banco continua exato: só os totais de gastos e receitas ignoram estes lançamentos. Uma categoria neutra aceita despesas e receitas.</small>
     <button type="submit">Salvar categoria</button>
   </form>
   <p class="hint">O grupo precisa combinar com o tipo: despesa (essencial, não essencial, encargos, revisar), receita (renda) ou neutra (movimentação).</p>

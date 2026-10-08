@@ -3935,12 +3935,17 @@ def test_editing_a_payment_to_an_out_of_range_date_keeps_the_form_and_changes_no
         assert work.transactions.get(credit.id) == credit
 
 
-def test_day_header_shows_the_spending_and_the_net_balance_with_a_tone(
+def test_day_header_shows_the_spending_and_the_running_account_balance(
     client: TestClient, container: Container
 ) -> None:
     checking, savings = setup_accounts(client, container)
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
+    client.post(
+        f"/accounts/{checking}/balance",
+        data={"date": (today - dt.timedelta(days=2)).isoformat(), "amount": "5.000,00"},
+    )
+    add_expense(client, checking, description="Mercado", amount="40,00", date=yesterday.isoformat())
     add_expense(client, checking, description="Almoço", amount="1.200,00")
     client.post(
         "/entries",
@@ -3952,8 +3957,7 @@ def test_day_header_shows_the_spending_and_the_net_balance_with_a_tone(
             "description": "Salário",
         },
     )
-    add_expense(client, checking, description="Mercado", amount="40,00", date=yesterday.isoformat())
-    client.post(  # a transfer must not distort the day
+    client.post(  # an internal transfer leaves the account: the balance follows, the spending not
         "/transfers",
         data={
             "from_account": checking,
@@ -3964,14 +3968,29 @@ def test_day_header_shows_the_spending_and_the_net_balance_with_a_tone(
     )
     response = client.get("/entries")
     page, text = response.text, visible(response)
-    assert "Gastos do dia: " in text and "Saldo do dia: " in text
-    assert "Gastos do dia: R$ 1.200,00" in text and "Saldo do dia: +R$ 1.800,00" in text
-    assert "Saldo do dia: −R$ 40,00" in text or "Saldo do dia: -R$ 40,00" in text
-    assert 'data-day-net="pos"' in page and 'data-day-net="neg"' in page
-    assert "day-net--pos" in page and "day-net--neg" in page
-    # filtered to one account the transfer moves that account's balance
+    assert "Gastos do dia: R$ 1.200,00" in text and "Gastos do dia: R$ 40,00" in text
+    assert "Saldo da conta: R$ 4.960,00" in text  # 5.000 - 40, the end of yesterday
+    assert "Saldo da conta: R$ 5.761,00" in text  # + 3.000 - 1.200 - 999, the end of today
+    assert page.count('data-day-balance="pos"') == 2 and "day-net--pos" in page
+    # a running balance, not the day's delta: today's delta alone would be +R$ 801,00
+    assert "Saldo do dia" not in text
     one = visible(client.get(f"/entries?account={checking}"))
-    assert "Saldo do dia: +R$ 801,00" in one  # 3.000 - 1.200 - 999
-    # a day with only income has no "Gastos do dia", and a flat day is neutral
-    only_income = client.get("/entries?kind=income")
-    assert "Gastos do dia" not in only_income.text and 'data-day-net="pos"' in only_income.text
+    assert "Saldo da conta: R$ 5.761,00" in one
+    assert "Saldo da conta" not in visible(
+        client.get(f"/entries?account={savings}")
+    )  # not checking
+
+
+def test_an_overdrawn_account_and_a_missing_balance_are_not_hidden(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = setup_accounts(client, container)
+    add_expense(client, checking, description="Almoço", amount="300,00")
+    assert "Saldo da conta: indisponível" in visible(client.get("/entries"))  # never a made-up 0
+    client.post(
+        f"/accounts/{checking}/balance",
+        data={"date": (dt.date.today() - dt.timedelta(days=1)).isoformat(), "amount": "100,00"},
+    )
+    response = client.get("/entries")
+    assert 'data-day-balance="neg"' in response.text  # 100 - 300: overdrawn, in the danger tone
+    assert "day-net--neg" in response.text and "Gastos do dia: R$ 300,00" in visible(response)

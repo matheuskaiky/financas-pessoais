@@ -183,7 +183,7 @@ class _Planner:
             if category is None:
                 continue
             try:
-                validate_category_kind(TransactionKind.EXPENSE, category.kind)
+                validate_category_kind(TransactionKind.EXPENSE, category.kind, category.is_neutral)
             except DomainError as error:
                 self.s.issues.append(
                     FeedIssue(error.code, item.line, "category", dict(error.params))
@@ -270,7 +270,7 @@ class _Planner:
         category = None if itemized else self.category(row)
         if category is not None:
             try:
-                validate_category_kind(_TX_KIND[row.kind], category.kind)
+                validate_category_kind(_TX_KIND[row.kind], category.kind, category.is_neutral)
             except DomainError as error:
                 self.issue(row, error.code, "category", **error.params)
         if account is None or not self.usable(row, account, "account"):
@@ -432,7 +432,7 @@ class _Planner:
         category = self.category(row) if row.category else None
         if category is not None:
             try:
-                validate_category_kind(TransactionKind.TRANSFER, category.kind)
+                validate_category_kind(TransactionKind.TRANSFER, category.kind, category.is_neutral)
                 if category.slug != "transfer":
                     raise DomainError("TRANSFER_CATEGORY_FIXED")
             except DomainError as error:

@@ -112,7 +112,7 @@ class EnrichTransaction:
                 if uow.transactions.splits_for(family):  # the items carry the categories
                     raise DomainError("PARENT_CATEGORY_FORBIDDEN_WITH_SPLITS")
                 category = found(uow.categories.get(cmd.category_id), "category")
-                validate_category_kind(entry.kind, category.kind)
+                validate_category_kind(entry.kind, category.kind, category.is_neutral)
                 category_id = category.id
             merchant = typed or entry.merchant
             if merchant == entry.merchant and category_id == entry.category_id:

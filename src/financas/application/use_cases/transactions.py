@@ -139,7 +139,7 @@ class RegisterTransaction:
                     )
                 else:
                     category = found(uow.categories.get(cmd.category_id), "category")
-                validate_category_kind(cmd.kind, category.kind)
+                validate_category_kind(cmd.kind, category.kind, category.is_neutral)
                 category_id = category.id
             description = entry_title(description, category if cmd.category_id else None)
             transaction = Transaction(
@@ -271,7 +271,7 @@ def checked_split_item(uow: Work, kind: TransactionKind, item: SplitItem) -> tup
     if not description:
         raise DomainError("EMPTY_DESCRIPTION")
     category = found(uow.categories.get(item.category_id), "category")
-    validate_category_kind(kind, category.kind)
+    validate_category_kind(kind, category.kind, category.is_neutral)
     return description, category.id
 
 
@@ -489,7 +489,7 @@ class UpdateTransaction:
                 if wanted is None:  # the items were just removed and no category was chosen
                     wanted = found(uow.categories.get_by_slug("uncategorized"), "category").id
                 category = found(uow.categories.get(wanted), "category")
-                validate_category_kind(entry.kind, category.kind)
+                validate_category_kind(entry.kind, category.kind, category.is_neutral)
                 category_id = category.id
             amount = -magnitude if entry.kind is TransactionKind.EXPENSE else magnitude
             validate_sign(entry.kind, amount)

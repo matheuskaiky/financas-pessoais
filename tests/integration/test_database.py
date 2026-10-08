@@ -25,7 +25,7 @@ from financas.infrastructure.db.engine import make_engine
 from financas.infrastructure.db.migrate import upgrade_to_head
 from financas.infrastructure.db.orm import Base
 from financas.infrastructure.db.repositories import SqlUnitOfWork
-from financas.infrastructure.db.seed import INITIAL_CATEGORIES, seed_categories
+from financas.infrastructure.db.seed import INITIAL_CATEGORIES, NEUTRAL_CATEGORIES, seed_categories
 
 D = dt.date
 
@@ -84,10 +84,13 @@ def test_database_rejects_what_the_domain_would_reject(sql_uow: SqlUnitOfWork) -
 
 
 def test_seed_is_idempotent_on_sqlite(sql_uow: SqlUnitOfWork) -> None:
-    assert seed_categories(sql_uow) == len(INITIAL_CATEGORIES)
+    assert seed_categories(sql_uow) == len(INITIAL_CATEGORIES) + len(NEUTRAL_CATEGORIES)
     assert seed_categories(sql_uow) == 0
     with sql_uow as work:
         names = {c.slug: c.name for c in work.categories.list_all()}
+        neutral = {c.slug for c in work.categories.list_all() if c.is_neutral}
+    assert neutral == {"third_party"}  # the flag is stored and read back
+    assert names["third_party"] == "Reembolso / Terceiros"
     assert names["health"] == "Saúde"
     assert names["uncategorized"] == "Não categorizado"
 
@@ -874,4 +877,31 @@ def test_ted_migration_widens_the_check_and_downgrade_keeps_the_rows(tmp_path: P
         assert db.execute("select payment_method from transactions").fetchall() == [
             ("transferencia",)
         ]
+    command.upgrade(config, "head")
+
+
+def test_neutral_category_migration_keeps_the_rows_and_downgrades_cleanly(tmp_path: Path) -> None:
+    from alembic import command
+
+    from financas.infrastructure.db.migrate import alembic_config
+
+    config = alembic_config(f"sqlite:///{tmp_path / 'f.db'}")
+    command.upgrade(config, "d1a7b9c4e6f8")  # the schema before ``is_neutral``
+    raw = sqlite3.connect(tmp_path / "f.db")
+    raw.execute(
+        'insert into categories (id, slug, name, "group", kind) values'
+        " ('c', 'food', 'Alimentação', 'non_essential', 'expense')"
+    )
+    raw.commit()
+    raw.close()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert db.execute("select slug, is_neutral from categories").fetchall() == [("food", 0)]
+        db.execute("update categories set is_neutral = 1 where id = 'c'")
+
+    command.downgrade(config, "d1a7b9c4e6f8")
+    with sqlite3.connect(tmp_path / "f.db") as db:
+        assert "is_neutral" not in [r[1] for r in db.execute("pragma table_info(categories)")]
+        assert db.execute("select slug from categories").fetchall() == [("food",)]
     command.upgrade(config, "head")

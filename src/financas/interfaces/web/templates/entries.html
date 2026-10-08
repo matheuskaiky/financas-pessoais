@@ -60,7 +60,7 @@
       <div><span class="label">Receitas</span><span class="fig pos">{% if summary.income_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.income_cents, size=30, flat=True, private="transactions") }}</span></div>
       <div><span class="label">Despesas</span><span class="fig neg">{{ odometer(-summary.expenses_cents, size=30, flat=True, private="transactions") }}</span></div>
       <div><span class="label">Saldo</span><span class="fig {{ 'pos' if summary.balance_cents > 0 else ('neg' if summary.balance_cents < 0 else '') }}">{% if summary.balance_cents > 0 %}<span class="sgn">+</span>{% endif %}{{ odometer(summary.balance_cents, size=30, flat=True, private="transactions") }}</span></div>
-      <div class="note"><small>Transferências ficam fora destes totais</small></div>
+      <div class="note"><small>Transferências ficam fora destes totais</small>{% if summary.transit_out_cents or summary.transit_in_cents %}<small data-transit>Em trânsito / Reembolsos: pagos {{ summary.transit_out_cents|money(private="transactions") }} · recebidos {{ summary.transit_in_cents|money(private="transactions") }} (ficam fora de gastos, receitas e orçamento)</small>{% endif %}</div>
     </div>
 
     <div data-sel-scope data-selecting="false">
@@ -70,7 +70,7 @@
       <div class="rowhead entry-head"><span>Descrição</span><span>Categoria</span><span>Conta</span><span class="num">Valor</span><span></span></div>
       {% for day, day_entries in rows|groupby('posted_on')|reverse %}
       <div class="day-group">
-        {{ day_net_header(day, day_totals[day]) }}
+        {{ day_net_header(day, day_totals[day], day_balances.get(day)) }}
         {% for t in day_entries %}{% include "_entry_row.html" %}{% endfor %}
       </div>
       {% endfor %}

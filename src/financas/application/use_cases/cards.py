@@ -195,7 +195,9 @@ def _default_category_id(uow: Work, category_id: str | None) -> str:
     if category_id is None:
         return found(uow.categories.get_by_slug("uncategorized"), "category").id
     category = found(uow.categories.get(category_id), "category")
-    if category.kind is not CategoryKind.EXPENSE:
+    if category.kind is not CategoryKind.EXPENSE and not (
+        category.is_neutral and category.kind is CategoryKind.INCOME
+    ):
         raise DomainError(
             "CATEGORY_KIND_MISMATCH", kind="expense", category_kind=category.kind.value
         )

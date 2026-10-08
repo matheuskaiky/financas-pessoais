@@ -23,6 +23,7 @@ from financas.application.queries.cards import (
     ListCards,
     StatementView,
 )
+from financas.application.queries.day_balances import GetDayBalances
 from financas.application.queries.entries import day_totals, filter_by_method, parse_method_filter
 from financas.application.queries.investments import (
     GetCapitalOverview,
@@ -83,6 +84,7 @@ from financas.application.use_cases.catalog import (
     SetAccountActive,
     SetAppearance,
     SetAppearanceCommand,
+    SetCategoryNeutral,
     SetInvestmentSettings,
 )
 from financas.application.use_cases.holdings import (
@@ -609,8 +611,12 @@ def create_app(c: Container) -> FastAPI:
         shown = rows[:limit]
         selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
         transfer_links = ListTransferLinks(c.uow).execute(shown)
-        # a list of ONE account is that account's cash flow: its transfers count in the day's net
-        day_summaries = day_totals(rows, include_transfers=bool(filters.get("account")))
+        neutral_ids = {x.id for x in data["categories"] if x.is_neutral}
+        day_summaries = day_totals(rows, neutral_ids, splits)
+        # the running balance at the end of each day: all checking accounts, or the filtered one
+        day_balances = GetDayBalances(c.uow).execute(
+            {t.posted_on for t in rows}, filters.get("account") or None
+        )
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -642,6 +648,7 @@ def create_app(c: Container) -> FastAPI:
             "selections": selections,
             "transfer_links": transfer_links,
             "day_totals": day_summaries,
+            "day_balances": day_balances,
             "splits": splits,
             "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
@@ -697,7 +704,16 @@ def create_app(c: Container) -> FastAPI:
         except ValueError:
             wanted = CategoryKind.EXPENSE
         with c.uow as work:
-            options = [x for x in work.categories.list_all() if x.kind is wanted]
+            options = [
+                x
+                for x in work.categories.list_all()
+                if x.kind is wanted
+                or (  # a pass-through category serves both expenses and incomes
+                    x.is_neutral
+                    and wanted in (CategoryKind.EXPENSE, CategoryKind.INCOME)
+                    and x.kind in (CategoryKind.EXPENSE, CategoryKind.INCOME)
+                )
+            ]
         return sorted(options, key=lambda x: normalize_search(x.name))
 
     @app.get("/entries", response_class=HTMLResponse)
@@ -2031,6 +2047,7 @@ def create_app(c: Container) -> FastAPI:
         kind: Annotated[str, Form()],
         budget: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
+        neutral: Annotated[str, Form()] = "",
     ):
         try:
             CreateCategory(c.uow).execute(
@@ -2040,11 +2057,22 @@ def create_app(c: Container) -> FastAPI:
                     kind=_enum(CategoryKind, kind),
                     monthly_budget_cents=parse_brl(budget) if budget.strip() else None,
                     color=_color(color),
+                    is_neutral=bool(neutral),
                 )
             )
         except DomainError as error:
             return render(request, "categories.html", categories_context(), error=error)
         return back("/categories", "category")
+
+    @app.post("/categories/{category_id}/neutral")
+    def set_category_neutral(
+        request: Request, category_id: str, neutral: Annotated[str, Form()] = ""
+    ):
+        try:
+            SetCategoryNeutral(c.uow).execute(category_id, bool(neutral))
+        except DomainError as error:
+            return render(request, "categories.html", categories_context(), error=error)
+        return back("/categories", "category_neutral")
 
     # --- images and backup ---------------------------------------------------------------------
 

@@ -126,6 +126,7 @@ class CategoryRow(Base):
     kind: Mapped[CategoryKind] = mapped_column(enum_column(CategoryKind, "category_kind"))
     monthly_budget_cents: Mapped[int | None] = mapped_column(sa.BigInteger)
     color: Mapped[str | None] = mapped_column(sa.String(7))
+    is_neutral: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
 
 
 class InvestmentHoldingRow(Base):

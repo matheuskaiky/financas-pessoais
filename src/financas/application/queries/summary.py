@@ -78,6 +78,10 @@ class Summary:
     entry_count: int
     net_contributions_cents: int = 0
     investment_rate: float | None = None
+    # pass-through money (neutral categories, 9.14): it moved the bank balance but is in none of the
+    # totals above; shown apart so the user sees what crossed the account for someone else
+    transit_out_cents: int = 0  # paid for third parties
+    transit_in_cents: int = 0  # reimbursements and other money received for third parties
 
 
 def summarize(
@@ -89,6 +93,7 @@ def summarize(
     splits: Mapping[str, Sequence[TransactionSplit]] | None = None,
 ) -> Summary:
     income = expenses = refunds = recurring = contributions = 0
+    transit_out = transit_in = 0
     per_category: dict[str, list[int]] = {}
     count = 0
     months = statement_months or {}
@@ -105,19 +110,31 @@ def summarize(
                     contributions += t.amount_cents
                 continue
             case TransactionKind.INCOME:
+                if t.category_id is not None and categories[t.category_id].is_neutral:
+                    transit_in += t.amount_cents
+                    continue
                 income += t.amount_cents
             case TransactionKind.REFUND:
                 refunds += t.amount_cents
             case TransactionKind.EXPENSE:
-                spent = -t.amount_cents
-                expenses += spent
-                if t.is_recurring:
-                    recurring += spent
-                # an itemized expense counts for each item's category; the totals stay whole
+                # an itemized expense counts for each item's category; a pass-through item (a
+                # neutral category) stays out of spending, recurring and the category totals
+                kept = 0
                 for category_id, cents in allocations(t, splits or {}):
+                    if categories[category_id].is_neutral:
+                        transit_out -= cents
+                        continue
+                    kept -= cents
                     row = per_category.setdefault(category_id, [0, 0])
                     row[0] -= cents
                     row[1] += 1
+                if not kept and any(
+                    categories[cid].is_neutral for cid, _ in allocations(t, splits or {})
+                ):
+                    continue  # nothing of it is the user's own spending
+                expenses += kept
+                if t.is_recurring:
+                    recurring += kept
         count += 1
 
     def share(total: int) -> float | None:
@@ -156,6 +173,8 @@ def summarize(
         entry_count=count,
         net_contributions_cents=contributions,
         investment_rate=contributions / income if income else None,
+        transit_out_cents=transit_out,
+        transit_in_cents=transit_in,
     )
 
 

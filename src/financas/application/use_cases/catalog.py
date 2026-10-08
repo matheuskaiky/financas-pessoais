@@ -203,6 +203,7 @@ class CreateCategoryCommand:
     slug: str | None = None
     monthly_budget_cents: int | None = None
     color: str | None = None
+    is_neutral: bool = False  # pass-through (reimbursements, third parties): see 9.14
 
 
 class CreateCategory:
@@ -222,13 +223,34 @@ class CreateCategory:
             kind=cmd.kind,
             monthly_budget_cents=cmd.monthly_budget_cents,
             color=normalize_color(cmd.color),
+            is_neutral=cmd.is_neutral,
         )
+        if category.is_neutral and category.kind is CategoryKind.NEUTRAL:
+            raise DomainError("NEUTRAL_NEEDS_EXPENSE_OR_INCOME")  # movement categories already are
         with self._uow as uow:
             if uow.categories.get_by_slug(category.slug) is not None:
                 raise DomainError("DUPLICATE_SLUG", slug=category.slug)
             uow.categories.add(category)
             uow.commit()
         return category
+
+
+class SetCategoryNeutral:
+    """Mark a category as pass-through (or take the mark off). Entries keep their category and the
+    bank balances never change; only the spending, income and budget totals do (9.14)."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, category_id: str, is_neutral: bool) -> Category:
+        with self._uow as uow:
+            category = found(uow.categories.get(category_id), "category")
+            if is_neutral and category.kind is CategoryKind.NEUTRAL:
+                raise DomainError("NEUTRAL_NEEDS_EXPENSE_OR_INCOME")
+            updated = replace(category, is_neutral=is_neutral)
+            uow.categories.update(updated)
+            uow.commit()
+        return updated
 
 
 class RenameCategory:

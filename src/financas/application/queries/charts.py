@@ -156,6 +156,7 @@ class GetMonthPace:
             statement_months = {s.id: s.month for s in uow.statements.list_all()}
             raw = uow.transactions.list_for_competence(previous[0].day(1), month.last_day())
             categories = uow.categories.list_all()
+        neutral = {c.id for c in categories if c.is_neutral}  # pass-through money is not spending
         entries = [
             _Entry(
                 t.posted_on,
@@ -163,7 +164,7 @@ class GetMonthPace:
                 -t.amount_cents,
             )
             for t in raw
-            if t.kind is TransactionKind.EXPENSE
+            if t.kind is TransactionKind.EXPENSE and t.category_id not in neutral
         ]
         elapsed = days if month < current else (today.day if month == current else 0)
         daily, counts = _daily(entries, month, days)

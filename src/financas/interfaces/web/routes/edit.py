@@ -242,7 +242,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                         )
                     )
                 ],
-                "category_options": [x for x in lookups["categories"] if x.kind is wanted],
+                "category_options": [
+                    x
+                    for x in lookups["categories"]
+                    if x.kind is wanted
+                    or (
+                        x.is_neutral
+                        and wanted in (CategoryKind.EXPENSE, CategoryKind.INCOME)
+                        and x.kind in (CategoryKind.EXPENSE, CategoryKind.INCOME)
+                    )
+                ],
                 # same kind only (a checking entry never becomes a card purchase)
                 "accounts": [
                     a

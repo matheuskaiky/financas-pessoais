@@ -12,7 +12,7 @@ Definitions (each one has a test):
 """
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from financas.application.queries.plan_purchases import ListPlanPurchases
@@ -53,10 +53,14 @@ def rank_expensive(
     plans: Sequence[ExpensiveRow],
     splits: Mapping[str, Sequence[TransactionSplit]],
     top: int,
+    neutral_category_ids: Collection[str] = (),
 ) -> list[ExpensiveRow]:
-    rows = list(plans)
+    """The biggest purchases; pass-through (neutral) money is not a purchase (9.14)."""
+    rows = [r for r in plans if r.category_id not in neutral_category_ids]
     for t in entries:
         if t.kind is not TransactionKind.EXPENSE or t.is_refunded or t.plan_id is not None:
+            continue
+        if t.category_id in neutral_category_ids:
             continue
         rows.append(
             ExpensiveRow(
@@ -91,6 +95,7 @@ class GetMostExpensive:
         with self._uow as uow:
             entries = uow.transactions.list_between(start, end, account_id)
             splits = uow.transactions.splits_for(split_ids(entries))
+            neutral = {c.id for c in uow.categories.list_all() if c.is_neutral}
         plan_rows = [
             ExpensiveRow(
                 "plan",
@@ -110,4 +115,4 @@ class GetMostExpensive:
             and start <= p.purchased_on <= end
             and (account_id is None or p.plan.account_id == account_id)
         ]
-        return rank_expensive(entries, plan_rows, splits, top)
+        return rank_expensive(entries, plan_rows, splits, top, neutral)

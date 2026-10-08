@@ -167,3 +167,46 @@ def test_an_itemized_expense_counts_by_item_and_its_parent_never_as_a_category(
     assert sum(totals.values()) == s.expenses_cents == 23_000  # nothing orphaned, nothing doubled
     assert uow.transactions.get(parent.id).category_id is None  # type: ignore[union-attr]
     assert {g.group for g in s.by_group} >= {CategoryGroup.ESSENTIAL}
+
+
+# --- neutral (pass-through) categories ---
+
+
+@pytest.fixture
+def third(uow: MemoryUnitOfWork):
+    """The seeded pass-through category "Reembolso / Terceiros"."""
+    category = uow.categories.get_by_slug("third_party")
+    assert category is not None and category.is_neutral
+    return category
+
+
+def test_neutral_money_is_in_no_total_and_is_reported_apart(
+    uow: MemoryUnitOfWork, checking: Account, third: object
+) -> None:
+    add(uow, checking, K.INCOME, 500_000, slug="salary")
+    add(uow, checking, K.EXPENSE, 100_000, slug="home")
+    add(uow, checking, K.EXPENSE, 25_000, slug="third_party")  # paid for someone else
+    add(uow, checking, K.INCOME, 25_000, slug="third_party")  # and paid back
+    s = GetSummary(uow).execute(JULY)
+    assert (s.income_cents, s.expenses_cents, s.balance_cents) == (500_000, 100_000, 400_000)
+    assert (s.transit_out_cents, s.transit_in_cents) == (25_000, 25_000)
+    assert [r.category_id for r in s.by_category] == [uow.categories.get_by_slug("home").id]  # type: ignore[union-attr]
+    assert s.savings_rate == 0.8
+
+
+def test_a_neutral_expense_does_not_count_as_recurring_or_in_the_groups(
+    uow: MemoryUnitOfWork, checking: Account, third: object
+) -> None:
+    add(uow, checking, K.EXPENSE, 40_000, slug="third_party", recurring=True)
+    add(uow, checking, K.EXPENSE, 10_000, slug="home", recurring=True)
+    s = GetSummary(uow).execute(JULY)
+    assert (s.expenses_cents, s.recurring_expenses_cents) == (10_000, 10_000)
+    assert {g.group for g in s.by_group} == {CategoryGroup.ESSENTIAL}
+
+
+def test_standard_categories_are_unchanged_by_the_flag(
+    uow: MemoryUnitOfWork, checking: Account
+) -> None:
+    add(uow, checking, K.EXPENSE, 100_000, slug="home")
+    s = GetSummary(uow).execute(JULY)
+    assert (s.expenses_cents, s.transit_out_cents, s.transit_in_cents) == (100_000, 0, 0)

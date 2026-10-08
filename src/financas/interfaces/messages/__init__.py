@@ -312,6 +312,10 @@ ERROR_MESSAGES: dict[str, str] = {
         "Esta transferência não pode ser editada aqui: pagamentos de fatura e movimentos de "
         "aplicações têm tela própria. Para corrigir, apague e lance de novo."
     ),
+    "NEUTRAL_NEEDS_EXPENSE_OR_INCOME": (
+        "Só categorias de despesa ou de receita podem ser neutras: as de movimentação já ficam "
+        "fora dos totais."
+    ),
     "TRANSFER_SIDES_CHANGED": (
         "Uma transferência não pode ganhar nem perder uma conta controlada: "
         "apague e lance de novo para corrigir."
@@ -404,6 +408,7 @@ FLASH_MESSAGES: dict[str, str] = {
     "budget": "Metas atualizadas.",
     "valuation": "Avaliação registrada.",
     "snapshot_deleted": "Registro de saldo removido.",
+    "category_neutral": "Categoria atualizada.",
     "valuation_yield": "Avaliação registrada.",
     "flow": "Movimentação registrada.",
     "investment_settings": "Conta de investimento atualizada.",

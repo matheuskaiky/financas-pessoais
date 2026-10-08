@@ -32,6 +32,13 @@ INITIAL_CATEGORIES: tuple[tuple[str, str, CategoryGroup, CategoryKind], ...] = (
 )
 
 
+# pass-through categories (slug, name, group, kind): money that crosses the account for someone else
+# and must not count as the user's own spending or income (CLAUDE.md 9.14)
+NEUTRAL_CATEGORIES: tuple[tuple[str, str, CategoryGroup, CategoryKind], ...] = (
+    ("third_party", "Reembolso / Terceiros", G.NON_ESSENTIAL, K.EXPENSE),
+)
+
+
 def seed_categories(uow: UnitOfWork) -> int:
     """Create the initial categories that do not exist yet; return how many were created."""
     with uow as work:
@@ -42,6 +49,13 @@ def seed_categories(uow: UnitOfWork) -> int:
             continue
         CreateCategory(uow).execute(
             CreateCategoryCommand(name=name, slug=slug, group=group, kind=kind)
+        )
+        created += 1
+    for slug, name, group, kind in NEUTRAL_CATEGORIES:
+        if slug in existing:
+            continue
+        CreateCategory(uow).execute(
+            CreateCategoryCommand(name=name, slug=slug, group=group, kind=kind, is_neutral=True)
         )
         created += 1
     return created

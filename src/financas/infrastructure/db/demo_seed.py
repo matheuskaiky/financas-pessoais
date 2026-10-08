@@ -283,15 +283,26 @@ class _Builder:
 
         opening = dict(opening_balance_on=dt.date(2025, 12, 31))
         self.bb_checking = account(
-            AccountKind.CHECKING, bb, "Conta BB", opening_balance_cents=520_000, **opening
+            AccountKind.CHECKING,
+            bb,
+            "Conta BB",
+            color="#F7D117",
+            opening_balance_cents=520_000,
+            **opening,
         )
         self.nu_checking = account(
-            AccountKind.CHECKING, nu, "Nubank Conta", opening_balance_cents=80_000, **opening
+            AccountKind.CHECKING,
+            nu,
+            "Nubank Conta",
+            color="#820AD1",
+            opening_balance_cents=80_000,
+            **opening,
         )
         self.bb_card = account(
             AccountKind.CREDIT_CARD,
             bb,
             "Ourocard BB",
+            color="#1F3A93",
             closing_days_before_due=11,
             due_day=5,
             credit_limit_cents=800_000,
@@ -300,6 +311,7 @@ class _Builder:
             AccountKind.CREDIT_CARD,
             nu,
             "Nubank Roxinho",
+            color="#9B3FE0",
             closing_days_before_due=7,
             due_day=26,
             credit_limit_cents=380_000,
@@ -308,6 +320,7 @@ class _Builder:
             AccountKind.CREDIT_CARD,
             inter,
             "Inter Black",
+            color="#FF7A00",
             closing_days_before_due=6,
             due_day=20,
             credit_limit_cents=600_000,
@@ -316,6 +329,7 @@ class _Builder:
             AccountKind.INVESTMENT,
             inter,
             "Renda fixa",
+            color="#0F5C45",
             asset_class=AssetClass.FIXED_INCOME,
         )
         SetInvestmentSettings(self.uow).execute(
@@ -813,13 +827,46 @@ class _Builder:
                 acknowledge_closed=True,  # its statement may already be closed: this is the seed
             )
         )
+        # a reimbursement that only passed through the account: the same R$ 250,00 out and in, on a
+        # day with nothing else, in the neutral "Reembolso / Terceiros" (9.14): the bank balance
+        # moves and returns, "Gastos do dia" stays R$ 0,00 and no budget or total notices it
+        with self.uow as work:
+            quiet = next(
+                day
+                for day in (today - dt.timedelta(days=n) for n in range(3, 40))
+                if day >= START and not work.transactions.list_between(day, day)
+            )
+        pass_through = self.cat["third_party"]
+        RegisterTransaction(self.uow).execute(
+            RegisterTransactionCommand(
+                self.bb_checking,
+                quiet,
+                _INCOME,
+                25_000,
+                "PIX recebido do Pai (conta de luz)",
+                category_id=pass_through,
+                payment_method=PaymentMethod.PIX,
+            )
+        )
+        RegisterTransaction(self.uow).execute(
+            RegisterTransactionCommand(
+                self.bb_checking,
+                quiet,
+                _EXPENSE,
+                25_000,
+                "Pagamento de conta de luz do Pai",
+                category_id=pass_through,
+                merchant="Companhia de Energia",
+                payment_method=PaymentMethod.BOLETO,
+            )
+        )
         # money that reached the investment account and waits for a note: the free cash
         RegisterTransfer(self.uow).execute(
             RegisterTransferCommand(
                 self.bb_checking,
                 self.invest,
                 back(5),
-                300_000,
+                35_000,
                 "Aporte aguardando alocação (Renda fixa)",
             )
         )

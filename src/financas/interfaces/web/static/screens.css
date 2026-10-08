@@ -456,7 +456,7 @@ button.icon-btn.mini:is(.row-edit, .card-rename):hover, button.icon-btn.mini:is(
 .day-group + .day-group { margin-top: 18px; }
 .day-group__header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 24px; border-bottom: 1px solid var(--line-soft);
   font-size: 12px; font-weight: 600; letter-spacing: .06em; color: var(--text-secondary); text-transform: uppercase; }
-.day-group__total { font-weight: 500; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; white-space: nowrap; }
+.day-group__total { color: var(--text-secondary); font-weight: 500; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; white-space: nowrap; }
 .entries-box .day-group__header { padding-inline: 12px; }
 .day-group .card-entry { padding-block: 9px; }
 .day-group .entry:not(.editing) { padding-block: 10px; }
@@ -727,3 +727,7 @@ button.icon-btn.mini:is(.row-edit, .card-rename):hover, button.icon-btn.mini:is(
 .day-net--pos { color: var(--pos-fg, #0F5C45); }
 .day-net--neg { color: var(--neg-fg, #8F2A39); }
 .day-net--zero { color: var(--text-secondary); }
+
+/* pass-through (neutral) categories: a quiet tag, and the amount muted with a dashed rule */
+.badge--neutral { font-size: 11px; letter-spacing: .04em; }
+.c-amt.is-neutral { opacity: .72; text-decoration: underline dashed; text-underline-offset: 4px; text-decoration-thickness: 1px; }

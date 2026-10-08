@@ -49,6 +49,41 @@ Títulos do Tesouro e prefixados oscilam com o mercado: o valor atual é o de re
 
 Ficam de fora, por enquanto: cálculo de imposto, posições de renda variável (quantidade, preço médio, cotação) e FGTS.
 
+## Transferências ligadas
+
+Uma transferência entre contas suas são **duas pontas** (saída e entrada) que dividem o mesmo identificador (`transfer_id`). Elas nascem juntas, na mesma operação do banco de dados, com o mesmo valor em módulo e sinais opostos, e **nunca** podem estar na mesma conta. Editar qualquer ponta (valor, data, contas, descrição, nota de investimento) atualiza a outra na mesma operação; apagar uma ponta apaga a outra. Se um dos lados é uma conta que o sistema não controla, existe uma ponta só. Transferências não são receita nem despesa; já o **saldo** da conta corrente as inclui, como o extrato.
+
+Lançamentos antigos que são as duas metades da mesma transferência (digitados como receita e despesa) podem ser ligados com `financas reconcile-transfers`: ele compara valor, sinais opostos, contas diferentes, data (até 1 dia) e palavras como PIX/TED, mostra a confiança de cada par e só liga os seguros com `--apply` (backup antes, tudo ou nada). Ao ligar, os dois deixam de contar como receita e despesa.
+
+## Categorias neutras (reembolsos e terceiros)
+
+Algum dinheiro só **atravessa** a sua conta: você paga a conta de luz do seu pai e ele devolve depois, ou adianta uma compra de um amigo. Contar isso como despesa e como receita distorce o custo de vida, a taxa de poupança e o orçamento. Uma categoria marcada como **neutra** resolve: os lançamentos continuam movendo o saldo do banco **exatamente** (a conciliação com o extrato não muda um centavo), mas ficam **fora** de gastos, receitas, orçamento, recorrentes, gráficos, ranking de estabelecimentos e “Gastos do dia”. O resumo informa à parte o que ficou **em trânsito** (pago e recebido). Uma categoria neutra aceita despesas e receitas, para o par ida e volta ficar na mesma categoria.
+
+## Investimentos: notas, caixa livre e marcação a mercado
+
+Há dois jeitos de acompanhar uma conta de investimento, e ela usa só um por vez:
+
+- **Controle Global (por conta):** um saldo único da conta, informado por data. Serve para caixinhas e fundos que você não quer detalhar.
+- **Controle por Notas/Aplicações:** cada CDB, LCI ou título é uma **nota** com seu próprio histórico de saldos, taxa, vencimento e liquidez.
+
+Numa conta por notas, o dinheiro tem três lugares, todos calculados (nunca guardados):
+
+- **Aporte líquido** = transferências recebidas − transferências enviadas.
+- **Saldo livre em caixa** = aporte líquido − custo das notas (valor aplicado mais os aportes diretos nelas). É o dinheiro que chegou e ainda espera uma nota. Uma nota cadastrada sem aporte registrado mostra o aviso “aplicados sem aporte registrado”.
+- **Saldo aplicado** = valor de mercado das notas ativas, pelo último saldo informado mais os aportes depois dele.
+- **Patrimônio da conta** = saldo livre + saldo aplicado; **lucro** = patrimônio − aporte líquido. Resgatar uma nota não mexe no saldo livre, e o ganho realizado continua no lucro.
+
+A **marcação a mercado por snapshots** é isso: cada vez que você informa o saldo de uma nota numa data, nasce um ponto na linha do tempo; o sistema nunca projeta valores futuros. Em cada ponto: **lucro** = saldo − custo, **rentabilidade** = lucro ÷ custo, **rendimento do período** = variação do saldo − aportes e resgates do período. Trocar de controle nunca é silencioso: com notas ativas o sistema explica e, se você confirmar, arquiva as notas (ficam no histórico, fora dos totais); transferências nunca impedem a troca.
+
+## Gastos do dia e Saldo da conta
+
+No cabeçalho de cada dia da lista de lançamentos:
+
+- **Gastos do dia** = despesas − estornos daquele dia, **sem** transferências e **sem** categorias neutras. É uma medida de consumo.
+- **Saldo da conta** = o saldo acumulado no **fim** do dia: o último saldo informado ± todas as movimentações (receitas, despesas e as duas pontas das transferências) até aquele dia, como no extrato. Sem filtro, soma as contas correntes; filtrando por uma conta, é o saldo dela. Sem saldo informado, “indisponível”.
+
+Por isso um dia pode ter “Gastos do dia: R$ 0,00” e o saldo mudar (uma transferência ou um reembolso mexem no saldo, mas não são gasto).
+
 ## Totais
 
 | Nível | O que mostra |
