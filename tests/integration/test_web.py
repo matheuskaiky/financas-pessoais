@@ -2624,8 +2624,18 @@ def test_the_category_filter_matches_the_items_of_an_entry(
     )
     home = category_by_slug(container, "home")
     other = category_by_slug(container, "taxes")
-    assert "Mercado" in client.get(f"/entries?category={home.id}").text.split('id="lista"')[1]
-    assert "Mercado" not in client.get(f"/entries?category={other.id}").text.split('id="lista"')[1]
+    assert (
+        "Mercado"
+        in client.get(f"/entries?category={home.id}")
+        .text.split('id="lista"')[1]
+        .split("</section>")[0]
+    )
+    assert (
+        "Mercado"
+        not in client.get(f"/entries?category={other.id}")
+        .text.split('id="lista"')[1]
+        .split("</section>")[0]
+    )
 
 
 def two_card_purchases(client: TestClient, container: Container):
@@ -2765,7 +2775,7 @@ def test_merchant_is_saved_shown_on_the_row_and_editable(
         assert work.transactions.get(entry.id).merchant is None  # type: ignore[union-attr]
     # searching the list finds entries by merchant too
     add_with_merchant(client, checking, "Mercado Livre", description="Cabo USB")
-    found = client.get("/entries?q=mercado").text.split('id="lista"')[1]
+    found = client.get("/entries?q=mercado").text.split('id="lista"')[1].split("</section>")[0]
     assert "Cabo USB" in found and "Remédio" not in found
 
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Smart suggestions of the entry form (suggestions.js)</title>
+</head>
+<body>
+<form id="f" class="quick-form">
+  <input type="radio" name="kind" value="expense" id="k-expense" checked>
+  <input type="radio" name="kind" value="income" id="k-income">
+  <input type="text" name="description" id="description" list="description-suggestions">
+  <select name="category_id" id="category"><option value="">Auto</option><option value="cat-food">Alimentação</option><option value="cat-salary">Salário</option></select>
+  <select name="account_id" id="account" data-entry-account>
+    <option value="acc-bank" data-account-kind="checking" selected>Conta BB</option>
+    <option value="acc-card" data-account-kind="credit_card">Cartão</option>
+  </select>
+  <fieldset data-method-field data-side="expense" id="method">
+    <label><input type="radio" name="payment_method" value="pix" checked></label>
+    <label><input type="radio" name="payment_method" value="debito"></label>
+    <label><input type="radio" name="payment_method" value="boleto"></label>
+    <label><input type="radio" name="payment_method" value="outro"></label>
+  </fieldset>
+  <span class="money-field"><input type="text" name="amount" id="amount" inputmode="decimal"></span>
+</form>
+<datalist id="description-suggestions"></datalist>
+<script type="application/json" id="suggestions-data">{
+  "expense": [
+    {"description": "Almoço Restaurante Central", "flow": "expense", "category_id": "cat-food", "account_id": "acc-bank", "payment_method": "debito", "habitual_amount_cents": 3500, "habitual_amount": "35,00"},
+    {"description": "Almoço Restaurante Central", "flow": "expense", "category_id": "cat-food", "account_id": "acc-card", "payment_method": "cartao_credito", "habitual_amount_cents": 3500, "habitual_amount": "35,00"},
+    {"description": "Uber", "flow": "expense", "category_id": "cat-food", "account_id": "acc-card", "payment_method": "cartao_credito", "habitual_amount_cents": null, "habitual_amount": null}
+  ],
+  "income": [
+    {"description": "Salário", "flow": "income", "category_id": "cat-salary", "account_id": "acc-bank", "payment_method": "ted", "habitual_amount_cents": 500000, "habitual_amount": "5000,00"}
+  ]
+}</script>
+<pre id="out">running</pre>
+<script>
+window.addEventListener("error", (e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + e.message + "\nDONE 1"; });
+</script>
+<script src="../../src/financas/interfaces/web/static/money-mask.js"></script>
+<script src="../../src/financas/interfaces/web/static/app.js"></script>
+<script src="../../src/financas/interfaces/web/static/suggestions.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+const options = () => Array.from(document.querySelectorAll("#description-suggestions option")).map((o) => o.value).join("|");
+const pick = (text) => { $("description").value = text; $("description").dispatchEvent(new Event("input", { bubbles: true })); };  // a datalist pick: no inputType
+const reset = () => { $("category").value = ""; $("account").value = "acc-bank"; $("amount").value = ""; $("description").value = ""; $("method").hidden = false; $("method").disabled = false; document.querySelector('#method input[value="pix"]').checked = true; };
+
+check("the list holds each expense habit once", options(), "Almoço Restaurante Central|Uber");
+pick("almoço restaurante central");  // another case: still the habit
+check("category follows", $("category").value, "cat-food");
+check("account follows", $("account").value, "acc-bank");
+check("method follows", document.querySelector("#method input:checked").value, "debito");
+check("the habitual amount fills an empty field", $("amount").value, "35,00");
+
+// an amount already typed is never replaced
+reset(); $("amount").value = "12,00";
+pick("Almoço Restaurante Central");
+check("a typed amount stays", $("amount").value, "12,00");
+
+// typing is not picking: keystrokes (inputType insertText) never cascade
+reset();
+$("description").value = "Uber";
+$("description").dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "r" }));
+check("typing does not cascade", $("account").value, "acc-bank");
+// committing the typed text (change) does
+$("description").dispatchEvent(new Event("change", { bubbles: true }));
+check("a committed known habit cascades", $("account").value, "acc-card");
+check("a card hides the method field", $("method").hidden, true);
+check("no habitual amount, no amount", $("amount").value, "");
+
+// unknown text does nothing
+reset(); pick("Algo novo");
+check("an unknown description changes nothing", $("category").value + "|" + $("account").value + "|" + $("amount").value, "|acc-bank|");
+
+// income: its own list, its own method
+reset();
+$("k-income").checked = true; $("k-income").dispatchEvent(new Event("change", { bubbles: true }));
+check("the list switches to income habits", options(), "Salário");
+check("the income field has no débito or boleto", document.querySelectorAll('#method input[value="debito"], #method input[value="boleto"]').length, 0);
+$("method").insertAdjacentHTML("beforeend", '<label><input type="radio" name="payment_method" value="ted"></label>');  // the server's income field has TED
+pick("Salário");
+check("income category", $("category").value, "cat-salary");
+check("income arrives by ted", document.querySelector("#method input:checked").value, "ted");
+check("income amount", $("amount").value, "5.000,00");
+$("k-expense").checked = true; $("k-expense").dispatchEvent(new Event("change", { bubbles: true }));
+check("back to the expense habits", options(), "Almoço Restaurante Central|Uber");
+
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+document.getElementById("out").textContent = results.join("\n") + "\nDONE " + failed;
+});
+</script>
+</body>
+</html>

@@ -458,18 +458,33 @@ document.body.addEventListener("fp:notice", function (event) {
     var show = !(kind && kind.value === "transfer") && accountKind !== "credit_card";
     field.hidden = !show;
     field.disabled = !show;
-    // the options follow the direction of the money: expense PIX | Débito | Boleto | Outro, income
-    // PIX | TED | Outro; a choice that does not exist on this side falls back to PIX
-    var side = kind && kind.value === "income" ? "income" : "expense";
-    field.querySelectorAll("label[data-kinds]").forEach(function (label) {
-      var offered = label.getAttribute("data-kinds").split(" ").indexOf(side) > -1;
-      label.hidden = !offered;
-      label.querySelector("input").disabled = !offered;
-    });
-    var checked = field.querySelector("input:checked:not(:disabled)");
-    if (!checked) {
-      var pix = field.querySelector('input[value="pix"]');
-      if (pix) pix.checked = true;
+  }
+  // The options follow the direction of the money: expense PIX | Débito | Boleto | Outro, income
+  // PIX | TED | Outro. An income form never carries Débito or Boleto: toggling to Receita detaches
+  // them at once (and falls back to PIX if one was checked), then the server sends the income
+  // field (TED included); the same for the way back.
+  function switchSide(form) {
+    var field = form.querySelector("[data-method-field]");
+    var kind = form.querySelector('input[name="kind"]:checked');
+    if (!field || !kind) return;
+    var side = kind.value === "income" ? "income" : "expense";
+    if (field.getAttribute("data-side") === side) return;
+    var checked = field.querySelector("input:checked");
+    var keep = checked ? checked.value : "";
+    if (side === "income") {
+      field.querySelectorAll('input[value="debito"], input[value="boleto"]').forEach(function (input) {
+        if (input.checked) keep = "pix";
+        var label = input.closest("label");
+        if (label) label.remove();
+      });
+    }
+    field.setAttribute("data-side", side);
+    if (!keep || !field.querySelector('input[value="' + keep + '"]')) keep = "pix";
+    var pix = field.querySelector('input[value="' + keep + '"]');
+    if (pix) pix.checked = true;
+    if (window.htmx) {
+      window.htmx.ajax("GET", "/entries/method-field?kind=" + encodeURIComponent(kind.value) +
+        "&current=" + encodeURIComponent(keep), { target: field, swap: "outerHTML" });
     }
   }
   // The items editor is for expenses only: switching to another kind turns it off, drops its rows
@@ -491,16 +506,19 @@ document.body.addEventListener("fp:notice", function (event) {
     wrap.disabled = !expense;
   }
   function syncAll(root) {
-    (root instanceof Element || root instanceof Document ? root : document)
-      .querySelectorAll("form").forEach(function (form) {
-        if (form.querySelector("[data-method-field]")) sync(form);
-        syncSplits(form);
-      });
+    var forms = (root instanceof Element || root instanceof Document ? root : document)
+      .querySelectorAll("form");
+    var host = root instanceof Element ? root.closest("form") : null;  // a swapped-in field
+    (host ? [host] : Array.from(forms)).forEach(function (form) {
+      if (form.querySelector("[data-method-field]")) sync(form);
+      syncSplits(form);
+    });
   }
   document.addEventListener("change", function (event) {
     var target = event.target instanceof Element ? event.target : null;
     var form = target && target.closest("form");
     if (form && target.matches('input[name="kind"], select[data-entry-account]')) {
+      if (target.matches('input[name="kind"]')) switchSide(form);
       sync(form);
       syncSplits(form);
     }

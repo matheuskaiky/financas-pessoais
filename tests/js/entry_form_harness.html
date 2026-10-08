@@ -15,12 +15,11 @@
   </select>
   <input name="amount" id="amount" value="100,00">
   <select name="category_id" id="category"><option value="a" selected>A</option><option value="b">B</option></select>
-  <fieldset data-method-field id="method">
-    <label data-kinds="expense income"><input type="radio" name="payment_method" value="pix" checked></label>
-    <label data-kinds="expense"><input type="radio" name="payment_method" value="debito"></label>
-    <label data-kinds="expense"><input type="radio" name="payment_method" value="boleto"></label>
-    <label data-kinds="income" hidden><input type="radio" name="payment_method" value="ted" disabled></label>
-    <label data-kinds="expense income"><input type="radio" name="payment_method" value="outro"></label>
+  <fieldset data-method-field data-side="expense" id="method">
+    <label><input type="radio" name="payment_method" value="pix" checked></label>
+    <label><input type="radio" name="payment_method" value="debito"></label>
+    <label><input type="radio" name="payment_method" value="boleto"></label>
+    <label><input type="radio" name="payment_method" value="outro"></label>
   </fieldset>
   <fieldset data-split-field id="splits">
     <fieldset class="split-editor" data-split-editor>
@@ -41,6 +40,11 @@
 <pre id="out">running</pre>
 <script>
 window.addEventListener("error", (e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + e.message + "\nDONE 1"; });
+</script>
+<script>
+// what the page asks of htmx: the swap of the field for the other side (the server's answer is tested apart)
+window.asked = [];
+window.htmx = { ajax: (method, url) => { window.asked.push(method + " " + url); return Promise.resolve(); } };
 </script>
 <script src="../../src/financas/interfaces/web/static/money-mask.js"></script>
 <script src="../../src/financas/interfaces/web/static/app.js"></script>
@@ -68,20 +72,27 @@ $("k-income").checked = true; change($("k-income"));
 check("method for income", $("method").hidden, false);
 check("items hidden for income", $("splits").hidden, true);
 check("items not sent for income", sent().includes("splits_present"), false);
-// the options follow the direction of the money
-const offered = () => Array.from(document.querySelectorAll("#method input")).filter((i) => !i.disabled && !i.closest("label").hidden).map((i) => i.value).join(",");
-$("k-expense").checked = true; change($("k-expense"));
-check("expense options", offered(), "pix,debito,boleto,outro");
-$("k-income").checked = true; change($("k-income"));
-check("income options", offered(), "pix,ted,outro");
-$("k-expense").checked = true; change($("k-expense"));
+// the options follow the direction of the money: an income form never carries Débito or Boleto
+// (the server would have swapped the expense field back in: do the same by hand)
+$("method").innerHTML = '<label><input type="radio" name="payment_method" value="pix" checked></label><label><input type="radio" name="payment_method" value="debito"></label><label><input type="radio" name="payment_method" value="boleto"></label><label><input type="radio" name="payment_method" value="outro"></label>';
+$("method").setAttribute("data-side", "expense");
+$("k-expense").checked = true; window.asked.length = 0;
+const values = () => Array.from(document.querySelectorAll("#method input")).map((i) => i.value).join(",");
+check("expense side has the four", values(), "pix,debito,boleto,outro");
 document.querySelector('#method input[value="boleto"]').checked = true;
 $("k-income").checked = true; change($("k-income"));
+check("débito and boleto are detached on income", values(), "pix,outro");
 check("boleto falls back to pix on income", document.querySelector("#method input:checked").value, "pix");
-document.querySelector('#method input[value="ted"]').checked = true;
+check("the field says it is on the income side", $("method").getAttribute("data-side"), "income");
+check("the server is asked for the income field", window.asked[window.asked.length - 1], "GET /entries/method-field?kind=income&current=pix");
 $("k-expense").checked = true; change($("k-expense"));
-check("ted falls back to pix on expense", document.querySelector("#method input:checked").value, "pix");
-check("ted is not sent on expense", new FormData($("f")).getAll("payment_method").join(","), "pix");
+check("the server is asked for the expense field", window.asked[window.asked.length - 1], "GET /entries/method-field?kind=expense&current=pix");
+check("pix stays checked on the way back", document.querySelector("#method input:checked").value, "pix");
+$("k-income").checked = true; change($("k-income"));
+const askedBefore = window.asked.length;
+change($("k-income"));
+check("no second request while the side is the same", window.asked.length, askedBefore);
+check("income has neither debito nor boleto in the DOM", document.querySelectorAll('#method input[value="debito"], #method input[value="boleto"]').length, 0);
 // a transfer: neither
 $("k-transfer").checked = true; change($("k-transfer"));
 check("method hidden for a transfer", $("method").hidden, true);

@@ -54,8 +54,33 @@ def test_quick_form_shows_the_method_and_the_items_editor_by_kind_and_account() 
         "toggle turned off by the kind switch",
         "parent category unlocked again",
         "no orphan items are sent",
-        "income options",
+        "débito and boleto are detached on income",
         "boleto falls back to pix on income",
-        "ted falls back to pix on expense",
+        "the server is asked for the income field",
+        "no second request while the side is the same",
+        "income has neither debito nor boleto in the DOM",
+    ):
+        assert f"PASS {name}" in report, name
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_smart_suggestions_fill_the_form_from_the_pages_habits() -> None:
+    """A datalist pick fills category, account, method and the habitual amount (never over a typed
+    amount; typing alone never fills); an income has its own list and method."""
+    report = run_harness("tests/js/suggestions_harness.html")
+    failures = [line for line in report.splitlines() if line.startswith("FAIL")]
+    assert not failures and "DONE 0" in report, report
+    for name in (
+        "the list holds each expense habit once",
+        "category follows",
+        "method follows",
+        "the habitual amount fills an empty field",
+        "a typed amount stays",
+        "typing does not cascade",
+        "a committed known habit cascades",
+        "a card hides the method field",
+        "the list switches to income habits",
+        "income arrives by ted",
+        "income amount",
     ):
         assert f"PASS {name}" in report, name

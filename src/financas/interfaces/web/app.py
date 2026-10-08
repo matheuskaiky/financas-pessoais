@@ -8,7 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import FormData
@@ -41,6 +41,8 @@ from financas.application.queries.planning import (
 )
 from financas.application.queries.review import CountPendingReview
 from financas.application.queries.selection import ListRowSelections
+from financas.application.queries.suggestions import MAX_LIMIT as MAX_SUGGESTIONS
+from financas.application.queries.suggestions import ListSuggestions
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.queries.unified_cards import (
     ListUnifiedTimeline,
@@ -161,6 +163,9 @@ _CSP = (
     "script-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 )
 _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind.REFUND)
+
+
+PAYMENT_CODES = frozenset(m.value for m in PaymentMethod)
 
 
 def _color(color: str | None, use_color: str | None) -> str | None:
@@ -613,6 +618,11 @@ def create_app(c: Container) -> FastAPI:
             },
             "merchants": ListMerchants(c.uow).execute(),
             "category_options": category_options("expense" if kind == "transfer" else kind),
+            # the habits of the last 180 days: the description field reads them without a request
+            "suggestions": {
+                flow: suggestion_payload(flow, "", MAX_SUGGESTIONS)
+                for flow in ("expense", "income")
+            },
             # the items of a split expense: always expense categories (the entry itself has none)
             "expense_categories": [
                 x for x in category_options("expense") if x.slug != "uncategorized"
@@ -659,6 +669,43 @@ def create_app(c: Container) -> FastAPI:
             request,
             "entries.html",
             entries_context(month, filters, prefill, limit=_opt_int(limit) or PAGE_SIZE),
+        )
+
+    def suggestion_payload(flow: str, q: str = "", limit: int = 8) -> list[dict[str, object]]:
+        """What the entry form may autofill for one flow: the description, where it went and how it
+        was paid, plus the habitual amount (cents, and the text the amount field takes)."""
+        return [
+            {
+                "description": s.description,
+                "flow": s.flow,
+                "category_id": s.category_id,
+                "account_id": s.account_id,
+                "payment_method": s.payment_method.value if s.payment_method else None,
+                "habitual_amount_cents": s.habitual_amount_cents,
+                "habitual_amount": format_decimal_comma(s.habitual_amount_cents)
+                if s.habitual_amount_cents is not None
+                else None,
+            }
+            for s in ListSuggestions(c.uow, c.clock).execute(flow, q, limit)
+        ]
+
+    @app.get("/entries/suggestions")
+    def entry_suggestions(flow: str = "expense", q: str = "", limit: str = ""):
+        wanted = flow if flow in ("expense", "income") else "expense"
+        return JSONResponse(suggestion_payload(wanted, q[:100], _opt_int(limit) or 8))
+
+    @app.get("/entries/method-field", response_class=HTMLResponse)
+    def method_field(request: Request, kind: str = "expense", current: str = ""):
+        """The payment-method field for one side (the quick form swaps it when Despesa/Receita is
+        toggled): an income's carries PIX | TED | Outro and never Débito or Boleto."""
+        return templates.TemplateResponse(
+            request,
+            "snippets/payment-method-field.html",
+            {
+                "method_current": current if current in PAYMENT_CODES else "",
+                "method_kind": "income" if kind == "income" else "expense",
+                "method_hidden": False,  # app.js hides it again for a card or a transfer
+            },
         )
 
     @app.get("/entries/category-field", response_class=HTMLResponse)

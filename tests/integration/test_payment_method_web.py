@@ -28,7 +28,7 @@ def seed_entries(client: TestClient, container: Container) -> tuple[str, str]:
 
 def listed(client: TestClient, query: str = "") -> str:
     page = client.get(f"/entries{query}").text
-    return page.split('id="lista"')[1]
+    return page.split('id="lista"')[1].split("</section>")[0]  # the rows, not the page data blocks
 
 
 def test_the_form_stores_the_method_and_the_row_shows_a_badge(
@@ -255,12 +255,9 @@ def test_a_chip_swap_replaces_the_filter_bar_too_so_limpar_filtros_is_never_stal
 def visible_options(html: str) -> list[str]:
     block = html[html.index("data-method-field") :]
     block = block[: block.index("</fieldset>")]
-    found = re.findall(
-        r'<label data-kinds="[^"]*"( hidden)?><input type="radio" name="payment_method" '
-        r'value="(\w+)"([^>]*)><span>([^<]*)</span>',
-        block,
+    return re.findall(
+        r'<label><input type="radio" name="payment_method"[^>]*><span>([^<]*)</span>', block
     )
-    return [label for hidden, _, _, label in found if not hidden]
 
 
 def test_the_edit_form_offers_pix_ted_outro_for_an_income_and_the_four_for_an_expense(
@@ -289,23 +286,36 @@ def test_the_edit_form_offers_pix_ted_outro_for_an_income_and_the_four_for_an_ex
     assert re.search(r'name="payment_method" value="boleto"\s*checked', expense)
 
 
-def test_the_quick_form_ships_both_option_sets_and_the_script_switches_them(
+def method_field_html(page: str) -> str:
+    block = page[page.index("data-method-field") :]
+    return block[: block.index("</fieldset>")]
+
+
+def test_an_income_form_never_carries_debito_or_boleto_in_its_dom(
     client: TestClient, container: Container
 ) -> None:
     make_card(client, container)
-    page = client.get("/entries").text
-    assert visible_options(page) == ["PIX", "Débito", "Boleto", "Outro"]  # "Despesa" is the default
-    block = page[page.index("data-method-field") :].split("</fieldset>")[0]
-    assert (
-        'data-kinds="income" hidden><input type="radio" name="payment_method" value="ted"' in block
-    )
-    assert 'data-kinds="expense income"' in block  # PIX and Outro serve both
-    prefilled = client.get("/entries?fill=1&f_kind=income&f_amount=10,00").text
-    assert visible_options(prefilled) == [
-        "PIX",
-        "TED",
-        "Outro",
-    ]  # an income draft starts on its side
+    expense = method_field_html(client.get("/entries").text)  # "Despesa" is the default
+    assert visible_options(client.get("/entries").text) == ["PIX", "Débito", "Boleto", "Outro"]
+    assert 'data-side="expense"' in expense
+    for url in (
+        "/entries?fill=1&f_kind=income&f_amount=10,00",  # an income draft: first render
+        "/entries/method-field?kind=income",  # what the toggle swaps in
+        "/entries/method-field?kind=income&current=boleto",  # a stale choice falls back to PIX
+        "/entries/method-field?kind=income&current=debito",
+    ):
+        page = client.get(url)
+        field = method_field_html(page.text)
+        assert 'data-side="income"' in field, url
+        assert "Débito" not in field and "Boleto" not in field, url
+        assert 'value="debito"' not in field and 'value="boleto"' not in field, url
+        assert visible_options(page.text) == ["PIX", "TED", "Outro"], url
+        assert re.search(r'value="pix"\s*checked', field), url
+    back = client.get("/entries/method-field?kind=expense&current=pix").text
+    assert visible_options(back) == ["PIX", "Débito", "Boleto", "Outro"]
+    assert "TED" not in method_field_html(back)
+    odd = client.get("/entries/method-field?kind=income&current=<script>").text
+    assert "<script>" not in odd and visible_options(odd) == ["PIX", "TED", "Outro"]
 
 
 def test_an_income_by_debit_or_boleto_is_refused_with_a_message(
@@ -368,3 +378,82 @@ def test_an_entry_with_no_description_is_titled_by_its_category(
         f"/entries/{by_description(container, checking)['Supermercado'].id}/edit", headers=HX
     ).text
     assert " required" not in re.search(r'<input[^>]*name="description"[^>]*>', edit).group(0)  # type: ignore[union-attr]
+
+
+# --- smart suggestions ---
+
+
+def seed_habits(client: TestClient, container: Container) -> tuple[str, str]:
+    checking, _ = make_card(client, container)
+    with container.uow as work:
+        food = work.categories.get_by_slug("food")
+        salary = work.categories.get_by_slug("salary")
+    assert food and salary
+    for n in range(5):
+        add_expense(
+            client,
+            checking,
+            description="Almoço Restaurante Central",
+            amount="35,00",
+            category_id=food.id,
+            payment_method="debito",
+            date=(TODAY - dt.timedelta(days=1 + n * 2)).isoformat(),
+        )
+    client.post(
+        "/entries",
+        data={
+            "kind": "income",
+            "date": (TODAY - dt.timedelta(days=3)).isoformat(),
+            "amount": "5.000,00",
+            "description": "Salário",
+            "category_id": salary.id,
+            "account_id": checking,
+            "payment_method": "ted",
+        },
+    )
+    return checking, food.id
+
+
+def test_the_suggestions_endpoint_returns_the_scored_habits_with_the_amount(
+    client: TestClient, container: Container
+) -> None:
+    checking, food = seed_habits(client, container)
+    answer = client.get("/entries/suggestions?flow=expense&q=almoco")
+    assert answer.status_code == 200 and answer.headers["content-type"].startswith(
+        "application/json"
+    )
+    (top,) = answer.json()
+    assert top == {
+        "description": "Almoço Restaurante Central",
+        "flow": "expense",
+        "category_id": food,
+        "account_id": checking,
+        "payment_method": "debito",
+        "habitual_amount_cents": 3_500,
+        "habitual_amount": "35,00",
+    }
+    income = client.get("/entries/suggestions?flow=income").json()
+    assert [s["description"] for s in income] == ["Salário"]
+    assert income[0]["payment_method"] == "ted" and income[0]["habitual_amount"] == "5000,00"
+    assert client.get("/entries/suggestions?flow=zzz&limit=abc").status_code == 200
+    assert client.get("/entries/suggestions?flow=income&q=nada").json() == []
+
+
+def test_the_page_seeds_the_description_list_from_the_same_data(
+    client: TestClient, container: Container
+) -> None:
+    seed_habits(client, container)
+    page = client.get("/entries").text
+    assert (
+        'list="description-suggestions"' in page
+        and '<datalist id="description-suggestions">' in page
+    )
+    block = re.search(r'id="suggestions-data">(.*?)</script>', page, re.S)
+    assert block
+    import json
+
+    data = json.loads(block.group(1))
+    assert set(data) == {"expense", "income"}
+    assert data["expense"][0]["description"] == "Almoço Restaurante Central"
+    assert {s["payment_method"] for s in data["income"]} <= {"pix", "ted", "outro", None}
+    assert "/static/suggestions.js" in page

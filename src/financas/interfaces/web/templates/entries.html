@@ -3,6 +3,7 @@
 {% from "_ui.html" import odometer, state_empty %}
 {% from "_selection.html" import sel_toolbar, sel_dock %}
 {% block title %}Lançamentos{% endblock %}
+{% block head %}<script src="/static/suggestions.js" defer></script>{% endblock %}
 {% macro filter_url(extra) -%}
 /entries?month={{ month_value }}{% for k, v in filters.items() if v and k not in extra %}&{{ k }}={{ v|urlencode }}{% endfor %}{% for k, v in extra.items() if v %}&{{ k }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
@@ -111,7 +112,7 @@
         <small>Aceita vírgula decimal</small></label>
 
       <label class="field"><span>Descrição</span>
-        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Opcional: em branco usa a categoria"
+        <input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" list="description-suggestions" placeholder="Opcional: em branco usa a categoria"
                hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
                hx-include="[name='kind']:checked,[name='description'],[name='category_id']">
       </label>
@@ -166,4 +167,6 @@
 </div>
 {% include "_merge_bar.html" %}
 {{ merchant_datalist(merchants) }}
+<datalist id="description-suggestions"></datalist>
+<script type="application/json" id="suggestions-data">{{ suggestions|tojson }}</script>
 {% endblock %}
