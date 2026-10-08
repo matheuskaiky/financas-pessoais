@@ -80,6 +80,7 @@ from financas.application.use_cases.investments import (
     RegisterInvestmentFlowCommand,
 )
 from financas.application.use_cases.merchants import BackfillMerchants
+from financas.application.use_cases.reconcile_transfers import ApplyTransferPairs, ScanTransfers
 from financas.application.use_cases.transactions import (
     DeleteTransaction,
     RegisterTransaction,
@@ -552,6 +553,59 @@ def transfer(
         )
     )
     console.print(f"Transferência lançada ({len(legs)} perna(s)). Código: {legs[0].id[:8]}")
+
+
+@app.command("reconcile-transfers")
+@handle_errors
+def reconcile_transfers(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--dry-run",
+            help="--dry-run (padrão) só mostra os pares; --apply liga os pares seguros.",
+        ),
+    ] = False,
+) -> None:
+    """Acha lançamentos antigos que são as duas pontas de uma transferência entre contas.
+
+    A busca compara valor (iguais e de sinais opostos), data (no máximo 1 dia de diferença) e
+    palavras como PIX, TED e Transf. Ao aplicar, as duas pontas deixam de ser receita e despesa e
+    viram uma transferência ligada. Pares ambíguos ou de baixa confiança nunca são ligados.
+    """
+    c = container()
+    report = ScanTransfers(c.uow).execute()
+    table = Table(title="Transferências a ligar")
+    for column in ("Data", "Valor", "Origem", "Destino", "Confiança"):
+        table.add_column(column, justify="right" if column in ("Valor", "Confiança") else "left")
+    for view in report.pairs:
+        out, inc = view.proposal.outgoing, view.proposal.incoming
+        table.add_row(
+            format_date(view.posted_on),
+            format_brl(view.amount_cents),
+            f"{view.outgoing_account} [{out.id[:8]}] {view.outgoing_description}",
+            f"{view.incoming_account} [{inc.id[:8]}] {view.incoming_description}",
+            f"{view.proposal.confidence}%" + ("" if view.proposal.applicable else " (revisar)"),
+        )
+    if report.pairs:
+        console.print(table)
+    console.print(
+        f"{len(report.pairs)} par(es) encontrado(s), {len(report.applicable)} seguro(s) para "
+        "ligar; "
+        f"{report.ambiguous} lançamento(s) ambíguo(s) ficaram de fora "
+        f"({report.considered} analisado(s))."
+    )
+    if not apply:
+        console.print("Simulação: nada foi alterado. Use --apply para ligar os pares seguros.")
+        return
+    if not report.applicable:
+        console.print("Nenhum par seguro para ligar.")
+        return
+    console.print(f"Backup criado em {c.backup()}.")
+    result = ApplyTransferPairs(c.uow).execute()
+    console.print(
+        f"{result.linked} transferência(s) ligada(s). Esses lançamentos não contam mais "
+        "como receita nem despesa."
+    )
 
 
 @app.command("list")

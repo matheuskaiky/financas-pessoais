@@ -809,6 +809,19 @@ class _Builder:
                 acknowledge_closed=True,  # its statement may already be closed: this is the seed
             )
         )
+        # a transfer typed as two separate one-sided legs (an old import): the command
+        # `financas reconcile-transfers --demo` finds the pair; same amount, opposite signs
+        legacy = back(12)
+        RegisterTransfer(self.uow).execute(
+            RegisterTransferCommand(
+                self.bb_checking, None, legacy, 32_000, "PIX enviado para Nubank (importado)"
+            )
+        )
+        RegisterTransfer(self.uow).execute(
+            RegisterTransferCommand(
+                None, self.nu_checking, legacy, 32_000, "PIX recebido do BB (importado)"
+            )
+        )
 
     def _statements(self) -> None:
         """Pay every statement that is due; inform the total of the first closed, unpaid one."""

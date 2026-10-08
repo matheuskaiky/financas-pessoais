@@ -35,6 +35,19 @@ def opt_int(value: str | None) -> int | None:
         return None
 
 
+def transfer_title(
+    description: str, from_id: str | None, to_id: str | None, accounts: list[Account]
+) -> str:
+    """What a transfer is called when the user typed nothing: ``Transferência: A → B``."""
+    typed = description.strip()
+    if typed:
+        return typed
+    names = {a.id: a.nickname for a in accounts}
+    if from_id in names and to_id in names:
+        return f"Transferência: {names[from_id]} → {names[to_id]}"
+    return "Transferência entre contas"
+
+
 class Lookups(TypedDict):
     """The catalogue every page needs: institutions, accounts and categories with their looks."""
 

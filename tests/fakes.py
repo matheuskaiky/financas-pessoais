@@ -311,6 +311,9 @@ class MemoryAnchors:
     def upsert(self, anchor: BalanceAnchor) -> None:
         self.items[self._key(anchor)] = anchor
 
+    def delete(self, anchor_id: str) -> None:
+        self.items = {k: a for k, a in self.items.items() if a.id != anchor_id}
+
     def list_for_account(self, account_id: str) -> list[BalanceAnchor]:
         return sorted(
             (a for a in self.items.values() if a.account_id == account_id and a.holding_id is None),

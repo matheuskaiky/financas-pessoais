@@ -198,6 +198,8 @@ def build_transfer_legs(uow: Work, cmd: RegisterTransferCommand) -> list[Transac
     holding_account_id = None
     if cmd.holding_id is not None:  # the holding is tagged on the leg of its own account only
         holding_account_id = found(uow.holdings.get(cmd.holding_id), "holding").account_id
+        if holding_account_id not in (cmd.from_account_id, cmd.to_account_id):
+            raise DomainError("HOLDING_NOT_IN_ACCOUNT")  # the note must sit on one side of it
     legs: list[Transaction] = []
     for account_id, amount in (
         (cmd.from_account_id, -magnitude),

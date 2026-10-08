@@ -145,6 +145,10 @@ class BalanceAnchorRepository(Protocol):
 
     def list_for_holding(self, holding_id: str) -> list[BalanceAnchor]: ...
 
+    def delete(self, anchor_id: str) -> None:
+        """Remove one valuation (a wrong snapshot); the next ones are unaffected."""
+        ...
+
 
 class HoldingRepository(Protocol):
     def add(self, holding: InvestmentHolding) -> None: ...

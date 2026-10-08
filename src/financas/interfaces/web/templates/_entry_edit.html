@@ -26,10 +26,38 @@
       <button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Cancelar</button>
     </div>
   </form>
+  {% elif state.is_transfer and transfer and transfer.editable %}
+  <form class="edit-body" method="post" action="/entries/{{ t.id }}/edit{{ qs }}" hx-post="/entries/{{ t.id }}/edit{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">
+    <p class="badge-line"><span class="badge">Transferência</span> <small>As duas pontas são atualizadas juntas.</small></p>
+    {% if error %}<p class="hint" data-tone="error" role="alert">{{ error }}</p>{% endif %}
+    <div class="edit-grid">
+      <label class="field"><span>Conta de origem</span>
+        <select name="from_account" {{ 'disabled' if not form.from_account }}>{% if not form.from_account %}<option value="">Conta não controlada</option>{% endif %}
+          {% for a in transfer_choices %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.from_account }}>{{ a.nickname }}</option>{% endfor %}</select>
+        {% if not form.from_account %}<small class="hint">A origem não é controlada aqui.</small>{% endif %}</label>
+      <label class="field"><span>Conta de destino</span>
+        <select name="to_account" {{ 'disabled' if not form.to_account }}>{% if not form.to_account %}<option value="">Conta não controlada</option>{% endif %}
+          {% for a in transfer_choices %}<option value="{{ a.id }}" {{ 'selected' if a.id == form.to_account }}>{{ a.nickname }}</option>{% endfor %}</select>
+        {% if not form.to_account %}<small class="hint">O destino não é controlado aqui.</small>{% endif %}</label>
+      {% if transfer_holdings %}<label class="field"><span>Destino do aporte / origem do resgate</span>
+        <select name="holding_id"><option value="">Saldo livre da conta / corretora</option>
+          {% for h in transfer_holdings %}<option value="{{ h.id }}" {{ 'selected' if h.id == form.holding_id }}>{{ h.name }}</option>{% endfor %}
+        </select></label>{% endif %}
+      <label class="field"><span>Valor</span>
+        <span class="money-field"><span class="cur" aria-hidden="true">{{ config.currency_symbol }}</span><input class="amount-input" type="text" name="amount" inputmode="decimal" value="{{ form.amount }}" required autocomplete="off"></span></label>
+      <label class="field"><span>Data</span><input type="date" name="date" value="{{ form.date }}" required></label>
+      <label class="field grow"><span>Descrição</span><input type="text" name="description" value="{{ form.description }}" maxlength="300" autocomplete="off" placeholder="Em branco: Transferência: origem → destino"></label>
+      <label class="field grow"><span>Observações</span><input type="text" name="notes" value="{{ form.notes }}"></label>
+    </div>
+    <div class="edit-actions">
+      <button type="submit">Salvar transferência</button>
+      <button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Cancelar</button>
+    </div>
+  </form>
   {% elif state.is_transfer or state.is_locked %}
   <div class="edit-body">
     <p class="callout info" role="status">
-      {% if state.is_transfer %}Transferências não podem ser editadas: apague e lance de novo para corrigir.
+      {% if state.is_transfer %}Esta transferência não pode ser editada aqui: pagamentos de fatura e movimentos de aplicações têm tela própria. Para corrigir, apague e lance de novo.
       {% else %}A fatura deste lançamento já está paga e faz parte do histórico: não pode ser alterada.{% endif %}
     </p>
     <div class="edit-actions"><button type="button" class="secondary" hx-get="/entries/{{ t.id }}/row{{ qs }}" hx-target="closest .row" hx-swap="outerHTML">Fechar</button></div>

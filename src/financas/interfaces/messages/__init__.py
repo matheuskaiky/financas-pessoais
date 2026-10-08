@@ -303,7 +303,12 @@ ERROR_MESSAGES: dict[str, str] = {
         "Todas as parcelas deste parcelamento estão em faturas pagas e ficam no histórico."
     ),
     "TRANSFER_NOT_EDITABLE": (
-        "Transferências não podem ser editadas: apague e lance de novo para corrigir."
+        "Esta transferência não pode ser editada aqui: pagamentos de fatura e movimentos de "
+        "aplicações têm tela própria. Para corrigir, apague e lance de novo."
+    ),
+    "TRANSFER_SIDES_CHANGED": (
+        "Uma transferência não pode ganhar nem perder uma conta controlada: "
+        "apague e lance de novo para corrigir."
     ),
     "INSTALLMENT_FIELD_LOCKED": (
         "Data e conta de uma parcela seguem a fatura e o cartão da compra: só descrição, "
@@ -378,12 +383,14 @@ FLASH_MESSAGES: dict[str, str] = {
         "Parcelas pendentes apagadas. As de faturas já pagas ficaram no histórico."
     ),
     "entry_updated": "Lançamento atualizado.",
+    "transfer_updated": "Transferência atualizada nas duas contas.",
     "category_renamed": "Categoria renomeada.",
     "payment_updated": "Pagamento atualizado. Saldos e situação da fatura foram recalculados.",
     "merged": "Lançamentos mesclados em um só. Cada item continua na sua categoria.",
     "anticipated": "Parcelas antecipadas para a fatura aberta.",
     "budget": "Metas atualizadas.",
     "valuation": "Avaliação registrada.",
+    "snapshot_deleted": "Registro de saldo removido.",
     "valuation_yield": "Avaliação registrada.",
     "flow": "Movimentação registrada.",
     "investment_settings": "Conta de investimento atualizada.",

@@ -434,7 +434,9 @@ def test_every_entry_honors_the_domain_rules(demo: Container) -> None:
     for t in entries:
         if t.kind is TransactionKind.TRANSFER and t.transfer_id:
             transfers.setdefault(t.transfer_id, []).append(t.amount_cents)
-    assert all(sum(legs) == 0 for legs in transfers.values())  # both legs, opposite amounts
+    # both legs, opposite amounts; the only lone legs are the two of the seeded legacy pair
+    assert all(sum(legs) == 0 for legs in transfers.values() if len(legs) == 2)
+    assert sorted(legs[0] for legs in transfers.values() if len(legs) == 1) == [-32_000, 32_000]
     assert all(
         c is None or re.fullmatch(r"#[0-9A-F]{6}", c) for c in (i.color for i in institutions)
     )
@@ -736,6 +738,45 @@ def test_only_the_demo_database_can_be_tracked() -> None:
     assert set(sqlite_files) <= {"data/demo.db"}, sqlite_files
 
 
+def test_demo_holdings_have_a_snapshot_timeline_from_their_cost_basis(demo: Container) -> None:
+    """Each note has a monthly timeline of snapshots; the profit is the gap to its cost basis."""
+    from financas.application.queries.investments import GetInvestmentProfit
+
+    profit = GetInvestmentProfit(demo.uow, demo.clock).execute()
+    notes = [s for s in profit.series if s.holding is not None]
+    assert len(notes) == 2 and profit.pending == 0
+    for series in notes:
+        assert series.holding is not None
+        assert len(series.rows) >= 3  # one point per month
+        first, last = series.rows[0].point, series.rows[-1].point
+        assert first.on_date > series.holding.applied_on and first.profit_cents > 0
+        assert last.profit_cents > 0 and last.return_rate is not None and last.return_rate > 0
+        dates = [r.point.on_date for r in series.rows]
+        assert dates == sorted(set(dates))  # one point per day, chronological
+    assert profit.profit_cents == profit.value_cents - profit.cost_cents > 0
+
+
+def test_demo_has_a_legacy_transfer_pair_for_the_reconciliation_scanner(demo: Container) -> None:
+    from financas.application.use_cases.reconcile_transfers import ScanTransfers
+
+    report = ScanTransfers(demo.uow).execute()
+    (pair,) = report.pairs  # only the seeded legacy pair; a dry run never changes the file
+    assert pair.proposal.applicable and pair.amount_cents == 32_000
+    assert report.ambiguous == 0
+
+
+def test_demo_contributions_to_a_note_are_transfers_linked_to_it(demo: Container) -> None:
+    with demo.uow as work:
+        notes = {h.id for h in work.holdings.list_all()}
+        linked = [
+            t
+            for h in notes
+            for t in work.transactions.list_between(dt.date.min, dt.date.max)
+            if t.holding_id == h
+        ]
+    assert linked and all(t.kind is TransactionKind.TRANSFER for t in linked)
+
+
 def test_the_committed_demo_database_is_synthetic_and_healthy() -> None:
     import sqlite3
 
@@ -764,6 +805,12 @@ def test_the_committed_demo_database_is_synthetic_and_healthy() -> None:
         )
         assert db.execute("PRAGMA journal_mode").fetchone() == ("delete",)  # not WAL: it is tracked
         assert db.execute("SELECT count(*) FROM transaction_splits").fetchone()[0] >= 3
+        # every note has at least three dated snapshots, one per day at most
+        snapshots = db.execute(
+            "SELECT holding_id, count(*), count(DISTINCT on_date) FROM balance_anchors"
+            " WHERE holding_id IS NOT NULL GROUP BY holding_id"
+        ).fetchall()
+        assert len(snapshots) == 2 and all(n >= 3 and n == d for _, n, d in snapshots)
         assert db.execute("SELECT count(DISTINCT merchant) FROM transactions").fetchone()[0] >= 8
         # an itemized entry has no category of its own: its items carry them (CLAUDE.md 9.10)
         assert (

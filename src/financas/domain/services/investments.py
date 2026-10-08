@@ -109,3 +109,68 @@ def allocate(items: Iterable[tuple[AssetClass, int | None]]) -> Allocation:
         for asset_class, value in sorted(totals.items(), key=lambda i: (-i[1], i[0].value))
     ]
     return Allocation(rows, total, pending)
+
+
+@dataclass(frozen=True)
+class SnapshotPoint:
+    """One dated balance snapshot with the profit measured since the beginning (not since the
+    first snapshot): what was contributed up to that day against what the balance says."""
+
+    on_date: dt.date
+    balance_cents: int  # the snapshot value: gross when informed, else net (the caller decides)
+    net_contributions_cents: int  # contributions - withdrawals dated up to and including the day
+    profit_cents: int  # balance - net contributions ("lucro nominal")
+    return_rate: float | None  # profit / net contributions; ``None`` when nothing net is invested
+    period_contributions_cents: int | None  # net flows since the previous snapshot (none: first)
+    balance_change_cents: int | None  # balance - previous balance (none at the first)
+    period_profit_cents: int | None  # balance change - period contributions (none at the first)
+    change_rate: float | None = None  # balance change / previous balance (none at the first)
+
+
+def profit_timeline(
+    snapshots: Iterable[AnchorPoint],
+    flows: Iterable[tuple[dt.date, int]],
+    *,
+    base_cents: int = 0,
+    base_date: dt.date | None = None,
+) -> list[SnapshotPoint]:
+    """The profit at each snapshot, oldest first (CLAUDE.md 9.6).
+
+    ``profit = balance - net contributions`` where net contributions are every flow dated on or
+    before the snapshot (a snapshot already contains the movements of its own day), and
+    ``period profit = (balance - previous balance) - net flows since the previous snapshot``.
+    A withdrawal lowers the net contributions, so the profit it leaves behind stays the same.
+
+    A holding starts from its cost basis: ``base_cents`` (the principal applied on ``base_date``)
+    plus the flows dated after ``base_date``; flows on or before it are already inside the base.
+    """
+    ordered = sorted(snapshots, key=lambda s: s.on_date)
+    moves = sorted(f for f in flows if base_date is None or f[0] > base_date)
+    points: list[SnapshotPoint] = []
+    previous: AnchorPoint | None = None
+    for snap in ordered:
+        net = base_cents + sum(c for d, c in moves if d <= snap.on_date)
+        profit = snap.balance_cents - net
+        if previous is None:
+            period = change = period_profit = None
+        else:
+            period = sum(c for d, c in moves if previous.on_date < d <= snap.on_date)
+            change = snap.balance_cents - previous.balance_cents
+            period_profit = change - period
+        points.append(
+            SnapshotPoint(
+                snap.on_date,
+                snap.balance_cents,
+                net,
+                profit,
+                profit / net if net > 0 else None,
+                period,
+                change,
+                period_profit,
+                change / previous.balance_cents
+                if previous is not None and previous.balance_cents > 0 and change is not None
+                else None,
+            )
+        )
+        previous = snap
+    return points

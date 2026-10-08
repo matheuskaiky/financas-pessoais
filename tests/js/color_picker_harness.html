@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Color picker (color-picker.js)</title>
+<script>
+// a fake EyeDropper (the real one needs a user gesture and a screen); ?nostub=1 leaves the browser's own
+if (!location.search.includes("nostub")) {
+  window.EyeDropper = class { open() { return Promise.resolve({ sRGBHex: "#12ab34" }); } };
+} else {
+  try { delete window.EyeDropper; } catch (e) { window.EyeDropper = undefined; }
+}
+</script>
+</head>
+<body>
+<form id="f">
+  <div class="field color-picker" data-color-picker data-fallback="#0F5C45" data-preview-target="#live">
+    <div class="cp-row">
+      <label class="cp-swatch"><span class="cp-preview is-empty" data-cp-preview style="background: #0F5C45"></span><input type="color" class="sr-only" data-cp-native value="#0f5c45"></label>
+      <input type="text" name="color" class="cp-hex" data-cp-hex value="" maxlength="7">
+      <button type="button" id="drop" data-cp-eyedropper hidden>Conta-gotas</button>
+      <button type="button" id="clear" data-cp-clear>Sem cor própria</button>
+    </div>
+    <div class="cp-presets"><button type="button" id="nubank" data-cp-preset="#820AD1"></button><button type="button" data-cp-preset="#FF7A00"></button></div>
+    <small data-cp-feedback id="fb"></small>
+  </div>
+  <button type="submit" id="go">salvar</button>
+</form>
+<div id="live"></div>
+<pre id="out">running</pre>
+<script>
+window.addEventListener("error", (e) => { document.getElementById("out").textContent = "FAIL harness crashed :: " + e.message + "\nDONE 1"; });
+</script>
+<script src="../../src/financas/interfaces/web/static/color-picker.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", async () => {
+const results = [];
+const check = (name, got, want) => results.push((got === want ? "PASS " : "FAIL ") + name + (got === want ? "" : " :: got " + JSON.stringify(got) + " want " + JSON.stringify(want)));
+const $ = (id) => document.getElementById(id);
+const hex = document.querySelector("[data-cp-hex]"), native = document.querySelector("[data-cp-native]"), preview = document.querySelector("[data-cp-preview]");
+const type = (text) => { hex.value = text; hex.dispatchEvent(new Event("input", { bubbles: true })); };
+const bg = () => preview.style.background.replace(/\s/g, "").toLowerCase();
+let reached = false;
+$("f").addEventListener("submit", (e) => { e.preventDefault(); reached = true; });  // a form that gets the event is "sent"
+const blocked = () => { reached = false; $("f").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); return !reached; };
+const stub = !location.search.includes("nostub");
+
+if (stub) {
+  check("the eyedropper button is shown where the API exists", $("drop").hidden, false);
+  check("the empty swatch is hatched", preview.classList.contains("is-empty"), true);
+
+  type("ff7a00");
+  check("typing adds # and upper-cases", hex.value, "#FF7A00");
+  check("the swatch follows the HEX text", bg(), "rgb(255,122,0)");
+  check("the system picker follows", native.value, "#ff7a00");
+  check("a full color is no longer hatched", preview.classList.contains("is-empty"), false);
+  check("the live preview target follows", $("live").style.getPropertyValue("--live-color"), "#FF7A00");
+
+  type("#zz12!3456789");
+  check("junk is stripped and cut to 6 digits", hex.value, "#12345678".slice(0, 7));
+
+  native.value = "#820ad1"; native.dispatchEvent(new Event("input", { bubbles: true }));
+  check("the system picker fills the HEX text", hex.value, "#820AD1");
+  check("and the swatch", bg(), "rgb(130,10,209)");
+
+  $("nubank").click();
+  check("a preset fills the HEX text", hex.value, "#820AD1");
+
+  $("drop").click();
+  await new Promise((r) => setTimeout(r, 50));
+  check("the eyedropper fills the HEX text", hex.value, "#12AB34");
+  check("the eyedropper button is usable again", $("drop").disabled, false);
+
+  $("clear").click();
+  check("clearing empties the field (no color of its own)", hex.value, "");
+  check("and hatches the swatch again", preview.classList.contains("is-empty"), true);
+  check("an empty color submits", blocked(), false);
+
+  type("#12AB");
+  check("a half-typed color stops the submit", blocked(), true);
+  check("and says why", $("fb").textContent.includes("#RRGGBB"), true);
+  type("#12AB34");
+  check("a full color submits", blocked(), false);
+  check("with the message gone", $("fb").textContent, "");
+} else {
+  check("without EyeDropper the button stays hidden", $("drop").hidden, true);
+  type("ff7a00");
+  check("the rest still works without it", hex.value, "#FF7A00");
+  $("drop").click();  // hidden, but a stray click must not throw
+  check("no error without the API", hex.value, "#FF7A00");
+}
+const failed = results.filter((r) => r.startsWith("FAIL")).length;
+$("out").textContent = results.join("\n") + "\nDONE " + failed;
+});
+</script>
+</body>
+</html>

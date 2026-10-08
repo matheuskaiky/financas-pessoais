@@ -1726,7 +1726,9 @@ def test_edit_entry_errors_keep_the_form(client: TestClient, container: Containe
     assert only_entry(container, checking) == entry  # nothing was saved
 
 
-def test_a_transfer_cannot_be_edited(client: TestClient, container: Container) -> None:
+def test_a_transfer_between_own_accounts_is_edited_on_both_legs(
+    client: TestClient, container: Container
+) -> None:
     checking, savings = setup_accounts(client, container)
     client.post(
         "/transfers",
@@ -1740,13 +1742,19 @@ def test_a_transfer_cannot_be_edited(client: TestClient, container: Container) -
     with container.uow as work:
         leg = work.transactions.list_by_account(checking)[0]
     form = client.get(f"/entries/{leg.id}/edit", headers=HX)
-    assert "Transferências não podem ser editadas" in form.text and "<form" not in form.text
-    refused = client.post(
+    assert "Salvar transferência" in form.text and 'name="to_account"' in form.text
+    saved = client.post(
         f"/entries/{leg.id}/edit",
-        data={"amount": "1,00", "date": dt.date.today().isoformat(), "description": "x"},
+        data={
+            "amount": "1,00",
+            "date": dt.date.today().isoformat(),
+            "description": "x",
+            "from_account": checking,
+            "to_account": savings,
+        },
         headers=HX,
     )
-    assert "Transferências não podem ser editadas" in refused.text
+    assert saved.status_code == 200 and "transfer_updated" in saved.headers["hx-redirect"]
 
 
 def buy_on_card(client: TestClient, card: str, days_ago: int, **extra: str) -> None:

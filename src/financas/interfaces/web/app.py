@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import re
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -26,6 +27,7 @@ from financas.application.queries.entries import filter_by_method, parse_method_
 from financas.application.queries.investments import (
     GetFixedIncomeOverview,
     GetInvestmentPeriodTotals,
+    GetInvestmentProfit,
     GetNetWorth,
     GetYearEndPosition,
     ListHoldings,
@@ -44,6 +46,7 @@ from financas.application.queries.selection import ListRowSelections
 from financas.application.queries.suggestions import MAX_LIMIT as MAX_SUGGESTIONS
 from financas.application.queries.suggestions import ListSuggestions
 from financas.application.queries.summary import GetSummary, Period
+from financas.application.queries.transfer_links import ListTransferLinks
 from financas.application.queries.unified_cards import (
     ListUnifiedTimeline,
     consolidate_plans,
@@ -82,6 +85,9 @@ from financas.application.use_cases.catalog import (
     SetInvestmentSettings,
 )
 from financas.application.use_cases.holdings import (
+    DeleteHoldingSnapshot,
+    RecordHoldingSnapshot,
+    RecordHoldingSnapshotCommand,
     RecordHoldingValuation,
     RecordHoldingValuationCommand,
     RedeemHolding,
@@ -107,11 +113,13 @@ from financas.application.use_cases.transactions import (
 from financas.container import Container
 from financas.domain.errors import DomainError
 from financas.domain.models import (
+    Account,
     AccountKind,
     AssetClass,
     Category,
     CategoryGroup,
     CategoryKind,
+    HoldingStatus,
     Indexer,
     InstrumentType,
     InvestmentTracking,
@@ -150,7 +158,7 @@ from financas.interfaces.messages.unified_cards import (
 from financas.interfaces.web import fp_charts, fp_money, nav
 from financas.interfaces.web.payment_dates import payment_window
 from financas.interfaces.web.routes import MODULES, WebContext
-from financas.interfaces.web.shared import Lookups
+from financas.interfaces.web.shared import Lookups, transfer_title
 from financas.interfaces.web.shared import enum_of as _enum
 from financas.interfaces.web.shared import int_of as _int
 from financas.interfaces.web.shared import opt_int as _opt_int
@@ -168,9 +176,13 @@ _ENTRY_KINDS = (TransactionKind.EXPENSE, TransactionKind.INCOME, TransactionKind
 PAYMENT_CODES = frozenset(m.value for m in PaymentMethod)
 
 
-def _color(color: str | None, use_color: str | None) -> str | None:
-    """A color input always sends a value, so a checkbox says whether to use it."""
-    return color if use_color else None
+def _color(color: str | None) -> str | None:
+    """The hex text of the color picker: empty means "no color of its own" (it inherits or uses the
+    default); six hex digits without the ``#`` are accepted (no JavaScript, or typed by hand)."""
+    text = (color or "").strip()
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", text):
+        text = "#" + text
+    return text or None
 
 
 async def _upload(file: UploadFile | None) -> bytes | None:
@@ -400,6 +412,39 @@ def create_app(c: Container) -> FastAPI:
                 kept[key] = value
         return kept
 
+    def check_transfer_holding(
+        from_id: str | None, to_id: str | None, holding_id: str | None
+    ) -> str | None:
+        """The note of a contribution or redemption, as the transfer form sends it.
+
+        On an account tracked by holdings the money must say which note it goes into or comes
+        from (``HOLDING_REQUIRED``); a note on any other account is refused. The rest of the rules
+        (the note sits on one side of the transfer) are the use case's.
+        """
+        with c.uow as work:
+            sides = [work.accounts.get(i) for i in (from_id, to_id) if i]
+            held = work.holdings.get(holding_id) if holding_id else None
+        by_holdings = [
+            x
+            for x in sides
+            if x is not None
+            and x.kind is AccountKind.INVESTMENT
+            and x.tracking is InvestmentTracking.HOLDINGS
+        ]
+        if holding_id and held is None:
+            raise DomainError("NOT_FOUND", entity="holding")
+        if held is not None and held.status is HoldingStatus.REDEEMED:
+            raise DomainError("HOLDING_REDEEMED")
+        if by_holdings and not holding_id:
+            raise DomainError("HOLDING_REQUIRED")
+        if holding_id and not by_holdings:
+            raise DomainError("ACCOUNT_NOT_HOLDINGS_LEVEL")
+        return holding_id
+
+    def accounts_now() -> list[Account]:
+        with c.uow as work:
+            return work.accounts.list_all()
+
     def lookups() -> Lookups:
         with c.uow as work:
             institutions = {
@@ -563,6 +608,7 @@ def create_app(c: Container) -> FastAPI:
                 limit = (at // PAGE_SIZE + 1) * PAGE_SIZE
         shown = rows[:limit]
         selections = ListRowSelections(c.uow, c.clock).execute(shown, purchases, splits)
+        transfer_links = ListTransferLinks(c.uow).execute(shown)
         accounts = data["accounts"]
         entry_accounts = [
             a
@@ -575,6 +621,9 @@ def create_app(c: Container) -> FastAPI:
             for a in accounts  # type: ignore[attr-defined]
             if a.is_active and a.kind is not AccountKind.CREDIT_CARD
         ]
+        with c.uow as work:
+            every_holding = work.holdings.list_all()
+            transfer_holdings = [h for h in every_holding if h.status is HoldingStatus.ACTIVE]
         last_used = next(
             (t.account_id for t in recent if t.kind is not TransactionKind.TRANSFER), None
         )
@@ -589,6 +638,7 @@ def create_app(c: Container) -> FastAPI:
             **data,
             "rows": shown,
             "selections": selections,
+            "transfer_links": transfer_links,
             "splits": splits,
             "plan_purchases": plan_by_anchor,
             "row_count": len(rows),
@@ -606,6 +656,8 @@ def create_app(c: Container) -> FastAPI:
             "filters": filters,
             "entry_accounts": entry_accounts,
             "transfer_accounts": transfer_accounts,
+            "transfer_holdings": transfer_holdings,
+            "holding_names": {h.id: h.name for h in every_holding},
             "category_by_id": categories,
             "form": {
                 "kind": kind,
@@ -762,6 +814,7 @@ def create_app(c: Container) -> FastAPI:
         account_id: Annotated[str, Form()] = "",
         from_account: Annotated[str, Form()] = "",
         to_account: Annotated[str, Form()] = "",
+        holding_id: Annotated[str, Form()] = "",
         category_id: Annotated[str, Form()] = "",
         recurring: Annotated[str, Form()] = "",
         notes: Annotated[str, Form()] = "",
@@ -786,14 +839,20 @@ def create_app(c: Container) -> FastAPI:
             if kind != TransactionKind.TRANSFER.value and not account_id:
                 raise DomainError("ACCOUNT_REQUIRED")
             if kind == TransactionKind.TRANSFER.value:
+                holding = check_transfer_holding(
+                    from_account or None, to_account or None, holding_id or None
+                )
                 legs = RegisterTransfer(c.uow).execute(
                     RegisterTransferCommand(
                         from_account or None,
                         to_account or None,
                         parse_date(date, today()),
                         parse_brl(amount),
-                        description,
+                        transfer_title(
+                            description, from_account or None, to_account or None, accounts_now()
+                        ),
                         notes or None,
+                        holding_id=holding,
                     )
                 )
                 kept["month"] = str(YearMonth.from_date(legs[0].posted_on))
@@ -858,7 +917,9 @@ def create_app(c: Container) -> FastAPI:
                     to_account or None,
                     parse_date(date, today()),
                     parse_brl(amount),
-                    description,
+                    transfer_title(
+                        description, from_account or None, to_account or None, accounts_now()
+                    ),
                 )
             )
         except DomainError as error:
@@ -902,11 +963,10 @@ def create_app(c: Container) -> FastAPI:
         name: Annotated[str, Form()],
         group: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)  # reject a bad image before anything is created
@@ -930,13 +990,12 @@ def create_app(c: Container) -> FastAPI:
         institution_id: Annotated[str, Form()],
         kind: Annotated[str, Form()] = "checking",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         opening_balance: Annotated[str, Form()] = "",
         opening_date: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)
@@ -966,7 +1025,6 @@ def create_app(c: Container) -> FastAPI:
         target: AppearanceTarget,
         entity_id: str,
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         remove_image: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
@@ -976,7 +1034,7 @@ def create_app(c: Container) -> FastAPI:
                 SetAppearanceCommand(
                     target,
                     entity_id,
-                    color=_color(color, use_color),
+                    color=_color(color),
                     image=await _upload(image),
                     remove_image=bool(remove_image),
                 )
@@ -1204,11 +1262,10 @@ def create_app(c: Container) -> FastAPI:
         due_day: Annotated[str, Form()],
         limit: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
         image: Annotated[UploadFile | None, File()] = None,
     ):
         try:
-            chosen = _color(color, use_color)
+            chosen = _color(color)
             data = await _upload(image)
             if data is not None:
                 detect_image_type(data)
@@ -1291,11 +1348,10 @@ def create_app(c: Container) -> FastAPI:
         card_id: str,
         nickname: Annotated[str, Form()],
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
     ):
         try:
             UpdateCardDetails(c.uow).execute(
-                UpdateCardDetailsCommand(card_id, nickname, _color(color, use_color))
+                UpdateCardDetailsCommand(card_id, nickname, _color(color))
             )
         except DomainError as error:
             if error.code == "NOT_FOUND":
@@ -1551,11 +1607,14 @@ def create_app(c: Container) -> FastAPI:
         chosen = year if year and 1900 <= year <= 9999 else today().year
         data = lookups()
         overview = ListInvestments(c.uow, c.clock, c.settings.valuation_stale_days).execute()
+        profit = GetInvestmentProfit(c.uow, c.clock).execute()
         this_month = Period.month(YearMonth.from_date(today()))
         accounts = data["accounts"]
         return {
             **data,
             "overview": overview,
+            "profit": profit,
+            "profit_by_holding": {x.holding.id: x for x in profit.series if x.holding},
             "year": chosen,
             "years": sorted({today().year - 5 + n for n in range(7)} | {chosen}),
             "year_totals": GetInvestmentPeriodTotals(c.uow).execute(Period.year(chosen)),
@@ -1628,7 +1687,7 @@ def create_app(c: Container) -> FastAPI:
         request: Request,
         account_id: str,
         date: Annotated[str, Form()],
-        net: Annotated[str, Form()],
+        net: Annotated[str, Form()] = "",
         gross: Annotated[str, Form()] = "",
         note: Annotated[str, Form()] = "",
     ):
@@ -1637,7 +1696,8 @@ def create_app(c: Container) -> FastAPI:
                 RecordBalanceCommand(
                     account_id,
                     parse_date(date, today()),
-                    parse_brl(net),
+                    # "Atualizar saldo" sends only the gross position: it is also the figure we hold
+                    parse_brl(net if net.strip() else gross),
                     note or None,
                     gross_balance_cents=parse_brl(gross) if gross.strip() else None,
                 )
@@ -1739,6 +1799,39 @@ def create_app(c: Container) -> FastAPI:
         if result.difference_cents is not None:
             return back("/investments", "valuation_yield", diff=result.difference_cents)
         return back("/investments", "valuation")
+
+    @app.post("/investments/holdings/{holding_id}/snapshots")
+    def holding_snapshot(
+        request: Request,
+        holding_id: str,
+        as_of_date: Annotated[str, Form()],
+        gross: Annotated[str, Form()] = "",
+        gross_value_cents: Annotated[str, Form()] = "",
+        note: Annotated[str, Form()] = "",
+    ):
+        """One dated position of a note; the same day again replaces it in place."""
+        try:
+            RecordHoldingSnapshot(c.uow).execute(
+                RecordHoldingSnapshotCommand(
+                    holding_id,
+                    parse_date(as_of_date, today()),
+                    _int(gross_value_cents, "INVALID_NUMBER")
+                    if gross_value_cents.strip()
+                    else parse_brl(gross),
+                    note or None,
+                )
+            )
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "valuation")
+
+    @app.post("/investments/holdings/{holding_id}/snapshots/{anchor_id}/delete")
+    def holding_snapshot_delete(request: Request, holding_id: str, anchor_id: str):
+        try:
+            DeleteHoldingSnapshot(c.uow).execute(holding_id, anchor_id)
+        except DomainError as error:
+            return render(request, "investments.html", investments_context(None), error=error)
+        return back("/investments", "snapshot_deleted")
 
     @app.post("/investments/holdings/{holding_id}/flags")
     def holding_flags(
@@ -1921,7 +2014,6 @@ def create_app(c: Container) -> FastAPI:
         kind: Annotated[str, Form()],
         budget: Annotated[str, Form()] = "",
         color: Annotated[str, Form()] = "",
-        use_color: Annotated[str, Form()] = "",
     ):
         try:
             CreateCategory(c.uow).execute(
@@ -1930,7 +2022,7 @@ def create_app(c: Container) -> FastAPI:
                     group=_enum(CategoryGroup, group),
                     kind=_enum(CategoryKind, kind),
                     monthly_budget_cents=parse_brl(budget) if budget.strip() else None,
-                    color=_color(color, use_color),
+                    color=_color(color),
                 )
             )
         except DomainError as error:

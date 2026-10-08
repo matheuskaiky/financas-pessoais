@@ -162,6 +162,33 @@ document.body.addEventListener("htmx:confirm", function (event) {
     to.addEventListener("change", function () { exclude(to, from); });
     exclude(from, to);
     exclude(to, from);
+    // "Destino do aporte" / "Origem do resgate": the note of an investment account, when there is one
+    const holdingField = document.querySelector("[data-transfer-holding]");
+    if (holdingField) {
+      const picker = holdingField.querySelector("select");
+      const label = holdingField.querySelector("[data-transfer-holding-label]");
+      const syncHolding = function () {
+        const chosen = function (select) { return select.selectedOptions[0]; };
+        const investing = function (select) { const o = chosen(select); return o && o.dataset.accountKind === "investment" ? o : null; };
+        const target = investing(to) || investing(from);
+        const accountId = target ? target.value : "";
+        const byHoldings = Boolean(target) && target.dataset.tracking === "holdings";
+        let any = false;
+        Array.from(picker.options).forEach(function (option) {
+          if (option.dataset.free !== undefined) { option.hidden = byHoldings; option.disabled = byHoldings; return; }
+          const show = option.dataset.account === accountId;
+          option.hidden = !show; option.disabled = !show; any = any || show;
+          if (!show && option.selected) picker.value = "";
+        });
+        if (byHoldings && picker.value === "") { const first = Array.from(picker.options).find(function (o) { return !o.disabled && o.value; }); if (first) picker.value = first.value; }
+        holdingField.hidden = !target || (!any && !byHoldings);
+        picker.disabled = holdingField.hidden;  // a hidden field sends nothing
+        label.textContent = investing(to) ? "Destino do aporte" : "Origem do resgate";
+      };
+      from.addEventListener("change", syncHolding);
+      to.addEventListener("change", syncHolding);
+      syncHolding();
+    }
   }
 })();
 

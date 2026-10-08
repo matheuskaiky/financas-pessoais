@@ -148,12 +148,18 @@
       <div class="only-transfer stack-form">
         <label class="field"><span>De</span>
           <select name="from_account" data-transfer-from><option value="">Conta não controlada</option>
-            {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.from_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
+            {% for a in transfer_accounts %}<option value="{{ a.id }}" data-account-kind="{{ a.kind.value }}" data-tracking="{{ a.tracking.value if a.tracking else '' }}" {{ 'selected' if form.from_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
         <label class="field"><span>Para</span>
           <select name="to_account" data-transfer-to><option value="">Conta não controlada</option>
-            {% for a in transfer_accounts %}<option value="{{ a.id }}" {{ 'selected' if form.to_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
+            {% for a in transfer_accounts %}<option value="{{ a.id }}" data-account-kind="{{ a.kind.value }}" data-tracking="{{ a.tracking.value if a.tracking else '' }}" {{ 'selected' if form.to_account == a.id }}>{{ a.nickname }}</option>{% endfor %}
           </select></label>
+        <label class="field" data-transfer-holding hidden><span data-transfer-holding-label>Destino do aporte</span>
+          <select name="holding_id">
+            <option value="" data-free>Saldo livre da conta / corretora</option>
+            {% for h in transfer_holdings %}<option value="{{ h.id }}" data-account="{{ h.account_id }}" {{ 'selected' if form.holding_id == h.id }}>{{ h.name }}</option>{% endfor %}
+          </select>
+          <small class="hint"><a href="/investments#holdings">+ Nova nota de investimento</a></small></label>
         <p class="hint">Transferências, aportes e resgates não contam como receita nem despesa.</p>
       </div>
 

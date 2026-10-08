@@ -103,3 +103,28 @@ def test_a_new_row_is_scrolled_to_and_pulsed_from_the_url_fragment() -> None:
         "another row is pulsed",
     ):
         assert f"PASS {name}" in report, name
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_color_picker_syncs_hex_native_presets_and_eyedropper() -> None:
+    report = run_harness("tests/js/color_picker_harness.html")
+    failures = [line for line in report.splitlines() if line.startswith("FAIL")]
+    assert not failures and "DONE 0" in report, report
+    for name in (
+        "typing adds # and upper-cases",
+        "the swatch follows the HEX text",
+        "the system picker fills the HEX text",
+        "a preset fills the HEX text",
+        "the eyedropper fills the HEX text",
+        "a half-typed color stops the submit",
+        "a full color submits",
+    ):
+        assert f"PASS {name}" in report, name
+
+
+@pytest.mark.skipif(browser_command() is None, reason="no headless Chromium/Edge installed")
+def test_color_picker_degrades_without_the_eyedropper_api() -> None:
+    report = run_harness("tests/js/color_picker_harness.html?nostub=1")
+    assert "DONE 0" in report and "PASS without EyeDropper the button stays hidden" in report, (
+        report
+    )

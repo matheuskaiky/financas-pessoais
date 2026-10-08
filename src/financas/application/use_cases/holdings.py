@@ -246,3 +246,55 @@ class RedeemHolding:
             uow.holdings.update(replace(holding, status=HoldingStatus.REDEEMED))
             uow.commit()
         return legs
+
+
+@dataclass(frozen=True)
+class RecordHoldingSnapshotCommand:
+    """The gross position of one note on a reference date (an upsert per holding and date)."""
+
+    holding_id: str
+    as_of_date: dt.date
+    gross_value_cents: int
+    note: str | None = None
+
+
+class RecordHoldingSnapshot:
+    """Record (or correct) a dated snapshot of a holding; the current value follows the latest one.
+
+    A snapshot is a holding valuation (``balance_anchors`` with ``holding_id``): there is one per
+    holding and day, so a second one on the same day replaces the first in place. The value typed is
+    the gross position; the net redemption value is taken as the same figure (the system never
+    estimates tax), so totals that use the net value keep working.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, cmd: RecordHoldingSnapshotCommand) -> RecordHoldingValuationResult:
+        if cmd.gross_value_cents < 0:
+            raise DomainError("AMOUNT_NOT_POSITIVE")
+        return RecordHoldingValuation(self._uow).execute(
+            RecordHoldingValuationCommand(
+                cmd.holding_id,
+                cmd.as_of_date,
+                cmd.gross_value_cents,
+                cmd.gross_value_cents,
+                cmd.note,
+            )
+        )
+
+
+class DeleteHoldingSnapshot:
+    """Remove one wrong snapshot of a holding; the others stay."""
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    def execute(self, holding_id: str, anchor_id: str) -> None:
+        with self._uow as uow:
+            found(uow.holdings.get(holding_id), "holding")
+            mine = {a.id for a in uow.anchors.list_for_holding(holding_id)}
+            if anchor_id not in mine:
+                raise DomainError("NOT_FOUND", entity="snapshot")
+            uow.anchors.delete(anchor_id)
+            uow.commit()
