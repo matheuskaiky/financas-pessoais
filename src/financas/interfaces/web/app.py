@@ -4,7 +4,7 @@ import datetime as dt
 import json
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -374,6 +374,27 @@ def create_app(c: Container) -> FastAPI:
         suffix = f"?{urlencode(params)}" if params else ""
         return RedirectResponse(path + suffix, status_code=303)
 
+    def return_filters(text: str) -> dict[str, str]:
+        """The month and filters the entries list was showing (a form's hidden ``return_query``).
+
+        Only known keys with non-empty, valid values survive: it is echoed into a redirect."""
+        wanted = {"month", "account", "kind", "category", "q", "method"}
+        kept: dict[str, str] = {}
+        for key, value in parse_qsl(text.lstrip("?")[:2_000]):
+            value = value.strip()[:200]
+            if key not in wanted or not value:
+                continue
+            if key == "month":
+                try:
+                    value = str(YearMonth.parse(value))
+                except DomainError:
+                    continue
+            if key == "method":
+                value = parse_method_filter(value)
+            if value:
+                kept[key] = value
+        return kept
+
     def lookups() -> Lookups:
         with c.uow as work:
             institutions = {
@@ -565,6 +586,10 @@ def create_app(c: Container) -> FastAPI:
             "next_limit": limit + PAGE_SIZE,
             "summary": summary,
             "month_value": str(ym),
+            # what the quick form sends back, so a new entry returns to the same month and filters
+            "return_query": urlencode(
+                {"month": str(ym), **{k: v for k, v in filters.items() if v}}
+            ),
             "month_label": format_month_long(ym),
             "prev_month": str(ym.add_months(-1)),
             "next_month": str(ym.add_months(1)),
@@ -678,6 +703,7 @@ def create_app(c: Container) -> FastAPI:
         notes: Annotated[str, Form()] = "",
         merchant: Annotated[str, Form()] = "",
         payment_method: Annotated[str, Form()] = "",
+        return_query: Annotated[str, Form()] = "",
         splits_present: Annotated[str, Form()] = "",
         item_description: Annotated[list[str] | None, Form()] = None,
         item_category: Annotated[list[str] | None, Form()] = None,
@@ -691,6 +717,7 @@ def create_app(c: Container) -> FastAPI:
             )
             if d.strip() or a.strip()
         ]
+        kept = return_filters(return_query)  # the month and filters the list was showing
         try:
             if kind != TransactionKind.TRANSFER.value and not account_id:
                 raise DomainError("ACCOUNT_REQUIRED")
@@ -705,7 +732,7 @@ def create_app(c: Container) -> FastAPI:
                         notes or None,
                     )
                 )
-                return back("/entries", "transfer")
+                return back("/entries", "transfer", **kept)
             RegisterTransaction(c.uow).execute(
                 RegisterTransactionCommand(
                     account_id=account_id,
@@ -730,10 +757,18 @@ def create_app(c: Container) -> FastAPI:
             return render(
                 request,
                 "entries.html",
-                entries_context(None, {}, form, items=typed if splits_present else None),
+                entries_context(
+                    kept.get("month"),
+                    {
+                        name: kept.get(name, "")
+                        for name in ("account", "kind", "category", "q", "method")
+                    },
+                    form,
+                    items=typed if splits_present else None,
+                ),
                 error=error,
             )
-        return back("/entries", "entry")
+        return back("/entries", "entry", **kept)
 
     @app.post("/transfers")
     def add_transfer(

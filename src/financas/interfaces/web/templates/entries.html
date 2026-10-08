@@ -27,9 +27,10 @@
 
 <div class="cols entries">
   <div class="stack" style="gap: 16px">
+    <div id="entries-results" class="stack" style="gap: 16px">
     <form method="get" action="/entries" role="search" class="filter-bar">
       <input type="hidden" name="month" value="{{ month_value }}">
-      {% if filters.method %}<input type="hidden" name="method" value="{{ filters.method }}">{% endif %}
+      <input type="hidden" name="method" value="{{ filters.method or '' }}">
       <label class="field f-search"><span class="sr-only">Buscar (ignora acentos)</span>
         <span class="search-box"><svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input type="search" name="q" value="{{ filters.q }}" placeholder="Buscar" title="A busca ignora acentos e maiúsculas (ex.: café são joão)"></span></label>
       <label class="field"><span class="sr-only">Tipo</span>
@@ -48,7 +49,6 @@
       {% if filtered %}<a class="btn secondary" href="/entries?month={{ month_value }}">Limpar filtros</a>{% endif %}
     </form>
 
-    <div id="entries-results" class="stack" style="gap: 16px">
     <div class="method-chips" role="group" aria-label="Forma de pagamento">
       {% for code, label in method_chips %}
       <a class="method-chip" id="method-chip-{{ code or 'all' }}" href="{{ filter_url({'method': code}) }}"{% if (filters.method or '') == code %} aria-current="true"{% endif %} hx-get="{{ filter_url({'method': code}) }}" hx-target="#entries-results" hx-select="#entries-results" hx-swap="outerHTML" hx-push-url="true" hx-sync="#entries-results:replace">{{ label }}</a>
@@ -96,6 +96,7 @@
       <p class="empty">Cadastre uma conta corrente em <a href="/accounts">Contas</a> para lançar receitas e despesas.</p>
     {% else %}
     <form method="post" action="/entries" class="quick-form">
+      <input type="hidden" name="return_query" value="{{ return_query }}">
       <div class="segmented" role="radiogroup" aria-label="Tipo"
            hx-get="/entries/category-field" hx-trigger="change" hx-target="#category-field"
            hx-include="[name='kind']:checked,[name='description'],[name='category_id']">

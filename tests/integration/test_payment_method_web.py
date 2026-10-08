@@ -143,3 +143,104 @@ def test_a_card_purchase_edit_form_has_no_method_field(
     fone = by_description(container, card)["Fone"]
     assert fone.payment_method is not None and fone.payment_method.value == "cartao_credito"
     assert "data-method-field" not in client.get(f"/entries/{fone.id}/edit", headers=HX).text
+
+
+# --- filters survive month changes and new entries; "Limpar filtros" ---
+
+
+def clear_href(page: str) -> str:
+    match = re.search(r'<a class="btn secondary" href="([^"]+)">Limpar filtros</a>', page)
+    assert match
+    return match.group(1).replace("&amp;", "&")
+
+
+def test_month_navigation_keeps_every_active_filter(
+    client: TestClient, container: Container
+) -> None:
+    seed_entries(client, container)
+    page = client.get("/entries?month=2026-09&method=pix&q=feira&kind=expense").text
+    links = [
+        m.replace("&amp;", "&")
+        for m in re.findall(
+            r'<a class="icon-btn" href="([^"]+)" aria-label="(?:Mês anterior|Próximo mês)"', page
+        )
+    ]
+    assert len(links) == 2
+    for link, month in zip(links, ("2026-08", "2026-10"), strict=True):
+        assert f"month={month}" in link and "method=pix" in link
+        assert "q=feira" in link and "kind=expense" in link
+
+
+def test_a_new_entry_returns_to_the_same_month_and_filters(
+    client: TestClient, container: Container
+) -> None:
+    checking, _ = seed_entries(client, container)
+    page = client.get("/entries?month=2026-09&method=cartao_credito&q=fone").text
+    hidden = re.search(r'name="return_query" value="([^"]*)"', page)
+    assert hidden
+    query = hidden.group(1).replace("&amp;", "&")
+    assert "month=2026-09" in query and "method=cartao_credito" in query and "q=fone" in query
+    done = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "date": "2026-09-10",
+            "amount": "12,00",
+            "description": "Café",
+            "account_id": checking,
+            "payment_method": "pix",
+            "return_query": query + "&evil=1&method=cheque",
+        },
+    )
+    assert done.status_code == 303
+    location = done.headers["location"]
+    assert location.startswith("/entries?") and "ok=entry" in location
+    assert (
+        "month=2026-09" in location and "method=cartao_credito" in location and "q=fone" in location
+    )
+    assert "evil" not in location and "cheque" not in location  # only known, valid keys
+    assert (
+        "Novo lançamento" in client.get(location).text and client.get(location).status_code == 200
+    )
+
+
+def test_a_failed_submission_keeps_the_filters_on_the_page(
+    client: TestClient, container: Container
+) -> None:
+    seed_entries(client, container)
+    page = client.post(
+        "/entries",
+        data={
+            "kind": "expense",
+            "date": "2026-09-10",
+            "amount": "12,00",
+            "description": "Sem conta",
+            "return_query": "month=2026-09&method=boleto&q=cond",
+        },
+    )
+    assert "Escolha uma conta" in page.text or page.status_code in (200, 400)
+    assert re.search(r'id="method-chip-boleto"[^>]*aria-current="true"', page.text)
+    assert 'value="cond"' in page.text and "setembro" in page.text.lower()
+
+
+def test_limpar_filtros_shows_only_while_a_filter_is_active_and_keeps_the_month(
+    client: TestClient, container: Container
+) -> None:
+    seed_entries(client, container)
+    assert "Limpar filtros" not in client.get("/entries?month=2026-10").text
+    for query in ("method=debito", "q=feira", "kind=expense"):
+        page = client.get(f"/entries?month=2026-10&{query}").text
+        assert "Limpar filtros" in page, query
+        assert clear_href(page) == "/entries?month=2026-10"
+    assert "Limpar filtros" not in client.get("/entries?month=2026-10&method=").text
+    assert "Limpar filtros" not in client.get("/entries?month=2026-10&method=cheque").text
+
+
+def test_a_chip_swap_replaces_the_filter_bar_too_so_limpar_filtros_is_never_stale(
+    client: TestClient, container: Container
+) -> None:
+    seed_entries(client, container)
+    page = client.get("/entries?month=2026-10&method=pix").text
+    region = page[page.index('id="entries-results"') :]
+    assert 'class="filter-bar"' in region.split('class="method-chips"')[0]  # bar is inside
+    assert "Limpar filtros" in region and 'name="method" value="pix"' in region
