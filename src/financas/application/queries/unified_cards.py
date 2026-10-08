@@ -11,11 +11,18 @@
 """
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
-from financas.application.queries.cards import CardView, is_locked, statement_view
+from financas.application.queries.cards import (
+    CardView,
+    PlanView,
+    ScheduleRow,
+    is_locked,
+    statement_view,
+)
 from financas.domain.models import Account, StatementStatus, Transaction
+from financas.domain.money import YearMonth
 from financas.domain.ports import Clock, UnitOfWork
 from financas.domain.services.statements import LimitUsage, limit_usage
 
@@ -33,6 +40,38 @@ class UnifiedSummary:
     with_limit: int
     without_limit: int
     usage: LimitUsage | None  # None when no included card has a limit
+
+
+_STATUS_RANK = {
+    StatementStatus.CLOSED: 0,
+    StatementStatus.OPEN: 1,
+    StatementStatus.FUTURE: 2,
+    StatementStatus.PAID: 3,
+}
+
+
+def consolidate_plans(plans: Iterable[PlanView], card_ids: Collection[str]) -> list[PlanView]:
+    """The ongoing plans of the included cards, in the order of the card screen."""
+    return [p for p in plans if p.plan.account_id in card_ids]
+
+
+def consolidate_schedule(
+    rows: Iterable[ScheduleRow], card_ids: Collection[str]
+) -> list[ScheduleRow]:
+    """One row per month: the installments of every included card added up. Cards close on
+    different days, so a month can be "closed" on one card and "open" on another: the row shows the
+    most urgent status (closed, then open, then future)."""
+    months: dict[YearMonth, tuple[StatementStatus, int]] = {}
+    for row in rows:
+        if row.account_id not in card_ids:
+            continue
+        status, amount = months.get(row.month, (row.status, 0))
+        if _STATUS_RANK[row.status] < _STATUS_RANK[status]:
+            status = row.status
+        months[row.month] = (status, amount + row.amount_cents)
+    return [
+        ScheduleRow("", month, status, amount) for month, (status, amount) in sorted(months.items())
+    ]
 
 
 def parse_card_ids(text: str, known: Sequence[str]) -> list[str]:

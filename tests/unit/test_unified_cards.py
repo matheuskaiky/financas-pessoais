@@ -198,3 +198,27 @@ def test_keyset_pages_have_no_duplicates_or_gaps_when_rows_share_a_date(
 
 def test_a_bad_cursor_is_ignored() -> None:
     assert parse_cursor("garbage") is None and parse_cursor("2026-13-40_x") is None
+
+
+def test_installments_are_consolidated_per_month_over_the_included_cards(
+    uow: MemoryUnitOfWork, institution: Institution
+) -> None:
+    from financas.application.queries.cards import InstallmentSchedule, ListActiveInstallments
+    from financas.application.queries.unified_cards import consolidate_plans, consolidate_schedule
+
+    nu = make_card(uow, institution, "Nubank", 100_000)
+    itau = make_card(uow, institution, "Itaú", None)
+    buy(uow, nu, 9_000, installments=3)  # 3 x 30,00
+    buy(uow, itau, 4_000, installments=2)  # 2 x 20,00
+    buy(uow, itau, 1_000)  # not an installment
+    plans = ListActiveInstallments(uow, CLOCK).execute()
+    rows = InstallmentSchedule(uow, CLOCK).execute()
+    both = {nu.id, itau.id}
+    assert {p.plan.description for p in consolidate_plans(plans, both)} == {"Compra"}
+    assert len(consolidate_plans(plans, both)) == 2 and len(consolidate_plans(plans, {nu.id})) == 1
+    months = consolidate_schedule(rows, both)
+    assert [r.amount_cents for r in months] == [5_000, 5_000, 3_000]  # 30+20, 30+20, 30
+    assert all(r.account_id == "" for r in months)  # consolidated: no single card
+    only_itau = consolidate_schedule(rows, {itau.id})
+    assert [r.amount_cents for r in only_itau] == [2_000, 2_000]
+    assert consolidate_schedule(rows, set()) == []

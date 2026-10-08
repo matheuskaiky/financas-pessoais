@@ -44,6 +44,8 @@ from financas.application.queries.selection import ListRowSelections
 from financas.application.queries.summary import GetSummary, Period
 from financas.application.queries.unified_cards import (
     ListUnifiedTimeline,
+    consolidate_plans,
+    consolidate_schedule,
     parse_card_ids,
     summarize,
 )
@@ -1024,11 +1026,19 @@ def create_app(c: Container) -> FastAPI:
         with c.uow as work:
             splits = work.transactions.splits_for(split_ids(page.entries))
             plans = {p.id: p for p in work.plans.list_all()}
+        scope = set(ids)
         context.update(
             {
                 "plans": plans,
                 "splits": splits,
                 "unified": True,
+                "installments": consolidate_plans(
+                    ListActiveInstallments(c.uow, c.clock).execute(), scope
+                ),
+                "schedule": consolidate_schedule(
+                    InstallmentSchedule(c.uow, c.clock).execute(), scope
+                ),
+                "schedule_label": "cartões selecionados",
                 "summary": summarize(views, len(overview.cards)),
                 "chips": unified_chips(overview.cards, ids),
                 "live_text": unified_live_text(

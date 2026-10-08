@@ -1516,9 +1516,7 @@ def test_card_face_binds_the_account_colour_and_a_readable_text_colour(
     face = page[page.index('class="card-face card-face--tinted') :]
     face = face[: face.index(">")]
     assert "--card-color: #2E7D32" in face
-    assert (
-        "--face-fg: #FFFFFF" in face and "--face-shade: -.06" in face
-    )  # white text, deeper corner
+    assert "--face-fg: #FFFFFF" in face and "--face-shade" not in face  # white text, deeper corner
     assert "data-card-tilt" in face
     css = client.get("/static/cards.css").text
     assert (
@@ -1533,9 +1531,7 @@ def test_a_bright_account_colour_gets_slate_text_and_a_lighter_corner(
     face = client.get(f"/cards?card={card}").text
     face = face[face.index('class="card-face card-face--tinted') :]
     face = face[: face.index(">")]
-    assert (
-        "--face-fg: #0F172A" in face and "--face-shade: .04" in face
-    )  # slate text, lighter corner
+    assert "--face-fg: #0F172A" in face and "--face-shade" not in face  # slate text, lighter corner
 
 
 def test_cards_year_filter_shows_only_the_months_of_the_chosen_year(

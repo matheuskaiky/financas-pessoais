@@ -30,11 +30,12 @@
   <div hidden hx-swap-oob="innerHTML:#cards-live">{{ live_text }}</div>
 
   <div class="cards-skeleton" aria-hidden="true">{% for _ in range(6) %}<div class="sk cards-skeleton__row"></div>{% endfor %}</div>
+  <div class="cols cards-cols">
   <div class="cards-timeline" data-sel-scope data-selecting="false">
     {% if page.entries %}{{ sel_toolbar('cards-timeline-list') }}{% endif %}
     <div class="entries-box" id="cards-timeline-list">
       {% if page.entries %}
-      <div class="rowhead card-head"><span>Descrição</span><span>Categoria</span><span>Parcela</span><span class="num">Valor</span></div>
+      <div class="rowhead card-head card-head--feed"><span>Data</span><span>Cartão</span><span>Descrição</span><span>Categoria</span><span class="num">Valor</span><span class="sr-only">Ações</span></div>
       {% set lead_day = "" %}{% set lead_month = "" %}
       {% include "_cards_rows.html" %}
       {% else %}
@@ -44,5 +45,7 @@
     {% set more_url = (more_base ~ '&older=1' ~ (('&after=' ~ page.older_cursor) if page.older_cursor else '')) if page.older_available else none %}
     {% include "_cards_more.html" %}
     {{ sel_dock() }}
+  </div>
+    <div class="stack cards-side">{% include "_installments.html" %}</div>
   </div>
 </div>

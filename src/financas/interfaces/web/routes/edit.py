@@ -297,10 +297,29 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             by_plan,
             {state.entry.id: list(state.splits)} if state.splits else {},
         )
+        feed: dict[str, object] = {}
+        if origin.get("card") == "all":  # the unified feed: the row keeps its date and card columns
+            mine = next((a for a in lookups["accounts"] if a.id == state.entry.account_id), None)
+            if mine is not None:
+                feed = {
+                    "show_card_tag": True,
+                    "card_tags": {
+                        mine.id: {
+                            "name": mine.nickname,
+                            "color": lookups["account_looks"][mine.id].color,
+                        }
+                    },
+                }
         return fragment(
             request,
             "_card_entry_row.html",
-            {**context, "plans": plans, "locked": state.is_locked, "origin_qs": urlencode(origin)},
+            {
+                **context,
+                **feed,
+                "plans": plans,
+                "locked": state.is_locked,
+                "origin_qs": urlencode(origin),
+            },
         )
 
     @app.get("/entries/{transaction_id}/edit", response_class=HTMLResponse)

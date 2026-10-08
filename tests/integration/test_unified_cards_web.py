@@ -122,17 +122,32 @@ def test_a_chip_request_returns_only_the_fragment_and_history_restore_the_page(
     assert "<html" in restore.text  # Back after a swap needs the whole page
 
 
-def test_the_timeline_tags_each_row_with_its_card_and_groups_by_day(
+def test_each_row_has_a_dedicated_card_column_and_the_feed_a_matching_header(
     client: TestClient, container: Container
 ) -> None:
     first, second = two_cards(client, container)
     buy_on_card(client, first, days_ago=0, amount="300,00", description="Fone")
     buy_on_card(client, second, days_ago=0, amount="200,00", description="Livro")
     page = client.get("/cards?card=all").text
-    assert page.count('class="tag tag--card"') == 2
-    assert 'title="Nubank"' in page and 'title="Itaú"' in page
+    assert "tag--card" not in page  # no more inline tag: the card has its own column
+    head = page[page.index('class="rowhead card-head card-head--feed"') :]
+    head = head[: head.index("</div>")]
+    assert re.findall(r"<span[^>]*>([^<]*)</span>", head) == [
+        "Data",
+        "Cartão",
+        "Descrição",
+        "Categoria",
+        "Valor",
+        "Ações",
+    ]
+    cells = re.findall(
+        r'<span class="c-date tnum">(\d\d/\d\d)</span>\s*'
+        r'<span class="c-card" title="([^"]+)" style="--card-color: (#[0-9A-Fa-f]{6})"',
+        page,
+    )
+    assert sorted(name for _, name, _ in cells) == ["Itaú", "Nubank"]
+    assert page.count('class="c-card__dot"') == 2 and page.count('class="c-act"') == 2
     assert page.count('class="day-head') == 1  # both on today: one day header
-    assert "data-sel-scope" in page and 'class="sel-dock"' in page and 'data-sel-key="' in page
 
 
 def test_an_empty_current_statement_has_the_real_zero_and_the_timeline_text(
@@ -158,4 +173,64 @@ def test_older_statements_load_in_pages_and_the_button_goes_away_at_the_end(
     older = client.get(more.group(1).replace("&amp;", "&"), headers=HX)
     assert older.status_code == 200 and "<html" not in older.text and "Antiga" in older.text
     assert "Ver lançamentos anteriores" not in older.text  # nothing left to load
-    assert 'class="tag tag--card"' in older.text
+    assert 'class="c-card"' in older.text and "tag--card" not in older.text
+
+
+def test_the_unified_view_lists_the_active_installments_and_the_monthly_projection(
+    client: TestClient, container: Container
+) -> None:
+    first, second = two_cards(client, container)
+    buy_on_card(client, first, days_ago=0, installments="3", amount="300,00", description="Monitor")
+    buy_on_card(client, second, days_ago=0, installments="2", amount="100,00", description="Livro")
+    page = client.get("/cards?card=all").text
+    assert 'id="h-inst"' in page and "Parcelas ativas" in page and "Parcelas por mês" in page
+    assert "Monitor" in page.split('id="h-inst"')[1] and "Livro" in page.split('id="h-inst"')[1]
+    assert "a pagar" in page and "cartões selecionados" in page
+    months = re.findall(r'<li title="[^"]*">', page.split("Parcelas por mês")[1])
+    assert len(months) >= 3  # three monthly bars: the 3x plan reaches the furthest month
+    # the chips recalculate both panels: only the second card
+    only = client.get(f"/cards?card=all&cards={second}").text
+    assert "Livro" in only.split('id="h-inst"')[1] and "Monitor" not in only.split('id="h-inst"')[1]
+    assert len(re.findall(r'<li title="[^"]*">', only.split("Parcelas por mês")[1])) == 2
+    fragment = client.get(f"/cards?card=all&cards={second}", headers=HX).text
+    assert "Parcelas ativas" in fragment and "Monitor" not in fragment.split('id="h-inst"')[1]
+
+
+def test_no_installments_shows_the_empty_states_not_nothing(
+    client: TestClient, container: Container
+) -> None:
+    two_cards(client, container)
+    page = client.get("/cards?card=all").text
+    assert "Nenhuma compra parcelada em aberto." in page and "Sem parcelas a vencer." in page
+
+
+def test_every_face_reserves_the_second_telemetry_line_and_the_colour_is_flat(
+    client: TestClient, container: Container
+) -> None:
+    two_cards(client, container)
+    page = client.get("/cards").text
+    faces = re.findall(r'<a class="card-face card-face--tinted.*?</a>', page, re.S)
+    assert len(faces) == 2
+    assert all(f.count("card-face__pending") == 1 for f in faces)  # a real line or a placeholder
+    css = client.get("/static/cards.css").text
+    assert "min-height:212px" in css
+    tinted = [
+        line for line in css.splitlines() if ".card-face--tinted{" in line and "background" in line
+    ]
+    assert tinted and all(
+        "linear-gradient(145deg" not in line and "oklch" not in line for line in tinted
+    )
+    assert "--face-shade" not in page
+
+
+def test_cancelling_an_edit_in_the_feed_keeps_the_date_and_card_columns(
+    client: TestClient, container: Container
+) -> None:
+    first, _ = two_cards(client, container)
+    buy_on_card(client, first, days_ago=0, amount="300,00", description="Fone")
+    with container.uow as work:
+        entry = work.transactions.list_by_account(first)[0]
+    row = client.get(f"/entries/{entry.id}/row?from=cards&card=all", headers=HX).text
+    assert "card-entry--feed" in row and 'class="c-card"' in row and 'class="c-date tnum"' in row
+    plain = client.get(f"/entries/{entry.id}/row?from=cards&card={first}", headers=HX).text
+    assert "card-entry--feed" not in plain

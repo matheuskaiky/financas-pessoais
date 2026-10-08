@@ -93,10 +93,14 @@ a.card-face:hover { color: var(--face-fg, #fff); }
 .card-face__cycle, .card-face__dates { color: inherit; opacity: .9; }
 .card-face .avatar { border: 1.5px solid rgba(255, 255, 255, .55); }
 .card-face__nick { font-size: 28px; }
+/* every face reserves the second telemetry line ("Fechada · vence ..."), so the cards are the same height */
+.card-face__body { justify-content: flex-end; }
+.card-face__pending { min-height: 1.4em; }
+.card-face__pending.is-empty { visibility: hidden; }
 @media (max-width: 699px) {
   .card-faces { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 14px; padding: 4px 4px 10px; margin: 0 -4px; }
   .card-slot { flex: 0 0 82%; scroll-snap-align: start; }
-  .card-face { min-height: 168px; }
+  .card-face { min-height: 196px; }
 }
 .statement-tabs { border-bottom: 1px solid var(--line); gap: 4px; padding-bottom: 0; }
 .statement-tabs a { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; min-height: 48px; color: var(--soft); box-shadow: none; }
@@ -635,3 +639,29 @@ button.icon-btn.mini.row-edit:hover, button.icon-btn.mini.row-edit:focus-visible
 
 /* a `hidden` banner stays hidden (the unified cards and the ranking show theirs on a failed request) */
 .banner[hidden] { display: none; }
+
+/* The unified statement feed: a column per fact. Data | Cartão | Descrição | Categoria | Valor | Ações
+   (the selection checkbox sits in the gutter before it). The card is a pill with its colour dot, aligned across rows. */
+.cards-cols { align-items: start; }
+@media (min-width: 1100px) { .cards-cols { grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); } }
+.card-head--feed, .card-entry--feed { column-gap: 12px; }
+@media (min-width: 700px) {
+  .card-head--feed, .card-entry--feed { grid-template-columns: 52px 136px minmax(0, 1fr) 116px 96px 32px; }
+}
+.card-head--feed { padding-inline: 14px; }
+.card-entry--feed .c-date { display: block; font-size: 13px; color: var(--text-secondary); font-variant-numeric: lining-nums tabular-nums; }
+.card-entry--feed .c-card { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 24px; padding: 0 10px 0 8px; border-radius: 999px; background: var(--fill-1); color: var(--text-secondary); font: 600 12px/1 var(--sans); justify-self: start; }
+.card-entry--feed .c-card__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--card-color); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--card-color) 45%, var(--text-primary)); }
+.card-entry--feed .c-card__t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-entry--feed .c-act { display: flex; justify-content: flex-end; }
+@media (max-width: 699px) {
+  /* narrow: date and card share the first line with the amount; description, category and the pencil below */
+  .card-entry--feed { grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "date card amt amt" "desc desc desc act" "cat cat cat cat"; align-items: center; }
+  .card-entry--feed .c-date { grid-area: date; }
+  .card-entry--feed .c-card { grid-area: card; }
+  .card-entry--feed .c-amt { grid-area: amt; grid-column: 3 / 5; }
+  .card-entry--feed .c-desc { grid-area: desc; }
+  .card-entry--feed .c-act { grid-area: act; }
+  .card-entry--feed .c-cat { grid-area: cat; }
+  .card-head--feed { display: none; }
+}

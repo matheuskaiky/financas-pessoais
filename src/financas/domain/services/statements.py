@@ -55,6 +55,17 @@ class LimitUsage:
     alert: LimitAlert
 
 
+def committed_cents(outstanding_per_statement: Iterable[int], unlinked_cents: int = 0) -> int:
+    """What the limit has not got back yet: the unpaid part of every statement (open, closed and
+    future ones, so future installments are in), each counted at 0 or more.
+
+    A credit on one statement (an overpayment, a refund larger than its purchases) never cancels
+    what another statement owes: summing every entry of the card would let it. ``unlinked_cents``
+    is the net of entries with no statement (legacy rows), counted only when it is a debt.
+    """
+    return sum(max(cents, 0) for cents in outstanding_per_statement) + max(unlinked_cents, 0)
+
+
 def limit_usage(committed_cents: int, limit_cents: int | None) -> LimitUsage:
     """``committed`` is everything not yet paid, future installments included (a credit is 0)."""
     committed = max(committed_cents, 0)

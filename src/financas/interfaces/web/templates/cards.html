@@ -36,18 +36,18 @@
   <div class="card-slot">
     {#- Front v3 patch (card-markup.html): the face is the tilt target (data-card-tilt, fp-ui.js) and carries the glare layer;
         the user's colour (9.9) is bound as --card-color, its readable text colour as --face-fg. -#}
-    {#- Text colour: deep slate on bright colours, white on rich ones (WCAG AA, appearance.card_text_color). The surface is never
-        darkened to make white text fit: --face-shade only nudges the lightness of the same hue at the far corner. -#}
+    {#- Text colour: deep slate on bright colours, white on rich ones (WCAG AA, appearance.card_text_color). The surface is the flat
+        account colour, never darkened to make white text fit. -#}
     {% set ink = card_text_color(look.color) %}
     <a class="card-face card-face--tinted {{ 'on' if on }}" data-card-tilt href="/cards?card={{ v.account.id }}" {% if on %}aria-current="true"{% endif %}
-       style="--card-color: {{ look.color }}; --face-fg: {{ ink }}; --face-shade: {{ '-.06' if ink == '#FFFFFF' else '.04' }}">
+       style="--card-color: {{ look.color }}; --face-fg: {{ ink }}">
       <span class="card-face__top">{{ avatar(look, 40) }}<span class="card-face__cycle">CRÉDITO</span></span>
       {% set tel = v.telemetry %}
       <span class="card-face__balance"><span class="card-face__label">Fatura atual</span>
         <span class="card-face__amount">{{ tel.open_balance_cents|money(private="cards") }}</span></span>
       <span class="card-face__body"><strong class="card-face__nick">{{ v.account.nickname }}</strong>
         <span class="card-face__dates" title="Vence dia {{ v.account.due_day }} · fecha {{ v.account.closing_days_before_due }} dias antes">{{ closing_countdown(tel.closing) }} · {{ due_countdown(tel.due) }}</span>
-        {% if tel.pending_due %}<span class="card-face__dates card-face__pending" title="Fatura {{ tel.pending_month|month_short }}">Fechada · {{ due_countdown(tel.pending_due) }}</span>{% endif %}</span>
+        {% if tel.pending_due %}<span class="card-face__dates card-face__pending" title="Fatura {{ tel.pending_month|month_short }}">Fechada · {{ due_countdown(tel.pending_due) }}</span>{% else %}<span class="card-face__dates card-face__pending is-empty" aria-hidden="true">&nbsp;</span>{% endif %}</span>
       <span class="card-glare" aria-hidden="true"></span>
     </a>
     {% if v.usage.alert.value == 'not_informed' %}
@@ -172,38 +172,7 @@
   </section>
 
   <div class="stack">
-    <section class="panel" aria-labelledby="h-inst">
-      <header><h2 id="h-inst">Parcelas ativas</h2>{% if installments %}<small>a pagar <strong>{{ installments|sum(attribute='to_pay_cents')|money(private="cards") }}</strong></small>{% endif %}</header>
-      {% if installments %}
-      <ul class="plans">
-        {% for p in installments %}
-        <li>
-          <div class="plan-top"><strong>{{ p.plan.description }}</strong><span class="num"><strong>{{ p.to_pay_cents|money(private="cards") }}</strong> <small>a pagar</small></span></div>
-          <div class="plan-steps" role="img" aria-label="{{ p.paid_count }} de {{ p.paid_count + p.remaining_count }} parcelas pagas">
-            {% for i in range(p.paid_count + p.remaining_count) %}<i class="{{ 'paid' if i < p.paid_count else ('next' if i == p.paid_count else '') }}"></i>{% endfor %}
-          </div>
-          <div class="plan-bottom"><small>{{ p.paid_count }}/{{ p.plan.installment_total }} pagas · restam {{ p.remaining_count }}{% if p.next_statement_month %} · próxima: {{ p.next_statement_month|month_short }}{% endif %}</small>
-            <button type="button" class="link danger" hx-delete="/installments/plan/{{ p.plan.id }}" hx-confirm="Deseja apagar as parcelas pendentes deste parcelamento?{{ ' Parcelas de faturas já pagas serão mantidas no histórico.' if p.paid_count }}" data-confirm-title="Apagar parcelas pendentes" data-confirm-ok="Apagar" data-confirm-danger aria-label="Apagar parcelas pendentes de {{ p.plan.description }}"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>Apagar</button></div>
-          {% if p.future_count %}<button type="button" class="link ant-open" hx-get="/plans/{{ p.plan.id }}/anticipate" hx-target="#anticipate-{{ p.plan.id }}" hx-swap="innerHTML">Antecipar parcelas</button>{% endif %}
-          <div id="anticipate-{{ p.plan.id }}" class="anticipate-slot"></div>
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}{{ state_empty('Nenhuma compra parcelada em aberto.', 'Compras parceladas no cartão aparecem aqui, com o que falta pagar.', inline=False, icon='calendar') }}{% endif %}
-    </section>
-
-    <section class="panel" aria-labelledby="h-sch">
-      <header><h2 id="h-sch">Parcelas por mês</h2><small>{{ chosen.account.nickname }}</small></header>
-      {% if schedule %}
-      {% set top = schedule|map(attribute='amount_cents')|max %}
-      <ul class="bars-cols" role="list">
-        {% for r in schedule %}{% set _sg, _w, _f = r.amount_cents|money_parts %}<li title="{{ r.month|month_short }} · {{ status_labels[r.status]|lower }}">
-          <span class="area"><span class="bar" style="height: {{ [(r.amount_cents * 100 / top)|round|int if top else 0, 4]|max }}%"><span class="bv" aria-label="{{ r.amount_cents|brl }}">{{ _w }},{{ _f }}</span></span></span>
-          <span class="bm">{{ r.month|month_short }}<span class="sr-only"> · {{ status_labels[r.status]|lower }}</span></span></li>{% endfor %}
-      </ul>
-      <small>Parcelas futuras contam no limite comprometido.</small>
-      {% else %}{{ state_empty('Sem parcelas a vencer.', 'Quando houver compra parcelada, o cronograma mês a mês aparece aqui.', icon='calendar') }}{% endif %}
-    </section>
+    {% set schedule_label = chosen.account.nickname %}{% include "_installments.html" %}
 
     <section class="panel" id="cfg" aria-labelledby="h-cfg">
       <h2 id="h-cfg">{{ chosen.account.nickname }}</h2>

@@ -4,7 +4,8 @@ Definitions (each one has a test):
 - Statement total = purchases and charges on it minus refunds; paid = payments linked to it;
   outstanding = total - paid. Status comes from the date (future/open/closed) and the payments.
 - Committed limit = everything on the card not yet paid, future installments included
-  (open decision 5, proposed rule): minus the sum of all the card's entries.
+  (open decision 5): the unpaid part of every statement, each counted at 0 or more, so a credit on
+  one statement never hides a debt on another (``committed_cents`` in domain/services/statements).
 - Future installments = total of the statements that are not open yet.
 """
 
@@ -29,6 +30,7 @@ from financas.domain.services.countdown import Countdown, countdown
 from financas.domain.services.statements import (
     LimitUsage,
     Reconciliation,
+    committed_cents,
     limit_usage,
     reconcile,
     statement_amounts,
@@ -109,6 +111,14 @@ class ScheduleRow:
     month: YearMonth
     status: StatementStatus
     amount_cents: int  # installments only (plan entries), not other purchases
+
+
+def card_committed(uow: Work, card_id: str, views: list[StatementView]) -> int:
+    """The card's committed limit (see :func:`committed_cents`): unpaid part of each statement."""
+    unlinked = -sum(
+        t.amount_cents for t in uow.transactions.list_by_account(card_id) if t.statement_id is None
+    )
+    return committed_cents((v.outstanding_cents for v in views), unlinked)
 
 
 def is_locked(view: StatementView) -> bool:
@@ -256,8 +266,8 @@ class ListCards:
         cards: list[CardView] = []
         with self._uow as uow:
             for card in card_accounts(uow):
-                committed = -sum(t.amount_cents for t in uow.transactions.list_by_account(card.id))
                 views = statement_views(uow, card, today)
+                committed = card_committed(uow, card.id, views)
                 cards.append(
                     CardView(
                         card,

@@ -1173,3 +1173,44 @@ def test_a_payment_with_an_old_date_can_still_change_its_amount(
         UpdatePaymentCommand(credit.id, D(2026, 8, 1), 2_000)  # the date is not what changes
     )
     assert uow.transactions.items[credit.id].amount_cents == 2_000
+
+
+# --- committed limit: the unpaid part of every statement, never netted across statements ---
+
+
+def test_committed_equals_the_open_statement_when_nothing_else_is_pending(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=6_456)
+    view = ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards[0]
+    assert view.telemetry and view.telemetry.open_balance_cents == 6_456
+    assert view.usage.committed_cents == 6_456  # "Fatura atual" and "Comprometido" agree
+    assert round(view.usage.percent or 0, 2) == round(6_456 / 1_200_000 * 100, 2)
+
+
+def test_a_credit_on_an_older_statement_does_not_hide_the_open_charges(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    """The Banco Inter case: the sum of every entry was 0 (credit above, charges below), so the
+    limit showed R$ 0,00 committed next to an open statement with charges."""
+    buy(uow, card, purchased_on=D(2026, 6, 10), total_cents=1_000)  # June statement
+    RegisterTransaction(uow).execute(
+        RegisterTransactionCommand(
+            card.id, D(2026, 6, 12), TransactionKind.REFUND, 5_000, "Estorno em excesso"
+        )
+    )  # June ends with a credit of R$ 40,00
+    buy(uow, card, purchased_on=D(2026, 7, 10), total_cents=6_456)  # July: open
+    today = FixedClock(D(2026, 7, 20))
+    view = ListCards(uow, today).execute().cards[0]
+    assert view.telemetry and view.telemetry.open_balance_cents == 6_456
+    assert view.usage.committed_cents == 6_456  # the credit stays on its own statement
+
+
+def test_future_installments_are_committed_with_the_open_statement(
+    uow: MemoryUnitOfWork, card: Account
+) -> None:
+    buy(uow, card, purchased_on=D(2026, 7, 10), installments=3, total_cents=9_000)
+    buy(uow, card, purchased_on=D(2026, 7, 11), total_cents=1_000)
+    view = ListCards(uow, FixedClock(D(2026, 7, 20))).execute().cards[0]
+    assert view.usage.committed_cents == 10_000
+    assert view.telemetry and view.telemetry.open_balance_cents == 4_000  # 3,000 + 1,000
